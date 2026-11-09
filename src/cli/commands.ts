@@ -47,7 +47,7 @@ export interface ServeHandle {
 
 export interface DoctorCommandOptions {
   projectRoot: string;
-  adapters?: ReadonlyMap<string, DeliveryAdapter>;
+  clock?: Clock;
 }
 
 function manifestProject(participants: Participant[]): string {
@@ -182,18 +182,19 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot);
+  const clock = options.clock ?? { now: () => Date.now() };
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
     messages = new SQLiteMessageStore(paths.database);
-    sessions = new SessionStore(paths.database);
+    sessions = new SessionStore(paths.database, clock);
     return createDoctorReport({
       project,
       participants,
       databasePath: paths.database,
       messages,
       sessions,
-      ...(options.adapters ? { adapters: options.adapters } : {}),
+      clock,
     });
   } catch (error) {
     return createDoctorReport({
@@ -201,7 +202,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       participants,
       databasePath: paths.database,
       storageError: storageError(error),
-      ...(options.adapters ? { adapters: options.adapters } : {}),
+      clock,
     });
   } finally {
     sessions?.close();

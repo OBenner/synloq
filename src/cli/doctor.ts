@@ -1,6 +1,6 @@
-import { inactiveReason, type DeliveryAdapter } from "../adapters/types.js";
+import { inactiveReason, type Clock } from "../adapters/types.js";
 import type { Participant } from "../domain/message.js";
-import type { AdapterCapabilities, SessionState } from "../domain/session.js";
+import type { AdapterCapabilities, AdapterSession, SessionState } from "../domain/session.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 
@@ -26,8 +26,14 @@ export interface DoctorReportOptions {
   databasePath: string;
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
-  adapters?: ReadonlyMap<string, DeliveryAdapter>;
+  clock?: Clock;
   storageError?: string;
+}
+
+function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
+  if (!session) return false;
+  const leaseExpiresAt = Date.parse(session.leaseExpiresAt);
+  return Number.isFinite(leaseExpiresAt) && leaseExpiresAt > now;
 }
 
 function pausedReason(
@@ -49,6 +55,7 @@ function pausedReason(
 
 export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
   const registered = options.sessions?.list(options.project) ?? [];
+  const now = (options.clock ?? { now: () => Date.now() }).now();
   const storage = {
     ok: options.storageError === undefined,
     path: options.databasePath,
@@ -69,8 +76,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
         agentId: participant.agentId,
         ...(session ? { sessionId: session.sessionId } : {}),
         state,
-        adapterConnected:
-          options.adapters?.has(`${options.project}/${participant.agentId}`) ?? false,
+        adapterConnected: storage.ok && hasUnexpiredLease(session, now),
         ...(session
           ? {
               protocolVersion: session.protocolVersion,

@@ -1,9 +1,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ReferenceAdapter } from "../../src/adapters/reference.js";
-import type { Clock, DeliveryAdapter } from "../../src/adapters/types.js";
+import type { Clock } from "../../src/adapters/types.js";
 import { doctorCommand } from "../../src/cli/commands.js";
 import { createDoctorReport, formatDoctorReport, type DoctorReport } from "../../src/cli/doctor.js";
 import { initCommand } from "../../src/cli/commands.js";
@@ -36,7 +36,6 @@ interface Fixture {
   databasePath: string;
   messages: SQLiteMessageStore;
   sessions: SessionStore;
-  adapters: Map<string, DeliveryAdapter>;
   clock: Clock;
   advance: (milliseconds: number) => void;
 }
@@ -59,7 +58,6 @@ beforeEach(async () => {
     databasePath: paths.database,
     messages: new SQLiteMessageStore(paths.database),
     sessions: new SessionStore(paths.database, clock),
-    adapters: new Map(),
     clock,
     advance: (milliseconds) => {
       now += milliseconds;
@@ -83,13 +81,13 @@ function report(): DoctorReport {
     databasePath: fixture.databasePath,
     messages: fixture.messages,
     sessions: fixture.sessions,
-    adapters: fixture.adapters,
+    clock: fixture.clock,
   });
 }
 
 async function captureDoctor(): Promise<string> {
   return formatDoctorReport(
-    await doctorCommand({ projectRoot: fixture.root, adapters: fixture.adapters }),
+    await doctorCommand({ projectRoot: fixture.root, clock: fixture.clock }),
   );
 }
 
@@ -110,7 +108,6 @@ describe("DoctorReport", () => {
       },
       false,
     );
-    fixture.adapters.set("verdicta/arch", new ReferenceAdapter(capabilities));
     fixture.messages.create(
       {
         project: PROJECT,
@@ -153,7 +150,7 @@ describe("DoctorReport", () => {
     });
   });
 
-  it("uses effective state while deriving connectivity independently from lease freshness", () => {
+  it("reports an expired lease as disconnected while effective state is unknown", () => {
     fixture.sessions.register(
       {
         project: PROJECT,
@@ -168,13 +165,73 @@ describe("DoctorReport", () => {
       },
       false,
     );
-    fixture.adapters.set("verdicta/arch", new ReferenceAdapter());
     fixture.advance(16_000);
 
     expect(report().participants[1]).toMatchObject({
       agentId: "arch",
       state: "unknown",
+      adapterConnected: false,
+      inactiveReason: "session-unknown",
+    });
+  });
+
+  it("uses the lease boundary rather than raw closed state", () => {
+    const registered = fixture.sessions.register(
+      {
+        project: PROJECT,
+        agentId: "arch",
+        sessionId: "closed-arch-session",
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          activeDelivery: true,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
+      },
+      false,
+    );
+    fixture.sessions.close(PROJECT, "arch", "closed-arch-session");
+
+    expect(report().participants[1]).toMatchObject({
+      state: "closed",
       adapterConnected: true,
+      inactiveReason: "session-closed",
+    });
+
+    fixture.advance(Date.parse(registered.leaseExpiresAt) - fixture.clock.now());
+    expect(report().participants[1]).toMatchObject({
+      state: "unknown",
+      adapterConnected: false,
+      inactiveReason: "session-unknown",
+    });
+  });
+
+  it("reports an unreadable lease timestamp as disconnected", () => {
+    fixture.sessions.register(
+      {
+        project: PROJECT,
+        agentId: "arch",
+        sessionId: "invalid-lease-arch-session",
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          activeDelivery: true,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
+      },
+      false,
+    );
+    const database = new DatabaseSync(fixture.databasePath);
+    database
+      .prepare(
+        "UPDATE sessions SET lease_expires_at = 'not-a-date' WHERE project = ? AND agent_id = ?",
+      )
+      .run(PROJECT, "arch");
+    database.close();
+
+    expect(report().participants[1]).toMatchObject({
+      state: "unknown",
+      adapterConnected: false,
       inactiveReason: "session-unknown",
     });
   });
@@ -240,15 +297,14 @@ describe("DoctorReport", () => {
     await writeFile(blockedHome, "blocks SQLite parent creation", "utf8");
     vi.stubEnv("SYNLOQ_HOME", blockedHome);
 
-    fixture.adapters.set("verdicta/cto", new ReferenceAdapter());
-    const result = await doctorCommand({ projectRoot: fixture.root, adapters: fixture.adapters });
+    const result = await doctorCommand({ projectRoot: fixture.root });
 
     expect(result.storage).toMatchObject({ ok: false });
     expect(result.storage.error).toBe("failed to open or migrate SQLite storage");
     expect(result.participants).toHaveLength(2);
     expect(result.participants[0]).toMatchObject({
       state: "unknown",
-      adapterConnected: true,
+      adapterConnected: false,
       inactiveReason: "session-not-registered",
     });
   });
@@ -271,7 +327,6 @@ describe("DoctorReport", () => {
       },
       false,
     );
-    fixture.adapters.set("verdicta/arch", new ReferenceAdapter(capabilities));
     fixture.messages.create(
       {
         project: PROJECT,
