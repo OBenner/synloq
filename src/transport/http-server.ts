@@ -1,0 +1,477 @@
+import { EventEmitter } from "node:events";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { z } from "zod";
+import type { CredentialStore, Identity } from "../config/credentials.js";
+import { SynloqError } from "../domain/errors.js";
+import { agentId, type Message } from "../domain/message.js";
+import type { Dispatcher } from "../relay/dispatcher.js";
+import type { RelayService } from "../relay/relay-service.js";
+import type { SQLiteMessageStore } from "../storage/message-store.js";
+import type { SessionStore } from "../storage/session-store.js";
+
+const MAX_JSON_BYTES = 64 * 1024;
+const SHUTDOWN_EVENT = "shutdown";
+
+const capabilitiesSchema = z
+  .object({
+    activeDelivery: z.boolean(),
+    stateReporting: z.boolean(),
+    clientIdempotency: z.boolean(),
+  })
+  .strict();
+const sessionFields = {
+  sessionId: z.string().min(1).max(256),
+  protocolVersion: z.number().int().positive(),
+  capabilities: capabilitiesSchema,
+};
+const sendSchema = z
+  .object({
+    to: agentId,
+    text: z.string().min(1),
+    expectsReply: z.boolean(),
+    inReplyTo: z.string().uuid().optional(),
+    idempotencyKey: z.string().min(1).max(128),
+  })
+  .strict();
+const replySchema = z
+  .object({
+    inReplyTo: z.string().uuid(),
+    text: z.string().min(1),
+    expectsReply: z.boolean(),
+    idempotencyKey: z.string().min(1).max(128),
+  })
+  .strict();
+const inboxQuerySchema = z
+  .object({
+    cursor: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
+  })
+  .strict();
+const deliveryQuerySchema = z
+  .object({ waitMs: z.coerce.number().int().min(0).max(25_000).default(0) })
+  .strict();
+const acknowledgeSchema = z.object({ messageId: z.string().uuid() }).strict();
+const registerSchema = z.object(sessionFields).strict();
+const heartbeatSchema = z
+  .object({
+    sessionId: sessionFields.sessionId,
+    state: z.enum(["idle", "busy", "closed", "unknown"]),
+  })
+  .strict();
+const closeSchema = z.object({ sessionId: sessionFields.sessionId }).strict();
+const receiptSchema = z
+  .object({
+    state: z.enum(["submitted", "delivered"]),
+    clientMessageId: z.string().min(1).max(256).optional(),
+  })
+  .strict();
+const pauseSchema = z
+  .object({
+    scope: z.enum(["project", "participant", "thread"]),
+    scopeId: z.string().max(256),
+  })
+  .strict();
+const replaceSchema = z.object({ agentId, ...sessionFields }).strict();
+const messageIdSchema = z.string().uuid();
+
+export interface RelayHttpServerOptions {
+  project: string;
+  relay: RelayService;
+  credentials: CredentialStore;
+  sessions: SessionStore;
+  dispatcher: Dispatcher;
+  messages: SQLiteMessageStore;
+}
+
+interface ErrorResponse {
+  status: number;
+  error: SynloqError;
+}
+
+export class RelayHttpServer {
+  private readonly http: Server;
+  private readonly events = new EventEmitter();
+  private closing = false;
+
+  constructor(private readonly options: RelayHttpServerOptions) {
+    this.events.setMaxListeners(0);
+    this.http = createServer((request, response) => {
+      void this.handle(request, response);
+    });
+  }
+
+  listen(host: string, port: number): Promise<string> {
+    if (host !== "127.0.0.1" && host !== "::1") {
+      throw new SynloqError("INVALID_INPUT", "relay HTTP listen address must be loopback");
+    }
+    if (this.closing) throw new SynloqError("INVALID_INPUT", "relay HTTP server is closed");
+
+    return new Promise((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      this.http.once("error", onError);
+      this.http.listen(port, host, () => {
+        this.http.off("error", onError);
+        const address = this.http.address();
+        if (address === null || typeof address === "string") {
+          reject(new Error("relay HTTP server did not expose a TCP address"));
+          return;
+        }
+        const urlHost = host === "::1" ? "[::1]" : host;
+        resolve(`http://${urlHost}:${address.port}`);
+      });
+    });
+  }
+
+  close(): Promise<void> {
+    if (!this.http.listening) return Promise.resolve();
+    this.closing = true;
+    this.events.emit(SHUTDOWN_EVENT);
+
+    return new Promise((resolve, reject) => {
+      this.http.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+      this.http.closeIdleConnections();
+    });
+  }
+
+  private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    let identity: Identity;
+    try {
+      identity = await this.authenticate(request.headers.authorization);
+    } catch (error) {
+      this.sendError(response, error, true);
+      return;
+    }
+
+    try {
+      const url = new URL(request.url ?? "/", "http://loopback");
+      await this.route(request, response, url, identity);
+    } catch (error) {
+      this.sendError(response, error, false);
+    }
+  }
+
+  private async authenticate(header: string | undefined): Promise<Identity> {
+    const match = header === undefined ? undefined : /^Bearer ([^\s]+)$/.exec(header);
+    if (!match?.[1]) throw new SynloqError("UNAUTHORIZED", "a bearer credential is required");
+    return this.options.credentials.authenticate(this.options.project, match[1]);
+  }
+
+  private async route(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    identity: Identity,
+  ): Promise<void> {
+    const method = request.method;
+    const path = url.pathname;
+    const { project } = this.options;
+
+    if (method === "GET" && path === "/v1/participants") {
+      this.sendJson(response, 200, {
+        participants: await this.options.relay.listParticipants(identity),
+      });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/messages") {
+      const input = sendSchema.parse(await this.readJson(request));
+      const message = await this.options.relay.send(identity, input);
+      this.accepted(message);
+      this.sendJson(response, 200, { message });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/replies") {
+      const input = replySchema.parse(await this.readJson(request));
+      const message = await this.options.relay.reply(identity, input);
+      this.accepted(message);
+      this.sendJson(response, 200, { message });
+      return;
+    }
+
+    if (method === "GET" && path === "/v1/inbox") {
+      const query = inboxQuerySchema.parse(Object.fromEntries(url.searchParams));
+      const result = await this.waitFor(
+        this.workEvent(project, identity.agentId),
+        query.waitMs,
+        response,
+        () =>
+          this.options.relay.inbox(identity, {
+            project,
+            agentId: identity.agentId,
+            ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+            limit: query.limit,
+          }),
+        (value) => value.messages.length > 0,
+      );
+      this.sendJson(response, 200, result);
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/ack") {
+      const input = acknowledgeSchema.parse(await this.readJson(request));
+      const message = await this.options.relay.acknowledge(identity, input.messageId);
+      this.sendJson(response, 200, { message });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/sessions/register") {
+      const input = registerSchema.parse(await this.readJson(request));
+      const session = this.options.sessions.register(
+        { ...input, project, agentId: identity.agentId },
+        false,
+      );
+      this.changed(project, identity.agentId);
+      this.sendJson(response, 200, { session });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/sessions/heartbeat") {
+      const input = heartbeatSchema.parse(await this.readJson(request));
+      const session = this.options.sessions.heartbeat(
+        project,
+        identity.agentId,
+        input.sessionId,
+        input.state,
+      );
+      this.changed(project, identity.agentId);
+      this.sendJson(response, 200, { session });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/sessions/close") {
+      const input = closeSchema.parse(await this.readJson(request));
+      const session = this.options.sessions.close(project, identity.agentId, input.sessionId);
+      this.changed(project, identity.agentId);
+      this.sendJson(response, 200, { session });
+      return;
+    }
+
+    if (method === "GET" && path === "/v1/deliveries/next") {
+      const query = deliveryQuerySchema.parse(Object.fromEntries(url.searchParams));
+      const result = await this.waitFor(
+        this.workEvent(project, identity.agentId),
+        query.waitMs,
+        response,
+        () => this.nextDelivery(identity),
+        (value) => value.message !== null,
+      );
+      this.sendJson(response, 200, result);
+      return;
+    }
+
+    const receiptMatch = /^\/v1\/deliveries\/([^/]+)\/receipt$/.exec(path);
+    if (method === "POST" && receiptMatch) {
+      const messageId = messageIdSchema.parse(decodeURIComponent(receiptMatch[1] ?? ""));
+      const input = receiptSchema.parse(await this.readJson(request));
+      const existing = this.options.messages.getMessage(messageId);
+      if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
+      if (existing.project !== project || existing.to !== identity.agentId) {
+        throw new SynloqError(
+          "UNAUTHORIZED",
+          "only the authenticated recipient can post a delivery receipt",
+        );
+      }
+      const message = this.options.messages.setDeliveryState(messageId, input.state);
+      this.events.emit(this.workEvent(project, identity.agentId));
+      this.sendJson(response, 200, { message });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/operator/pause") {
+      const input = pauseSchema.parse(await this.readJson(request));
+      this.options.relay.pause(identity, project, input.scope, input.scopeId);
+      this.sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/operator/resume") {
+      const input = pauseSchema.parse(await this.readJson(request));
+      this.options.relay.resume(identity, project, input.scope, input.scopeId);
+      for (const session of this.options.sessions.list(project)) {
+        this.changed(project, session.agentId);
+      }
+      this.sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && path === "/v1/operator/replace-session") {
+      this.requireOperator(identity);
+      const input = replaceSchema.parse(await this.readJson(request));
+      const session = this.options.sessions.register({ ...input, project }, true);
+      this.changed(project, input.agentId);
+      this.sendJson(response, 200, { session });
+      return;
+    }
+
+    if (method === "GET" && path === "/v1/operator/doctor") {
+      this.requireOperator(identity);
+      this.sendJson(response, 200, { sessions: this.options.sessions.list(project) });
+      return;
+    }
+
+    throw new SynloqError("NOT_FOUND", "route not found");
+  }
+
+  private nextDelivery(identity: Identity): { message: Message | null } {
+    const { project } = this.options;
+    const agentId = identity.agentId;
+    const session = this.options.sessions
+      .list(project)
+      .find((candidate) => candidate.agentId === agentId);
+    if (
+      !session ||
+      !session.capabilities.activeDelivery ||
+      !session.capabilities.stateReporting ||
+      this.options.sessions.effectiveState(project, agentId) !== "idle" ||
+      this.options.messages.isPaused(project, "project", "") ||
+      this.options.messages.isPaused(project, "participant", agentId)
+    ) {
+      return { message: null };
+    }
+
+    const pending = this.options.messages.nextPending(project, agentId);
+    if (!pending || this.options.messages.isPaused(project, "thread", pending.threadId)) {
+      return { message: null };
+    }
+    this.options.messages.setDeliveryState(pending.id, "submitted");
+    return { message: pending };
+  }
+
+  private accepted(message: Message): void {
+    this.changed(message.project, message.to);
+  }
+
+  private changed(project: string, agentId: string): void {
+    this.events.emit(this.workEvent(project, agentId));
+    void this.options.dispatcher.kick(project, agentId).catch(() => {
+      // The durable queue remains authoritative; a later event can retry dispatch.
+    });
+  }
+
+  private workEvent(project: string, agentId: string): string {
+    return `work:${project}:${agentId}`;
+  }
+
+  private requireOperator(identity: Identity): void {
+    if (!identity.operator) {
+      throw new SynloqError("UNAUTHORIZED", "operator credential required");
+    }
+  }
+
+  private async waitFor<T>(
+    event: string,
+    waitMs: number,
+    response: ServerResponse,
+    read: () => Promise<T> | T,
+    complete: (value: T) => boolean,
+  ): Promise<T> {
+    const deadline = Date.now() + waitMs;
+
+    while (true) {
+      let notify!: () => void;
+      const notified = new Promise<void>((resolve) => {
+        notify = resolve;
+      });
+      const timer = setTimeout(notify, Math.max(0, deadline - Date.now()));
+      this.events.on(event, notify);
+      this.events.once(SHUTDOWN_EVENT, notify);
+      response.once("close", notify);
+
+      try {
+        const value = await read();
+        if (
+          complete(value) ||
+          waitMs === 0 ||
+          this.closing ||
+          response.destroyed ||
+          Date.now() >= deadline
+        ) {
+          return value;
+        }
+        await notified;
+      } finally {
+        clearTimeout(timer);
+        this.events.off(event, notify);
+        this.events.off(SHUTDOWN_EVENT, notify);
+        response.off("close", notify);
+      }
+    }
+  }
+
+  private async readJson(request: IncomingMessage): Promise<unknown> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
+      size += buffer.byteLength;
+      if (size <= MAX_JSON_BYTES) chunks.push(buffer);
+    }
+    if (size > MAX_JSON_BYTES) {
+      throw new SynloqError("INVALID_INPUT", "JSON body exceeds the 64 KiB limit");
+    }
+
+    try {
+      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    } catch {
+      throw new SynloqError("INVALID_INPUT", "malformed JSON body");
+    }
+  }
+
+  private sendError(response: ServerResponse, error: unknown, authentication: boolean): void {
+    const mapped = this.mapError(error, authentication);
+    this.sendJson(response, mapped.status, {
+      error: { code: mapped.error.code, message: mapped.error.message },
+    });
+  }
+
+  private mapError(error: unknown, authentication: boolean): ErrorResponse {
+    if (error instanceof z.ZodError) {
+      return {
+        status: 400,
+        error: new SynloqError("INVALID_INPUT", "request validation failed"),
+      };
+    }
+    if (!(error instanceof SynloqError)) {
+      return {
+        status: 500,
+        error: new SynloqError("STORAGE_FAILURE", "internal relay failure"),
+      };
+    }
+
+    switch (error.code) {
+      case "INVALID_INPUT":
+        return { status: 400, error };
+      case "UNAUTHORIZED":
+        return { status: authentication ? 401 : 403, error };
+      case "UNKNOWN_RECIPIENT":
+      case "NOT_FOUND":
+        return { status: 404, error };
+      case "IDEMPOTENCY_CONFLICT":
+      case "DUPLICATE_SESSION":
+      case "INCOMPATIBLE_PROTOCOL":
+      case "PAUSED":
+      case "DELIVERY_UNCERTAIN":
+        return { status: 409, error };
+      case "RATE_LIMITED":
+      case "QUEUE_FULL":
+        return { status: 429, error };
+      case "STORAGE_FAILURE":
+        return { status: 500, error };
+    }
+  }
+
+  private sendJson(response: ServerResponse, status: number, value: unknown): void {
+    if (response.destroyed || response.writableEnded) return;
+    const body = JSON.stringify(value);
+    response.writeHead(status, {
+      "content-type": "application/json; charset=utf-8",
+      "content-length": Buffer.byteLength(body),
+    });
+    response.end(body);
+  }
+}
