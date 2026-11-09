@@ -145,13 +145,9 @@ export class Dispatcher {
       (!adapter.capabilities.clientIdempotency || !session?.capabilities.clientIdempotency);
 
     if (uncertainWithoutIdempotency) {
-      this.messages.setDeliveryState(pending.id, "submitted");
-      this.messages.pause(
-        project,
-        "participant",
-        agentId,
-        new Date(this.clock.now()).toISOString(),
-      );
+      const quarantinedAt = new Date(this.clock.now()).toISOString();
+      this.messages.quarantineDelivery(pending.id, project, agentId, quarantinedAt);
+      this.messages.pause(project, "participant", agentId, quarantinedAt);
       this.backoffs.delete(key);
       return;
     }

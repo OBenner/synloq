@@ -41,6 +41,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   lease_expires_at TEXT NOT NULL,
   PRIMARY KEY(project, agent_id)
 );
+CREATE TABLE IF NOT EXISTS delivery_quarantine (
+  message_id TEXT PRIMARY KEY REFERENCES messages(id),
+  project TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  quarantined_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS delivery_quarantine_recipient
+  ON delivery_quarantine(project, recipient);
 `;
 
 export function storageFailure(message: string, cause: unknown): SynloqError {
@@ -77,14 +85,19 @@ export function openDatabase(path: string): DatabaseSync {
 
     const version = database.prepare("PRAGMA user_version").get() as
       { user_version: number } | undefined;
-    if (version?.user_version !== 0 && version?.user_version !== 1 && version?.user_version !== 2) {
+    if (
+      version?.user_version !== 0 &&
+      version?.user_version !== 1 &&
+      version?.user_version !== 2 &&
+      version?.user_version !== 3
+    ) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
 
     const migrated = database;
     withTransaction(migrated, () => {
       migrated.exec(schema);
-      migrated.exec("PRAGMA user_version = 2");
+      migrated.exec("PRAGMA user_version = 3");
     });
     return database;
   } catch (error) {

@@ -454,5 +454,65 @@ describe("Dispatcher", () => {
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);
     expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
     expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
+
+    f.clock.advance(15_001);
+    f.sessions.reapExpired(f.store);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+
+    f.sessions.register(
+      {
+        project: PROJECT,
+        agentId: AGENT,
+        sessionId: SESSION,
+        protocolVersion: 1,
+        capabilities: {
+          activeDelivery: true,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
+      },
+      false,
+    );
+    await f.dispatcher.kick(PROJECT, AGENT);
+
+    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
+  });
+
+  it("reaps ordinary idempotent submissions during an operator pause", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "synloq-ordinary-pause-reaping-"));
+    temporaryDirectories.push(directory);
+    const database = join(directory, "synloq.sqlite");
+    const f = makeFixture({}, {}, database);
+    const message = createMessage(f, "message-ordinary-paused", "2026-11-09T00:00:00.000Z");
+    f.store.setDeliveryState(message.id, "submitted");
+    f.store.pause(PROJECT, "participant", AGENT, new Date(f.clock.now()).toISOString());
+
+    f.clock.advance(15_001);
+    f.sessions.reapExpired(f.store);
+
+    expect(f.store.getMessage(message.id)?.deliveryState).toBe("stored");
+
+    f.store.resume(PROJECT, "participant", AGENT);
+    f.sessions.register(
+      {
+        project: PROJECT,
+        agentId: AGENT,
+        sessionId: SESSION,
+        protocolVersion: 1,
+        capabilities: {
+          activeDelivery: true,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
+      },
+      false,
+    );
+    await f.dispatcher.kick(PROJECT, AGENT);
+
+    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
+    expect(f.adapter.submissions[0]?.id).toBe(message.id);
+    expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
   });
 });

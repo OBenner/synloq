@@ -278,6 +278,30 @@ export class SQLiteMessageStore {
     });
   }
 
+  quarantineDelivery(id: string, project: string, recipient: string, createdAt: string): Message {
+    return this.write(() => {
+      const row = this.findById(id);
+      if (!row) throw new SynloqError("NOT_FOUND", "message not found");
+      if (row.project !== project || row.recipient !== recipient) {
+        throw new SynloqError("INVALID_INPUT", "quarantine recipient does not match the message");
+      }
+      if (row.delivery_state === "stored") this.transition(row, "submitted");
+      if (row.delivery_state !== "stored" && row.delivery_state !== "submitted") {
+        throw new SynloqError("INVALID_INPUT", "only a pending message can be quarantined");
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO delivery_quarantine (message_id, project, recipient, quarantined_at)
+           VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
+        )
+        .run(id, project, recipient, createdAt);
+      const quarantined = this.findById(id);
+      if (!quarantined) throw new Error("quarantined message could not be read");
+      return toMessage(quarantined);
+    });
+  }
+
   listSubmitted(project: string, recipient: string): Message[] {
     return this.read(() => {
       const rows = this.database
@@ -305,10 +329,10 @@ export class SQLiteMessageStore {
                  AND sessions.lease_expires_at <= ?
              )
              AND NOT EXISTS (
-               SELECT 1 FROM pause_gates
-               WHERE pause_gates.project = messages.project
-                 AND pause_gates.scope = 'participant'
-                 AND pause_gates.scope_id = messages.recipient
+               SELECT 1 FROM delivery_quarantine
+               WHERE delivery_quarantine.message_id = messages.id
+                 AND delivery_quarantine.project = messages.project
+                 AND delivery_quarantine.recipient = messages.recipient
              )`,
         )
         .run(id, reapedAt);

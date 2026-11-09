@@ -260,7 +260,7 @@ describe("SessionStore", () => {
     expect(store.list("verdicta")[0]?.state).toBe("idle");
   });
 
-  it("persists sessions in user_version 2 and restores them after reopening", () => {
+  it("persists sessions in user_version 3 and restores them after reopening", () => {
     const directory = mkdtempSync(join(tmpdir(), "synloq-sessions-"));
     temporaryDirectories.push(directory);
     const database = join(directory, "synloq.sqlite");
@@ -276,7 +276,7 @@ describe("SessionStore", () => {
     const inspector = new DatabaseSync(database);
     const version = inspector.prepare("PRAGMA user_version").get() as { user_version: number };
     inspector.close();
-    expect(version.user_version).toBe(2);
+    expect(version.user_version).toBe(3);
   });
 });
 
@@ -383,6 +383,49 @@ describe("expired-session reaping", () => {
 
     expect(messages.getMessage("message-progressed")?.deliveryState).toBe("delivered");
     expect(messages.getMessage("message-still-submitted")?.deliveryState).toBe("stored");
+  });
+
+  it("persists per-message quarantine across reopen and idempotent reaping", () => {
+    const directory = mkdtempSync(join(tmpdir(), "synloq-durable-quarantine-"));
+    temporaryDirectories.push(directory);
+    const database = join(directory, "synloq.sqlite");
+    const first = makeStore(database);
+    const firstMessages = makeMessages(database);
+    first.store.register(ctoSession("session-a"), false);
+    createSubmitted(firstMessages, "message-durable-quarantine");
+
+    expect(
+      firstMessages.quarantineDelivery(
+        "message-durable-quarantine",
+        "verdicta",
+        "cto",
+        "2026-11-09T00:00:00.000Z",
+      ).deliveryState,
+    ).toBe("submitted");
+    const inspector = new DatabaseSync(database);
+    const quarantine = inspector
+      .prepare(
+        "SELECT message_id, project, recipient FROM delivery_quarantine WHERE message_id = ?",
+      )
+      .get("message-durable-quarantine");
+    inspector.close();
+    expect(quarantine).toEqual({
+      message_id: "message-durable-quarantine",
+      project: "verdicta",
+      recipient: "cto",
+    });
+    first.store.close();
+    firstMessages.close();
+
+    const reopened = makeStore(database);
+    const reopenedMessages = makeMessages(database);
+    reopened.clock.advance(15_001);
+    reopened.store.reapExpired(reopenedMessages);
+
+    expect(reopenedMessages.getMessage("message-durable-quarantine")?.deliveryState).toBe(
+      "submitted",
+    );
+    expect(reopenedMessages.nextPending("verdicta", "cto")).toBeUndefined();
   });
 
   it("resets only submitted rows through the explicit retry boundary", () => {
