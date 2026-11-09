@@ -31,6 +31,9 @@ export class CredentialStore {
   async issue(project: string, agentId: string): Promise<string> {
     const paths = await projectPaths(this.projectRoot);
     const credentials = await this.read(paths.credentials, project);
+    if (credentials.project !== project) {
+      throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
+    }
     const token = randomBytes(32).toString("base64url");
     credentials.entries.push({ agentId, tokenHash: tokenDigest(token).toString("hex") });
 

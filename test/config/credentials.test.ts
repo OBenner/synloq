@@ -75,6 +75,34 @@ describe("CredentialStore", () => {
     }
   });
 
+  it("rejects mismatched-project issuance without changing existing credentials", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-mismatch-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-mismatch-home-"));
+    vi.stubEnv("SYNLOQ_HOME", home);
+    const store = new CredentialStore(root);
+    const ctoToken = await store.issue("verdicta", "cto");
+    const archToken = await store.issue("verdicta", "arch");
+    const paths = await projectPaths(root);
+    const original = await readFile(paths.credentials, "utf8");
+
+    await expect(store.issue("another-project", "arch")).rejects.toMatchObject({
+      name: "SynloqError",
+      code: "INVALID_INPUT",
+    });
+
+    await expect(readFile(paths.credentials, "utf8")).resolves.toBe(original);
+    await expect(store.authenticate("verdicta", ctoToken)).resolves.toEqual({
+      project: "verdicta",
+      agentId: "cto",
+      operator: false,
+    });
+    await expect(store.authenticate("verdicta", archToken)).resolves.toEqual({
+      project: "verdicta",
+      agentId: "arch",
+      operator: false,
+    });
+  });
+
   it("reserves operator identity for the operator credential", async () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-operator-project-"));
     const home = await mkdtemp(join(tmpdir(), "synloq-operator-home-"));
