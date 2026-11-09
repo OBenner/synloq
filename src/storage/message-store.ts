@@ -270,6 +270,38 @@ export class SQLiteMessageStore {
     });
   }
 
+  listSubmitted(project: string, recipient: string): Message[] {
+    return this.read(() => {
+      const rows = this.database
+        .prepare(
+          `SELECT ${messageColumns} FROM messages
+           WHERE project = ? AND recipient = ? AND delivery_state = 'submitted'
+           ORDER BY created_at, id`,
+        )
+        .all(project, recipient) as unknown as MessageRow[];
+      return rows.map(toMessage);
+    });
+  }
+
+  resetSubmittedForRetry(id: string): Message {
+    return this.write(() => {
+      const row = this.findById(id);
+      if (!row) throw new SynloqError("NOT_FOUND", "message not found");
+      if (row.delivery_state !== "submitted") {
+        throw new SynloqError("INVALID_INPUT", "only a submitted message can be reset for retry");
+      }
+      const result = this.database
+        .prepare(
+          "UPDATE messages SET delivery_state = 'stored' WHERE id = ? AND delivery_state = 'submitted'",
+        )
+        .run(id);
+      if (result.changes !== 1) throw new Error("delivery state changed during transaction");
+      const updated = this.findById(id);
+      if (!updated) throw new Error("reset message could not be read");
+      return toMessage(updated);
+    });
+  }
+
   acknowledge(id: string, project: string, recipient: string): Message {
     return this.write(() => {
       const row = this.findById(id);

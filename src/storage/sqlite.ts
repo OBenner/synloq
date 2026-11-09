@@ -27,6 +27,20 @@ CREATE TABLE IF NOT EXISTS pause_gates (
   created_at TEXT NOT NULL,
   PRIMARY KEY(project, scope, scope_id)
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  project TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  session_id TEXT NOT NULL UNIQUE,
+  protocol_version INTEGER NOT NULL,
+  active_delivery INTEGER NOT NULL CHECK (active_delivery IN (0, 1)),
+  state_reporting INTEGER NOT NULL CHECK (state_reporting IN (0, 1)),
+  client_idempotency INTEGER NOT NULL CHECK (client_idempotency IN (0, 1)),
+  state TEXT NOT NULL CHECK (state IN ('idle','busy','closed','unknown')),
+  last_heartbeat_at TEXT NOT NULL,
+  state_observed_at TEXT NOT NULL,
+  lease_expires_at TEXT NOT NULL,
+  PRIMARY KEY(project, agent_id)
+);
 `;
 
 export function storageFailure(message: string, cause: unknown): SynloqError {
@@ -63,14 +77,14 @@ export function openDatabase(path: string): DatabaseSync {
 
     const version = database.prepare("PRAGMA user_version").get() as
       { user_version: number } | undefined;
-    if (version?.user_version !== 0 && version?.user_version !== 1) {
+    if (version?.user_version !== 0 && version?.user_version !== 1 && version?.user_version !== 2) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
 
     const migrated = database;
     withTransaction(migrated, () => {
       migrated.exec(schema);
-      migrated.exec("PRAGMA user_version = 1");
+      migrated.exec("PRAGMA user_version = 2");
     });
     return database;
   } catch (error) {
