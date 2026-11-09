@@ -12,8 +12,13 @@ interface Backoff {
   retryAt: number;
 }
 
+interface Flight {
+  promise: Promise<void>;
+  rerunRequested: boolean;
+}
+
 export class Dispatcher {
-  private readonly flights = new Map<string, Promise<void>>();
+  private readonly flights = new Map<string, Flight>();
   private readonly backoffs = new Map<string, Backoff>();
 
   constructor(
@@ -24,27 +29,56 @@ export class Dispatcher {
   ) {}
 
   kick(project: string, agentId: string): Promise<void> {
+    return this.joinFlight(project, agentId, true);
+  }
+
+  runOnce(project: string, agentId: string): Promise<void> {
+    return this.joinFlight(project, agentId, false);
+  }
+
+  private joinFlight(project: string, agentId: string, drain: boolean): Promise<void> {
     const key = `${project}/${agentId}`;
     const existing = this.flights.get(key);
-    if (existing) return existing;
+    if (existing) {
+      if (drain) existing.rerunRequested = true;
+      return existing.promise;
+    }
 
-    let tracked: Promise<void>;
-    tracked = Promise.resolve()
-      .then(() => this.drain(project, agentId))
-      .finally(() => {
-        if (this.flights.get(key) === tracked) this.flights.delete(key);
-      });
-    this.flights.set(key, tracked);
-    return tracked;
+    let resolveFlight!: () => void;
+    let rejectFlight!: (reason: unknown) => void;
+    const promise = new Promise<void>((resolve, reject) => {
+      resolveFlight = () => resolve();
+      rejectFlight = (reason) => reject(reason);
+    });
+    const flight: Flight = { promise, rerunRequested: false };
+    this.flights.set(key, flight);
+    void this.executeFlight(project, agentId, flight, drain).then(resolveFlight, rejectFlight);
+    return promise;
   }
 
-  async runOnce(project: string, agentId: string): Promise<void> {
-    await this.attempt(project, agentId);
-  }
-
-  private async drain(project: string, agentId: string): Promise<void> {
-    while (await this.attempt(project, agentId)) {
-      // A delivered receipt admits the next FIFO entry; every other outcome stops.
+  private async executeFlight(
+    project: string,
+    agentId: string,
+    flight: Flight,
+    drain: boolean,
+  ): Promise<void> {
+    try {
+      let shouldDrain = drain;
+      do {
+        flight.rerunRequested = false;
+        if (shouldDrain) {
+          while (await this.attempt(project, agentId)) {
+            // A delivered receipt admits the next FIFO entry; every other outcome stops.
+          }
+        } else {
+          await this.attempt(project, agentId);
+        }
+        shouldDrain = flight.rerunRequested;
+      } while (flight.rerunRequested);
+    } finally {
+      if (this.flights.get(`${project}/${agentId}`) === flight) {
+        this.flights.delete(`${project}/${agentId}`);
+      }
     }
   }
 

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Clock, DeliveryAdapter, DeliveryReceipt } from "../../src/adapters/types.js";
 import { SynloqError } from "../../src/domain/errors.js";
@@ -55,6 +58,16 @@ class TestAdapter implements DeliveryAdapter {
   );
 }
 
+class EmptyCheckMessageStore extends SQLiteMessageStore {
+  onEmpty: (() => void) | undefined;
+
+  nextPending(project: string, recipient: string): Message | undefined {
+    const pending = super.nextPending(project, recipient);
+    if (!pending) this.onEmpty?.();
+    return pending;
+  }
+}
+
 interface Fixture {
   clock: MutableClock;
   store: SQLiteMessageStore;
@@ -63,18 +76,37 @@ interface Fixture {
   dispatcher: Dispatcher;
 }
 
-const fixtures: Fixture[] = [];
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
 
-function makeFixture(capabilities: Partial<AdapterCapabilities> = {}): Fixture {
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+const fixtures: Fixture[] = [];
+const temporaryDirectories: string[] = [];
+
+function makeFixture(
+  capabilities: Partial<AdapterCapabilities> = {},
+  sessionCapabilities: Partial<AdapterCapabilities> = capabilities,
+  databasePath = ":memory:",
+  suppliedStore?: SQLiteMessageStore,
+): Fixture {
   const clock = new MutableClock();
-  const store = new SQLiteMessageStore(":memory:");
-  const sessions = new SessionStore(":memory:", clock);
+  const store = suppliedStore ?? new SQLiteMessageStore(databasePath);
+  const sessions = new SessionStore(databasePath, clock);
   const adapter = new TestAdapter(capabilities);
   const mergedCapabilities: AdapterCapabilities = {
     activeDelivery: true,
     stateReporting: true,
     clientIdempotency: true,
-    ...capabilities,
+    ...sessionCapabilities,
   };
   sessions.register(
     {
@@ -116,6 +148,9 @@ afterEach(() => {
   for (const fixture of fixtures.splice(0)) {
     fixture.sessions.close();
     fixture.store.close();
+  }
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -315,5 +350,109 @@ describe("Dispatcher", () => {
       message.id,
     ]);
     expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+  });
+
+  it("excludes overlapping runOnce calls from submitting the same FIFO row", async () => {
+    const f = makeFixture();
+    const first = createMessage(f, "message-once-first", "2026-11-09T00:00:00.000Z");
+    const second = createMessage(f, "message-once-second", "2026-11-09T00:00:01.000Z");
+    const started = deferred<void>();
+    const blocked = deferred<DeliveryReceipt>();
+    f.adapter.handler = (message) => {
+      if (message.id === first.id) {
+        started.resolve(undefined);
+        return blocked.promise;
+      }
+      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+    };
+
+    const firstAttempt = f.dispatcher.runOnce(PROJECT, AGENT);
+    const overlappingAttempt = f.dispatcher.runOnce(PROJECT, AGENT);
+    await started.promise;
+    blocked.resolve({ state: "delivered", clientMessageId: first.id });
+    const results = await Promise.allSettled([firstAttempt, overlappingAttempt]);
+
+    expect(overlappingAttempt).toBe(firstAttempt);
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id]);
+    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id)?.deliveryState).toBe("stored");
+  });
+
+  it("shares exclusion between runOnce and kick while preserving drain semantics", async () => {
+    const f = makeFixture();
+    const first = createMessage(f, "message-mixed-first", "2026-11-09T00:00:00.000Z");
+    const second = createMessage(f, "message-mixed-second", "2026-11-09T00:00:01.000Z");
+    const started = deferred<void>();
+    const blocked = deferred<DeliveryReceipt>();
+    f.adapter.handler = (message) => {
+      if (message.id === first.id) {
+        started.resolve(undefined);
+        return blocked.promise;
+      }
+      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+    };
+
+    const attempt = f.dispatcher.runOnce(PROJECT, AGENT);
+    const overlappingDrain = f.dispatcher.kick(PROJECT, AGENT);
+    await started.promise;
+    blocked.resolve({ state: "delivered", clientMessageId: first.id });
+    const results = await Promise.allSettled([attempt, overlappingDrain]);
+
+    expect(overlappingDrain).toBe(attempt);
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, second.id]);
+    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+  });
+
+  it("rechecks work when a kick overlaps the terminal empty queue check", async () => {
+    const store = new EmptyCheckMessageStore(":memory:");
+    const f = makeFixture({}, {}, ":memory:", store);
+    const first = createMessage(f, "message-terminal-first", "2026-11-09T00:00:00.000Z");
+    const secondId = "message-terminal-second";
+    let overlappingDrain: Promise<void> | undefined;
+    store.onEmpty = () => {
+      store.onEmpty = undefined;
+      createMessage(f, secondId, "2026-11-09T00:00:01.000Z");
+      overlappingDrain = f.dispatcher.kick(PROJECT, AGENT);
+    };
+
+    const initialDrain = f.dispatcher.kick(PROJECT, AGENT);
+    await initialDrain;
+    if (!overlappingDrain) throw new Error("terminal empty check was not observed");
+    await overlappingDrain;
+
+    expect(overlappingDrain).toBe(initialDrain);
+    expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, secondId]);
+    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(secondId)?.deliveryState).toBe("delivered");
+  });
+
+  it("keeps asymmetric uncertain quarantine through reaping and participant resume", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "synloq-asymmetric-quarantine-"));
+    temporaryDirectories.push(directory);
+    const database = join(directory, "synloq.sqlite");
+    const f = makeFixture({ clientIdempotency: false }, { clientIdempotency: true }, database);
+    const uncertain = createMessage(f, "message-asymmetric", "2026-11-09T00:00:00.000Z");
+    const later = createMessage(f, "message-after-resume", "2026-11-09T00:00:01.000Z");
+    f.adapter.handler = () =>
+      Promise.reject(new SynloqError("DELIVERY_UNCERTAIN", "submission outcome is unknown"));
+
+    await f.dispatcher.runOnce(PROJECT, AGENT);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(true);
+
+    f.clock.advance(15_001);
+    f.sessions.reapExpired(f.store);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+
+    f.store.resume(PROJECT, "participant", AGENT);
+    heartbeat(f);
+    await f.dispatcher.kick(PROJECT, AGENT);
+
+    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
   });
 });

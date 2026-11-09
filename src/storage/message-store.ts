@@ -303,6 +303,12 @@ export class SQLiteMessageStore {
                  AND sessions.agent_id = messages.recipient
                  AND sessions.client_idempotency = 1
                  AND sessions.lease_expires_at <= ?
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM pause_gates
+               WHERE pause_gates.project = messages.project
+                 AND pause_gates.scope = 'participant'
+                 AND pause_gates.scope_id = messages.recipient
              )`,
         )
         .run(id, reapedAt);
