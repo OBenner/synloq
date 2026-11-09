@@ -282,6 +282,54 @@ describe("RelayHttpServer sessions and active delivery", () => {
     await expect(waiting).resolves.toEqual({ message });
   });
 
+  it("keeps a delivery stored when its waiting adapter aborts", async () => {
+    await fixture.arch.registerSession({
+      sessionId: "session-arch-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+    const gate = { scope: "participant" as const, scopeId: "arch" };
+    await fixture.operator.pause(gate);
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "Do not strand this delivery",
+      expectsReply: false,
+      idempotencyKey: "http-delivery-abort-1",
+    });
+
+    let markRead!: () => void;
+    const read = new Promise<void>((resolve) => {
+      markRead = resolve;
+    });
+    const originalIsPaused = fixture.messages.isPaused.bind(fixture.messages);
+    let observing = false;
+    vi.spyOn(fixture.messages, "isPaused").mockImplementation((project, scope, scopeId) => {
+      const paused = originalIsPaused(project, scope, scopeId);
+      if (observing && scope === "participant" && scopeId === "arch") {
+        observing = false;
+        markRead();
+      }
+      return paused;
+    });
+    const controller = new AbortController();
+    const aborted = fetch(`${fixture.baseUrl}/v1/deliveries/next?waitMs=5000`, {
+      headers: authorized(fixture.archToken),
+      signal: controller.signal,
+    });
+    const rejection = expect(aborted).rejects.toThrow();
+    observing = true;
+    await read;
+
+    // Make work available without an event, then wake the old waiter only by closing it.
+    fixture.messages.resume(PROJECT, gate.scope, gate.scopeId);
+    controller.abort();
+    await rejection;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    await expect(fixture.arch.nextDelivery({ waitMs: 0 })).resolves.toEqual({ message });
+  });
+
   it("does not expose replacement to an ordinary agent", async () => {
     await fixture.arch.registerSession({
       sessionId: "session-arch-a",

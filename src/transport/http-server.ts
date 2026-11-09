@@ -394,6 +394,7 @@ export class RelayHttpServer {
           return value;
         }
         await notified;
+        if (this.closing || response.destroyed || response.writableEnded) return value;
       } finally {
         clearTimeout(timer);
         this.events.off(event, notify);
