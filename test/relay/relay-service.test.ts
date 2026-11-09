@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Identity } from "../../src/config/credentials.js";
 import { SynloqError } from "../../src/domain/errors.js";
 import type { Participant, SendMessageInput } from "../../src/domain/message.js";
+import { ProtectionPolicy } from "../../src/relay/protection.js";
 import { RelayService, type ReplyRequest } from "../../src/relay/relay-service.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
@@ -50,7 +51,8 @@ async function makeRelay() {
   const sessions = new SessionStore(":memory:");
   messageStores.push(messages);
   sessionStores.push(sessions);
-  const relay = new RelayService(participants, messages, sessions);
+  const protection = new ProtectionPolicy(messages);
+  const relay = new RelayService(participants, messages, sessions, protection);
 
   return {
     relay,

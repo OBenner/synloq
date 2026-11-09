@@ -32,6 +32,8 @@ interface PendingUsage {
   bytes: number;
 }
 
+export type PauseScope = "project" | "participant" | "thread";
+
 const messageColumns = `
   id, project, thread_id, sender, recipient, text, expects_reply, in_reply_to,
   created_at, idempotency_key, delivery_state
@@ -344,6 +346,51 @@ export class SQLiteMessageStore {
         )
         .get(project, recipient) as { count: number; bytes: number };
       return { count: Number(row.count), bytes: Number(row.bytes) };
+    });
+  }
+
+  countThreadSince(threadId: string, since: string): number {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM messages
+           WHERE thread_id = ? AND created_at >= ?`,
+        )
+        .get(threadId, since) as { count: number };
+      return Number(row.count);
+    });
+  }
+
+  pause(project: string, scope: PauseScope, scopeId: string, createdAt: string): void {
+    this.write(() => {
+      this.database
+        .prepare(
+          `INSERT INTO pause_gates (project, scope, scope_id, created_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(project, scope, scope_id) DO NOTHING`,
+        )
+        .run(project, scope, scopeId, createdAt);
+    });
+  }
+
+  resume(project: string, scope: PauseScope, scopeId: string): void {
+    this.write(() => {
+      this.database
+        .prepare("DELETE FROM pause_gates WHERE project = ? AND scope = ? AND scope_id = ?")
+        .run(project, scope, scopeId);
+    });
+  }
+
+  isPaused(project: string, scope: PauseScope, scopeId: string): boolean {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT 1 AS paused FROM pause_gates
+           WHERE project = ? AND (scope = 'project' OR (scope = ? AND scope_id = ?))
+           LIMIT 1`,
+        )
+        .get(project, scope, scopeId);
+      return row !== undefined;
     });
   }
 

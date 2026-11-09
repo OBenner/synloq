@@ -7,8 +7,9 @@ import {
   type Participant,
   type SendMessageInput,
 } from "../domain/message.js";
-import type { SQLiteMessageStore } from "../storage/message-store.js";
+import type { PauseScope, SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
+import type { ProtectionPolicy } from "./protection.js";
 
 export type SendRequest = Omit<SendMessageInput, "project" | "from">;
 export type ReplyRequest = Omit<SendRequest, "to" | "inReplyTo"> & {
@@ -32,6 +33,7 @@ export class RelayService {
     private readonly participants: Participant[],
     private readonly messages: SQLiteMessageStore,
     private readonly sessions: SessionStore,
+    private readonly protection: ProtectionPolicy,
     private readonly ids: () => string = () => crypto.randomUUID(),
     private readonly clock: Clock = { now: () => Date.now() },
   ) {}
@@ -55,12 +57,25 @@ export class RelayService {
       throw new SynloqError("NOT_FOUND", "reply parent not found");
     }
 
-    return this.messages.create(
+    this.protection.beforeSend(input);
+    const result = this.messages.create(
       input,
       this.ids(),
       new Date(this.clock.now()).toISOString(),
       parent?.threadId ?? this.ids(),
-    ).message;
+    );
+    if (result.created) this.protection.afterAccept(result.message);
+    return result.message;
+  }
+
+  pause(identity: Identity, project: string, scope: PauseScope, scopeId: string): void {
+    this.requireOperator(identity, project);
+    this.protection.pause(project, scope, scopeId);
+  }
+
+  resume(identity: Identity, project: string, scope: PauseScope, scopeId: string): void {
+    this.requireOperator(identity, project);
+    this.protection.resume(project, scope, scopeId);
   }
 
   async reply(identity: Identity, raw: ReplyRequest): Promise<Message> {
@@ -104,6 +119,12 @@ export class RelayService {
       );
     }
     return message;
+  }
+
+  private requireOperator(identity: Identity, project: string): void {
+    if (!identity.operator || identity.project !== project) {
+      throw new SynloqError("UNAUTHORIZED", "only a project operator can change pause gates");
+    }
   }
 
   private requireParticipant(project: string, agentId: string): void {
