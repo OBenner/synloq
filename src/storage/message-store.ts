@@ -268,6 +268,12 @@ export class SQLiteMessageStore {
     return this.write(() => {
       const row = this.findById(id);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
+      if (row.delivery_state === "stored" && target === "delivered") {
+        this.transition(row, "submitted");
+        const submitted = this.findById(id);
+        if (!submitted) throw new Error("submitted message could not be read");
+        return this.transition(submitted, "delivered");
+      }
       return this.transition(row, target);
     });
   }

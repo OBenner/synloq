@@ -152,8 +152,15 @@ describe("SQLiteMessageStore", () => {
     expect(store.getMessage(message.id)?.deliveryState).toBe("acked");
   });
 
+  it("records stored to delivered through both legal transitions", () => {
+    const store = makeStore();
+    const message = createAt(store, crypto.randomUUID(), new Date().toISOString());
+
+    expect(store.setDeliveryState(message.id, "delivered").deliveryState).toBe("delivered");
+    expect(store.getMessage(message.id)?.deliveryState).toBe("delivered");
+  });
+
   it.each([
-    ["stored", "delivered"],
     ["stored", "acked"],
     ["submitted", "stored"],
     ["delivered", "submitted"],
