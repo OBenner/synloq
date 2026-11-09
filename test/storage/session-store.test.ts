@@ -48,10 +48,39 @@ function makeStore(path = ":memory:"): { store: SessionStore; clock: MutableCloc
   return { store, clock };
 }
 
-function makeMessages(): SQLiteMessageStore {
-  const store = new SQLiteMessageStore(":memory:");
+function makeMessages(path = ":memory:"): SQLiteMessageStore {
+  const store = new SQLiteMessageStore(path);
   messageStores.push(store);
   return store;
+}
+
+class InterleavingMessageStore extends SQLiteMessageStore {
+  constructor(
+    path: string,
+    private readonly afterSubmittedSnapshot: () => void,
+  ) {
+    super(path);
+  }
+
+  listSubmitted(project: string, recipient: string) {
+    const submitted = super.listSubmitted(project, recipient);
+    this.afterSubmittedSnapshot();
+    return submitted;
+  }
+}
+
+function makeSharedReapingStores(afterSubmittedSnapshot: () => void = () => {}): {
+  store: SessionStore;
+  clock: MutableClock;
+  messages: InterleavingMessageStore;
+} {
+  const directory = mkdtempSync(join(tmpdir(), "synloq-reaping-race-"));
+  temporaryDirectories.push(directory);
+  const database = join(directory, "synloq.sqlite");
+  const { store, clock } = makeStore(database);
+  const messages = new InterleavingMessageStore(database, afterSubmittedSnapshot);
+  messageStores.push(messages);
+  return { store, clock, messages };
 }
 
 function createSubmitted(
@@ -284,8 +313,7 @@ describe("inactiveReason", () => {
 
 describe("expired-session reaping", () => {
   it("resets submitted messages only for an expired idempotent adapter", () => {
-    const { store, clock } = makeStore();
-    const messages = makeMessages();
+    const { store, clock, messages } = makeSharedReapingStores();
     store.register(ctoSession("session-a"), false);
     store.register({ ...ctoSession("session-b"), agentId: "arch" }, false);
     createSubmitted(messages, "message-cto");
@@ -301,8 +329,7 @@ describe("expired-session reaping", () => {
   });
 
   it("keeps uncertain submissions blocked without client idempotency", () => {
-    const { store, clock } = makeStore();
-    const messages = makeMessages();
+    const { store, clock, messages } = makeSharedReapingStores();
     const registration = ctoSession("session-a");
     registration.capabilities.clientIdempotency = false;
     store.register(registration, false);
@@ -313,6 +340,49 @@ describe("expired-session reaping", () => {
 
     expect(messages.getMessage("message-uncertain")?.deliveryState).toBe("submitted");
     expect(messages.nextPending("verdicta", "cto")).toBeUndefined();
+  });
+
+  it("does not reset a stale snapshot after the lease is renewed", () => {
+    const { store, clock, messages } = makeSharedReapingStores(() => {
+      store.heartbeat("verdicta", "cto", "session-a", "idle");
+    });
+    store.register(ctoSession("session-a"), false);
+    createSubmitted(messages, "message-renewed");
+    clock.advance(15_001);
+
+    store.reapExpired(messages);
+
+    expect(messages.getMessage("message-renewed")?.deliveryState).toBe("submitted");
+  });
+
+  it("does not reset a stale snapshot after idempotency capability replacement", () => {
+    const { store, clock, messages } = makeSharedReapingStores(() => {
+      const replacement = ctoSession("session-b");
+      replacement.capabilities.clientIdempotency = false;
+      store.register(replacement, true);
+    });
+    store.register(ctoSession("session-a"), false);
+    createSubmitted(messages, "message-replaced");
+    clock.advance(15_001);
+
+    store.reapExpired(messages);
+
+    expect(messages.getMessage("message-replaced")?.deliveryState).toBe("submitted");
+  });
+
+  it("skips delivered progress and continues reaping later submitted messages", () => {
+    const { store, clock, messages } = makeSharedReapingStores(() => {
+      messages.setDeliveryState("message-progressed", "delivered");
+    });
+    store.register(ctoSession("session-a"), false);
+    createSubmitted(messages, "message-progressed");
+    createSubmitted(messages, "message-still-submitted");
+    clock.advance(15_001);
+
+    expect(() => store.reapExpired(messages)).not.toThrow();
+
+    expect(messages.getMessage("message-progressed")?.deliveryState).toBe("delivered");
+    expect(messages.getMessage("message-still-submitted")?.deliveryState).toBe("stored");
   });
 
   it("resets only submitted rows through the explicit retry boundary", () => {

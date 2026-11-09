@@ -283,6 +283,24 @@ export class SQLiteMessageStore {
     });
   }
 
+  resetSubmittedForExpiredLease(id: string, reapedAt: string): void {
+    this.write(() => {
+      this.database
+        .prepare(
+          `UPDATE messages SET delivery_state = 'stored'
+           WHERE id = ? AND delivery_state = 'submitted'
+             AND EXISTS (
+               SELECT 1 FROM sessions
+               WHERE sessions.project = messages.project
+                 AND sessions.agent_id = messages.recipient
+                 AND sessions.client_idempotency = 1
+                 AND sessions.lease_expires_at <= ?
+             )`,
+        )
+        .run(id, reapedAt);
+    });
+  }
+
   resetSubmittedForRetry(id: string): Message {
     return this.write(() => {
       const row = this.findById(id);

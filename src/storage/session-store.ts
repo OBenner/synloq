@@ -245,8 +245,9 @@ export class SessionStore {
   }
 
   reapExpired(messages: SQLiteMessageStore): void {
+    const now = this.clock.now();
+    const reapedAt = new Date(now).toISOString();
     const expired = this.read(() => {
-      const now = this.clock.now();
       const rows = this.database
         .prepare(`SELECT ${sessionColumns} FROM sessions ORDER BY project, agent_id`)
         .all() as unknown as SessionRow[];
@@ -257,7 +258,7 @@ export class SessionStore {
 
     for (const row of expired) {
       for (const message of messages.listSubmitted(row.project, row.agent_id)) {
-        messages.resetSubmittedForRetry(message.id);
+        messages.resetSubmittedForExpiredLease(message.id, reapedAt);
       }
     }
   }
