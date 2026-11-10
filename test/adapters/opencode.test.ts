@@ -3,10 +3,15 @@ import type { OpencodeClient as OpenCodeV2Client } from "@opencode-ai/sdk/v2/cli
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenCodeAdapter, runOpenCodeAdapter } from "../../src/adapters/opencode.js";
 import { frameMessage } from "../../src/adapters/reference.js";
+import type { Clock } from "../../src/adapters/types.js";
 import { SynloqError } from "../../src/domain/errors.js";
 import type { Message } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION, type AdapterCapabilities } from "../../src/domain/session.js";
+import { Dispatcher } from "../../src/relay/dispatcher.js";
+import { SQLiteMessageStore } from "../../src/storage/message-store.js";
+import { SessionStore } from "../../src/storage/session-store.js";
 import type { RelayHttpClient } from "../../src/transport/http-client.js";
+import { MutableClock } from "./contract.js";
 
 const SESSION_ID = "ses_cto";
 const config = { project: "verdicta", agentId: "cto", sessionId: SESSION_ID };
@@ -142,7 +147,7 @@ afterEach(async () => {
   await Promise.all(closers.splice(0).map((close) => close()));
 });
 
-function makeFixture(capabilities?: AdapterCapabilities) {
+function makeFixture(capabilities?: AdapterCapabilities, clock: Clock = { now: () => Date.now() }) {
   const sdk = new FakeSdk();
   const relay = makeRelay();
   const adapter = new OpenCodeAdapter(
@@ -151,9 +156,55 @@ function makeFixture(capabilities?: AdapterCapabilities) {
     relay,
     { ...config, heartbeatIntervalMs: 5 },
     capabilities,
+    clock,
   );
   closers.push(() => adapter.close());
   return { adapter, sdk, relay };
+}
+
+async function makeIdleFixture() {
+  const fixture = makeFixture();
+  fixture.adapter.start();
+  await expectState(fixture.adapter, "idle");
+  return fixture;
+}
+
+function makeDispatcherFixture(clock = new MutableClock()) {
+  const { adapter, sdk, relay } = makeFixture(undefined, clock);
+  const store = new SQLiteMessageStore(":memory:");
+  const sessions = new SessionStore(":memory:", clock);
+  sessions.register(
+    {
+      ...config,
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: { ...adapter.capabilities },
+    },
+    false,
+  );
+  const dispatcher = new Dispatcher(
+    store,
+    sessions,
+    new Map([[`${config.project}/${config.agentId}`, adapter]]),
+    clock,
+  );
+  const pending = store.create(
+    {
+      project: message.project,
+      from: message.from,
+      to: message.to,
+      text: message.text,
+      expectsReply: message.expectsReply,
+      idempotencyKey: message.idempotencyKey,
+    },
+    message.id,
+    message.createdAt,
+    message.threadId,
+  ).message;
+  closers.push(async () => {
+    sessions.close();
+    store.close();
+  });
+  return { adapter, sdk, relay, store, sessions, dispatcher, pending, clock };
 }
 
 async function expectState(adapter: OpenCodeAdapter, expected: string): Promise<void> {
@@ -164,7 +215,7 @@ async function expectState(adapter: OpenCodeAdapter, expected: string): Promise<
 
 describe("OpenCode queued prompt adapter", () => {
   it("uses queue delivery and never steer", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, sdk } = await makeIdleFixture();
 
     await adapter.submit(SESSION_ID, message);
 
@@ -180,7 +231,7 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("returns delivered only for the new inbox entry bound to the visible session", async () => {
-    const { adapter } = makeFixture();
+    const { adapter } = await makeIdleFixture();
 
     const receipt = await adapter.submit(SESSION_ID, message);
 
@@ -188,7 +239,7 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("does not accept another session's inbox entry as delivery evidence", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, sdk } = await makeIdleFixture();
     sdk.prompt.mockImplementationOnce(async (parameters) => {
       const response = admission(parameters);
       response.data.data.sessionID = "ses_other";
@@ -202,7 +253,7 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("caches known message-ID receipts without another prompt", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, sdk } = await makeIdleFixture();
 
     const first = await adapter.submit(SESSION_ID, message);
     const retry = await adapter.submit(SESSION_ID, message);
@@ -212,7 +263,7 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("marks post-transmission failures uncertain and never blindly reposts", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, sdk } = await makeIdleFixture();
     sdk.prompt.mockRejectedValueOnce(new Error("socket reset after request transmission"));
 
     await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
@@ -228,7 +279,7 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("preserves a known pre-transmission rejection for ordinary backoff", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, sdk } = await makeIdleFixture();
     sdk.prompt.mockRejectedValueOnce(
       new SynloqError("INVALID_INPUT", "rejected before request transmission"),
     );
@@ -412,5 +463,147 @@ describe("OpenCode queued prompt adapter", () => {
       sessionId: SESSION_ID,
       state: "idle",
     });
+  });
+
+  it("close completes while a status observation never settles", async () => {
+    const sdk = new FakeSdk();
+    sdk.status.mockImplementationOnce(() => new Promise(() => {}));
+    const relay = makeRelay();
+    const adapter = new OpenCodeAdapter(sdk.asV2Client(), sdk.asNormalClient(), relay, {
+      ...config,
+      heartbeatIntervalMs: 5,
+    });
+    adapter.start();
+    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(1));
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("close exceeded 200 ms")), 200);
+    });
+    try {
+      await expect(Promise.race([adapter.close(), timeout])).resolves.toBeUndefined();
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  });
+});
+
+describe("OpenCode dispatcher local freshness", () => {
+  it("performs zero prompts during startup before local idle observation", async () => {
+    const { sdk, dispatcher } = makeDispatcherFixture();
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(sdk.prompt).not.toHaveBeenCalled();
+  });
+
+  it("performs zero prompts after EOF while its heartbeat is deferred", async () => {
+    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    let releaseHeartbeat!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseHeartbeat = resolve;
+    });
+    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
+      await blocked;
+      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
+    });
+    sdk.streams[0]?.end();
+    await expectState(adapter, "unknown");
+
+    try {
+      await dispatcher.runOnce(config.project, config.agentId);
+      expect(sdk.prompt).not.toHaveBeenCalled();
+    } finally {
+      releaseHeartbeat();
+    }
+  });
+
+  it("performs zero prompts during reconnect before fresh status", async () => {
+    const { adapter, sdk, dispatcher } = makeDispatcherFixture();
+    let resolveReconnectStatus!: (value: { data: Record<string, { type: string }> }) => void;
+    sdk.status
+      .mockResolvedValueOnce({ data: { [SESSION_ID]: { type: "idle" } } })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveReconnectStatus = resolve;
+          }),
+      );
+    adapter.start();
+    await expectState(adapter, "idle");
+    sdk.streams[0]?.end();
+    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
+    expect(await adapter.state(SESSION_ID)).toBe("unknown");
+
+    try {
+      await dispatcher.runOnce(config.project, config.agentId);
+      expect(sdk.prompt).not.toHaveBeenCalled();
+    } finally {
+      resolveReconnectStatus({ data: { [SESSION_ID]: { type: "idle" } } });
+    }
+  });
+
+  it("performs zero prompts on local busy while the relay remains idle", async () => {
+    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    let releaseHeartbeat!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseHeartbeat = resolve;
+    });
+    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
+      await blocked;
+      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
+    });
+    sdk.streams[0]?.push({
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "busy" } },
+    });
+    await expectState(adapter, "busy");
+
+    try {
+      await dispatcher.runOnce(config.project, config.agentId);
+      expect(sdk.prompt).not.toHaveBeenCalled();
+    } finally {
+      releaseHeartbeat();
+    }
+  });
+
+  it("performs zero prompts after deletion while its heartbeat is deferred", async () => {
+    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    let releaseHeartbeat!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseHeartbeat = resolve;
+    });
+    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
+      await blocked;
+      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
+    });
+    sdk.streams[0]?.push({ type: "session.deleted", properties: { sessionID: SESSION_ID } });
+    await expectState(adapter, "closed");
+
+    try {
+      await dispatcher.runOnce(config.project, config.agentId);
+      expect(sdk.prompt).not.toHaveBeenCalled();
+    } finally {
+      releaseHeartbeat();
+    }
+  });
+
+  it("performs zero prompts when local idle is older than five seconds", async () => {
+    const { adapter, sdk, sessions, dispatcher, clock } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    clock.advance(5_001);
+    sessions.heartbeat(config.project, config.agentId, SESSION_ID, "idle");
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(sdk.prompt).not.toHaveBeenCalled();
   });
 });

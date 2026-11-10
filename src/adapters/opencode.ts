@@ -18,11 +18,12 @@ import {
 } from "../domain/session.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
 import { frameMessage } from "./reference.js";
-import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
+import type { Clock, DeliveryAdapter, DeliveryReceipt } from "./types.js";
 
 const INITIAL_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 30_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 1_000;
+const STATE_FRESHNESS_MS = 5_000;
 
 export interface OpenCodeAdapterConfig {
   project: string;
@@ -57,6 +58,18 @@ function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+  let abort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => reject(new DOMException("aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  return Promise.race([operation, aborted]).finally(() => {
+    signal.removeEventListener("abort", abort);
+  });
+}
+
 function mapStatus(status: OpenCodeSessionStatus): SessionState {
   if (status.type === "idle") return "idle";
   if (status.type === "busy") return "busy";
@@ -79,6 +92,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   private readonly receipts = new Map<string, DeliveryReceipt>();
   private readonly uncertainMessages = new Set<string>();
   private observedState: SessionState = "unknown";
+  private observedAt = Number.NaN;
   private abortController: AbortController | undefined;
   private heartbeatTask: Promise<void> | undefined;
   private eventTask: Promise<void> | undefined;
@@ -96,6 +110,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
       stateReporting: true,
       clientIdempotency: true,
     },
+    private readonly clock: Clock = { now: () => Date.now() },
   ) {
     this.capabilities = { ...capabilities };
   }
@@ -110,7 +125,18 @@ export class OpenCodeAdapter implements DeliveryAdapter {
 
   async state(sessionId: string): Promise<SessionState> {
     if (sessionId !== this.config.sessionId) return "unknown";
-    return this.closed ? "closed" : this.observedState;
+    return this.currentState();
+  }
+
+  private currentState(): SessionState {
+    if (this.closed) return "closed";
+    if (
+      this.observedState === "idle" &&
+      (!Number.isFinite(this.observedAt) || this.clock.now() - this.observedAt > STATE_FRESHNESS_MS)
+    ) {
+      return "unknown";
+    }
+    return this.observedState;
   }
 
   async submit(sessionId: string, message: Message): Promise<DeliveryReceipt> {
@@ -122,6 +148,9 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     if (this.uncertainMessages.has(message.id)) throw this.deliveryUncertain(message.id);
     if (this.closed) {
       throw new SynloqError("INVALID_INPUT", "OpenCode adapter is closed");
+    }
+    if (this.currentState() !== "idle") {
+      throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");
     }
 
     try {
@@ -194,6 +223,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   private async observe(state: SessionState): Promise<void> {
     if (this.closed) return;
     this.observedState = state;
+    this.observedAt = this.clock.now();
     try {
       await this.report(state);
     } catch {
@@ -201,8 +231,8 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     }
   }
 
-  private async refreshStatus(): Promise<boolean> {
-    const response = await this.client.session.status({});
+  private async refreshStatus(signal: AbortSignal): Promise<boolean> {
+    const response = await raceWithAbort(this.client.session.status({}), signal);
     if (this.closed) return false;
     const status = response.data?.[this.config.sessionId];
     if (!status) {
@@ -217,7 +247,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     let failures = 0;
     while (!signal.aborted) {
       try {
-        await this.report(this.observedState);
+        await this.report(this.currentState());
         failures = 0;
         await abortableSleep(
           Math.max(1, this.config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS),
@@ -236,12 +266,12 @@ export class OpenCodeAdapter implements DeliveryAdapter {
       try {
         await this.observe("unknown");
         const events = await this.client.event.subscribe({ signal });
-        let freshStatus = await this.refreshStatus();
+        let freshStatus = await this.refreshStatus(signal);
         for await (const event of events.stream) {
           if (signal.aborted) break;
           if (event.type === "server.connected") {
             await this.observe("unknown");
-            freshStatus = await this.refreshStatus();
+            freshStatus = await this.refreshStatus(signal);
             failures = 0;
             continue;
           }
