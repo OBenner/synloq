@@ -46,10 +46,8 @@ class FakeHookContractAdapter implements DeliveryAdapter {
     const visible = this.visible.find((entry) => entry.id === message.id);
     if (!visible) throw new Error("fake Claude hook did not observe visible admission");
 
-    // The real adapter remains submitted here. The fake client synchronously runs
-    // UserPromptSubmit and Stop so the shared synchronous contract can observe delivery.
-    this.channel.observeHook("UserPromptSubmit", sessionId);
-    this.channel.observeHook("Stop", sessionId);
+    // The real adapter remains submitted here. Fake visible admission lets the
+    // shared synchronous contract observe the subsequent delivered receipt.
     const receipt: DeliveryReceipt = { state: "delivered", clientMessageId: message.id };
     this.receipts.set(message.id, receipt);
     return receipt;
@@ -80,7 +78,6 @@ runAdapterContract(
         experimental: { "claude/channel": {}, "claude/channel/permission": {} },
       },
     });
-    channel.observeHook("SessionStart", CONTRACT_SESSION);
     const adapter = new FakeHookContractAdapter(channel, visible);
     sessions.register(contractRegistration(CONTRACT_SESSION, capabilities), false);
     const dispatcher = new Dispatcher(
@@ -98,15 +95,6 @@ runAdapterContract(
       visible,
       dispatcher,
       setState(state) {
-        const event =
-          state === "idle"
-            ? "SessionStart"
-            : state === "busy"
-              ? "UserPromptSubmit"
-              : state === "closed"
-                ? "SessionEnd"
-                : "PreToolUse";
-        channel.observeHook(event, CONTRACT_SESSION);
         sessions.heartbeat(CONTRACT_PROJECT, CONTRACT_AGENT, CONTRACT_SESSION, state);
       },
       failNext(messageId) {

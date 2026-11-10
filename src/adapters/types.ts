@@ -10,9 +10,18 @@ export interface Clock {
   now(): number;
 }
 
+export interface DeliveryEvidence {
+  sessionId: string;
+  project: string;
+  from: string;
+  messageId: string;
+  threadId: string;
+}
+
 export interface DeliveryReceipt {
   state: "submitted" | "delivered";
   clientMessageId?: string;
+  evidence?: DeliveryEvidence;
 }
 
 export interface DeliveryAdapter {

@@ -81,6 +81,13 @@ describe("Claude hook state mapping", () => {
     expect(receipt).toHaveBeenCalledWith(message.id, {
       state: "delivered",
       clientMessageId: message.id,
+      evidence: {
+        sessionId: config.sessionId,
+        project: message.project,
+        from: message.from,
+        messageId: message.id,
+        threadId: message.threadId,
+      },
     });
     expect(result).toBeUndefined();
     expect(output).toBe("");
@@ -129,13 +136,17 @@ describe("Claude hook state mapping", () => {
     expect(receipt).not.toHaveBeenCalled();
   });
 
-  it("ignores malformed or non-Synloq message identifiers", async () => {
+  it.each([
+    ['<synloq message="not-a-uuid">not evidence</synloq>'],
+    [`<synloq message="${message.id}">ID-only is not evidence</synloq>`],
+    [`<synloq project="verdicta" from="cto" message="${message.id}">missing thread</synloq>`],
+  ])("ignores an incomplete provenance envelope: %s", async (prompt) => {
     const { client, receipt } = fakeClient();
 
     const { output } = await invokeHook(client, {
       session_id: config.sessionId,
       hook_event_name: "UserPromptSubmit",
-      prompt: '<synloq message="not-a-uuid">not evidence</synloq>',
+      prompt,
     });
 
     expect(receipt).not.toHaveBeenCalled();

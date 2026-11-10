@@ -60,10 +60,21 @@ const heartbeatSchema = z
   })
   .strict();
 const closeSchema = z.object({ sessionId: sessionFields.sessionId }).strict();
+const messageIdSchema = z.string().uuid();
+const receiptEvidenceSchema = z
+  .object({
+    sessionId: sessionFields.sessionId,
+    project: z.string().min(1).max(128),
+    from: agentId,
+    messageId: messageIdSchema,
+    threadId: z.string().min(1).max(256),
+  })
+  .strict();
 const receiptSchema = z
   .object({
     state: z.enum(["submitted", "delivered"]),
     clientMessageId: z.string().min(1).max(256).optional(),
+    evidence: receiptEvidenceSchema.optional(),
   })
   .strict();
 const pauseSchema = z
@@ -73,7 +84,6 @@ const pauseSchema = z
   })
   .strict();
 const replaceSchema = z.object({ agentId, ...sessionFields }).strict();
-const messageIdSchema = z.string().uuid();
 
 export interface RelayHttpServerOptions {
   project: string;
@@ -275,6 +285,33 @@ export class RelayHttpServer {
           "UNAUTHORIZED",
           "only the authenticated recipient can post a delivery receipt",
         );
+      }
+      if (input.evidence) {
+        const evidence = input.evidence;
+        if (input.state !== "delivered" || existing.deliveryState !== "submitted") {
+          throw new SynloqError("INVALID_INPUT", "delivery evidence requires a submitted message");
+        }
+        if (
+          input.clientMessageId !== messageId ||
+          evidence.messageId !== messageId ||
+          evidence.project !== existing.project ||
+          evidence.from !== existing.from ||
+          evidence.threadId !== existing.threadId
+        ) {
+          throw new SynloqError(
+            "INVALID_INPUT",
+            "delivery evidence provenance does not match the submitted message",
+          );
+        }
+        const boundSession = this.options.sessions
+          .list(project)
+          .find((candidate) => candidate.agentId === identity.agentId);
+        if (boundSession?.sessionId !== evidence.sessionId) {
+          throw new SynloqError(
+            "UNAUTHORIZED",
+            "delivery evidence session does not match the bound session",
+          );
+        }
       }
       const message = this.options.messages.setDeliveryState(messageId, input.state);
       this.events.emit(this.workEvent(project, identity.agentId));

@@ -92,7 +92,6 @@ describe("Claude channel protocol", () => {
     };
     closers.push(() => runningClient.close());
     await runningClient.connect(clientTransport);
-    running.adapter.observeHook("SessionStart", "claude-session-1");
 
     const receipt = await running.adapter.submit("claude-session-1", message);
 
@@ -134,7 +133,6 @@ describe("Claude channel protocol", () => {
       ...(activation ? { activationVerifiedAt: "2026-11-09T00:00:00.000Z" } : {}),
     });
     adapter.observeInitialize({ capabilities: { experimental } });
-    adapter.observeHook("SessionStart", "claude-session-1");
 
     await expect(adapter.submit("claude-session-1", message)).rejects.toThrow(
       "active delivery is not activated",
@@ -155,7 +153,6 @@ describe("Claude channel protocol", () => {
         experimental: { "claude/channel": {}, "claude/channel/permission": {} },
       },
     });
-    wrongProtocol.observeHook("SessionStart", "claude-session-1");
 
     await expect(wrongProtocol.submit("claude-session-1", message)).rejects.toThrow();
     expect(wrongProtocol.capabilities.activeDelivery).toBe(false);
@@ -166,7 +163,6 @@ describe("Claude channel protocol", () => {
         experimental: { "claude/channel": {}, "claude/channel/permission": {} },
       },
     });
-    wrongSession.observeHook("SessionStart", "claude-session-1");
     await expect(wrongSession.submit("claude-session-1", message)).rejects.toThrow(
       "session ID does not match",
     );
@@ -179,10 +175,8 @@ describe("Claude channel protocol", () => {
     const server = { notification } as unknown as Server;
     const adapter = new ClaudeChannelAdapter(server, verifiedConfig());
     adapter.observeInitialize(initialized);
-    adapter.observeHook("SessionStart", "claude-session-1");
 
     const first = await adapter.submit("claude-session-1", message);
-    adapter.observeHook("UserPromptSubmit", "claude-session-1");
     const retry = await adapter.submit("claude-session-1", message);
 
     expect(retry).toBe(first);

@@ -10,7 +10,6 @@ import {
   type SessionState,
 } from "../domain/session.js";
 import { frameMessage } from "./reference.js";
-import { mapClaudeHook } from "./claude-state.js";
 import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
 
 const claudeExperimentalCapabilities = {
@@ -66,7 +65,6 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
   };
 
   private initializedCapabilities: ServerCapabilities | undefined;
-  private observedState: SessionState = "unknown";
   private readonly receipts = new Map<string, DeliveryReceipt>();
 
   constructor(
@@ -79,13 +77,9 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
     this.refreshCapabilities();
   }
 
-  observeHook(event: string, sessionId: string): void {
-    this.observedState =
-      sessionId === this.config.sessionId ? mapClaudeHook(event).state : "unknown";
-  }
-
-  async state(sessionId: string): Promise<SessionState> {
-    return sessionId === this.config.sessionId ? this.observedState : "unknown";
+  async state(_sessionId: string): Promise<SessionState> {
+    // The dispatcher's fresh SessionStore effective-state guard is authoritative.
+    return "unknown";
   }
 
   async submit(sessionId: string, message: Message): Promise<DeliveryReceipt> {
@@ -101,9 +95,6 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
         "INVALID_INPUT",
         "active delivery is not activated for this Claude session",
       );
-    }
-    if ((await this.state(sessionId)) !== "idle") {
-      throw new SynloqError("INVALID_INPUT", "visible session is not idle");
     }
 
     const notification: ClaudeChannelNotification = {

@@ -514,3 +514,97 @@ describe("RelayHttpClient resource behavior", () => {
     await expect(waiting).resolves.toEqual({ messages: [], nextCursor: undefined });
   });
 });
+
+describe("Claude delivery receipt evidence", () => {
+  async function createMessage(submitted: boolean) {
+    await fixture.arch.registerSession({
+      sessionId: "session-arch-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "Correlate this receipt",
+      expectsReply: false,
+      idempotencyKey: `http-evidence-${submitted ? "submitted" : "stored"}`,
+    });
+    if (submitted) await fixture.arch.nextDelivery({ waitMs: 0 });
+    return message;
+  }
+
+  function evidenceFor(message: { id: string; threadId: string }, sessionId = "session-arch-a") {
+    return {
+      sessionId,
+      project: PROJECT,
+      from: "cto",
+      messageId: message.id,
+      threadId: message.threadId,
+    };
+  }
+
+  it("accepts exact evidence for a submitted message and bound session", async () => {
+    const message = await createMessage(true);
+
+    await expect(
+      fixture.arch.receipt(message.id, {
+        state: "delivered",
+        clientMessageId: message.id,
+        evidence: evidenceFor(message),
+      }),
+    ).resolves.toMatchObject({ message: { id: message.id, deliveryState: "delivered" } });
+  });
+
+  it("rejects evidence for a stored, unsubmitted UUID", async () => {
+    const message = await createMessage(false);
+
+    await expect(
+      fixture.arch.receipt(message.id, {
+        state: "delivered",
+        clientMessageId: message.id,
+        evidence: evidenceFor(message),
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "delivery evidence requires a submitted message",
+    });
+    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+  });
+
+  it.each([
+    [{ project: "other-project" }],
+    [{ from: "arch" }],
+    [{ messageId: "f99b3f6d-e1a4-4d5f-9634-ee33c33efce8" }],
+    [{ threadId: "other-thread" }],
+  ])("rejects mismatched provenance %j", async (override) => {
+    const message = await createMessage(true);
+    const evidence = { ...evidenceFor(message), ...override };
+
+    await expect(
+      fixture.arch.receipt(message.id, {
+        state: "delivered",
+        clientMessageId: message.id,
+        evidence,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "delivery evidence provenance does not match the submitted message",
+    });
+    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+  });
+
+  it("rejects evidence for a different bound session", async () => {
+    const message = await createMessage(true);
+
+    await expect(
+      fixture.arch.receipt(message.id, {
+        state: "delivered",
+        clientMessageId: message.id,
+        evidence: evidenceFor(message, "another-session"),
+      }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+      message: "delivery evidence session does not match the bound session",
+    });
+    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+  });
+});
