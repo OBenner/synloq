@@ -122,7 +122,7 @@ class AcpConnection {
 
   receiveResponse(value: unknown): void {
     const response = record(value);
-    if (!response || typeof response.id !== "number") return;
+    if (!response || typeof response.id !== "number" || Object.hasOwn(response, "method")) return;
     const request = this.pending.get(response.id);
     if (!request) return;
     this.pending.delete(response.id);

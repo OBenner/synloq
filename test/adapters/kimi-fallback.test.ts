@@ -158,6 +158,35 @@ describe("probeKimiAcp", () => {
     expect(harness.child.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores an agent request whose ID collides with the pending resume ID", async () => {
+    const initialize = {
+      protocolVersion: 2,
+      info: { name: "Kimi Code", version: "2.0.0" },
+      capabilities: { session: {} },
+    };
+    const resumeResult = { resumed: "after-agent-request" };
+    const harness = fakeProbe((request, child) => {
+      if (request.method === "initialize") child.succeed(request.id, initialize);
+      if (request.method === "session/resume") {
+        child.stdout.write(
+          `${JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            method: "session/request_permission",
+            params: { sessionId: "kimi-request-id" },
+          })}\n`,
+        );
+        child.succeed(request.id, resumeResult);
+      }
+    });
+
+    const report = await probeKimiAcp({ ...harness.options, sessionId: "kimi-request-id" });
+
+    expect(report.initialize).toEqual(initialize);
+    expect(report.resumeResult).toEqual(resumeResult);
+    expect(harness.child.kill).toHaveBeenCalledTimes(1);
+  });
+
   it("skips resume when ACP v1 advertises load but not resume", async () => {
     const initialize = {
       protocolVersion: 1,
