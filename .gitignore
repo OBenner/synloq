@@ -4,3 +4,4 @@ coverage/
 .idea/
 .synloq/runtime/
 *.sqlite*
+.tmp-pack/

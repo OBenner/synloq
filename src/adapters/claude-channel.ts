@@ -1,4 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { ServerCapabilities } from "@modelcontextprotocol/sdk/types.js";
@@ -9,6 +10,8 @@ import {
   type AdapterCapabilities,
   type SessionState,
 } from "../domain/session.js";
+import { registerSynloqTools } from "../mcp/tools.js";
+import type { RelayHttpClient } from "../transport/http-client.js";
 import { frameMessage } from "./reference.js";
 import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
 
@@ -21,6 +24,7 @@ export interface ClaudeAdapterConfig {
   sessionId: string;
   protocolVersion: number;
   activationVerifiedAt?: string;
+  acceptanceMessageId?: string;
 }
 
 export interface ClaudeInitialization {
@@ -43,10 +47,11 @@ export interface ClaudeChannelNotification {
 export interface RunningClaudeAdapter {
   server: Server;
   adapter: ClaudeChannelAdapter;
+  initialized: Promise<void>;
 }
 
-export function createClaudeChannelServer(): Server {
-  return new Server(
+export function createClaudeChannelServer(configure?: (server: McpServer) => void): Server {
+  const server = new McpServer(
     { name: "synloq", version: "0.1.0" },
     {
       capabilities: {
@@ -55,6 +60,8 @@ export function createClaudeChannelServer(): Server {
       },
     },
   );
+  configure?.(server);
+  return server.server;
 }
 
 export class ClaudeChannelAdapter implements DeliveryAdapter {
@@ -66,6 +73,7 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
 
   private initializedCapabilities: ServerCapabilities | undefined;
   private readonly receipts = new Map<string, DeliveryReceipt>();
+  private acceptanceConsumed = false;
 
   constructor(
     private readonly server: Server,
@@ -90,7 +98,11 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
     }
 
     this.refreshCapabilities();
-    if (!this.capabilities.activeDelivery) {
+    const verified = this.hasVerifiedActivation();
+    if (
+      !this.capabilities.activeDelivery ||
+      (!verified && this.config.acceptanceMessageId !== message.id)
+    ) {
       throw new SynloqError(
         "INVALID_INPUT",
         "active delivery is not activated for this Claude session",
@@ -114,26 +126,47 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
     );
     const receipt: DeliveryReceipt = { state: "submitted" };
     this.receipts.set(message.id, receipt);
+    if (!verified && this.config.acceptanceMessageId === message.id) {
+      this.acceptanceConsumed = true;
+      this.refreshCapabilities();
+    }
     return receipt;
+  }
+
+  private hasVerifiedActivation(): boolean {
+    return (
+      this.config.activationVerifiedAt !== undefined &&
+      this.config.activationVerifiedAt.trim() !== ""
+    );
   }
 
   private refreshCapabilities(): void {
     const experimental = this.initializedCapabilities?.experimental;
+    const acceptance =
+      !this.hasVerifiedActivation() &&
+      !this.acceptanceConsumed &&
+      this.config.acceptanceMessageId !== undefined;
     this.capabilities.activeDelivery =
       experimental?.["claude/channel"] !== undefined &&
       experimental["claude/channel/permission"] !== undefined &&
       this.config.protocolVersion === PROTOCOL_VERSION &&
-      this.config.activationVerifiedAt !== undefined &&
-      this.config.activationVerifiedAt.trim() !== "";
+      (this.hasVerifiedActivation() || acceptance);
   }
 }
 
 export async function runClaudeAdapter(
   config: ClaudeAdapterConfig,
-  transport: Transport = new StdioServerTransport(),
+  transport: Transport | undefined = new StdioServerTransport(),
+  relay?: RelayHttpClient,
 ): Promise<RunningClaudeAdapter> {
-  const server = createClaudeChannelServer();
+  const server = createClaudeChannelServer(
+    relay ? (mcpServer) => registerSynloqTools(mcpServer, relay) : undefined,
+  );
   const adapter = new ClaudeChannelAdapter(server, config);
+  let markInitialized!: () => void;
+  const initialized = new Promise<void>((resolve) => {
+    markInitialized = resolve;
+  });
   server.oninitialized = () => {
     adapter.observeInitialize({
       capabilities: {
@@ -141,7 +174,8 @@ export async function runClaudeAdapter(
         experimental: claudeExperimentalCapabilities,
       },
     });
+    markInitialized();
   };
   await server.connect(transport);
-  return { server, adapter };
+  return { server, adapter, initialized };
 }

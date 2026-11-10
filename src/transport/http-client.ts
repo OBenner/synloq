@@ -36,6 +36,13 @@ export interface InboxOptions {
 
 export interface WaitOptions {
   waitMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface DeliveryFailureRequest {
+  sessionId: string;
+  code: "RETRYABLE" | "DELIVERY_UNCERTAIN";
+  clientIdempotency: boolean;
 }
 
 export interface HeartbeatRequest {
@@ -111,11 +118,16 @@ export class RelayHttpClient {
       `/v1/deliveries/next${suffix}`,
       undefined,
       this.longPollTimeout(options.waitMs),
+      options.signal,
     );
   }
 
   receipt(messageId: string, receipt: DeliveryReceipt): Promise<{ message: Message }> {
     return this.request("POST", `/v1/deliveries/${encodeURIComponent(messageId)}/receipt`, receipt);
+  }
+
+  deliveryFailure(messageId: string, input: DeliveryFailureRequest): Promise<{ message: Message }> {
+    return this.request("POST", `/v1/deliveries/${encodeURIComponent(messageId)}/failure`, input);
   }
 
   pause(input: PauseRequest): Promise<{ ok: true }> {
@@ -143,15 +155,17 @@ export class RelayHttpClient {
     path: string,
     body?: unknown,
     timeoutMs = 5_000,
+    externalSignal?: AbortSignal,
   ): Promise<T> {
     const token = await this.tokenProvider();
     const headers: Record<string, string> = { authorization: `Bearer ${token}` };
     if (body !== undefined) headers["content-type"] = "application/json";
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal,
     });
     const text = await response.text();
     let payload: unknown;

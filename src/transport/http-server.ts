@@ -77,6 +77,13 @@ const receiptSchema = z
     evidence: receiptEvidenceSchema.optional(),
   })
   .strict();
+const deliveryFailureSchema = z
+  .object({
+    sessionId: sessionFields.sessionId,
+    code: z.enum(["RETRYABLE", "DELIVERY_UNCERTAIN"]),
+    clientIdempotency: z.boolean(),
+  })
+  .strict();
 const pauseSchema = z
   .object({
     scope: z.enum(["project", "participant", "thread"]),
@@ -314,6 +321,52 @@ export class RelayHttpServer {
         }
       }
       const message = this.options.messages.setDeliveryState(messageId, input.state);
+      this.events.emit(this.workEvent(project, identity.agentId));
+      this.sendJson(response, 200, { message });
+      return;
+    }
+
+    const failureMatch = /^\/v1\/deliveries\/([^/]+)\/failure$/.exec(path);
+    if (method === "POST" && failureMatch) {
+      const messageId = messageIdSchema.parse(decodeURIComponent(failureMatch[1] ?? ""));
+      const input = deliveryFailureSchema.parse(await this.readJson(request));
+      const existing = this.options.messages.getMessage(messageId);
+      if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
+      if (existing.project !== project || existing.to !== identity.agentId) {
+        throw new SynloqError(
+          "UNAUTHORIZED",
+          "only the authenticated recipient can report a delivery failure",
+        );
+      }
+      if (existing.deliveryState !== "submitted") {
+        throw new SynloqError("INVALID_INPUT", "only a submitted message can report failure");
+      }
+      const boundSession = this.options.sessions
+        .list(project)
+        .find((candidate) => candidate.agentId === identity.agentId);
+      if (boundSession?.sessionId !== input.sessionId) {
+        throw new SynloqError(
+          "UNAUTHORIZED",
+          "delivery failure session does not match the bound session",
+        );
+      }
+
+      const uncertainWithoutIdempotency =
+        input.code === "DELIVERY_UNCERTAIN" &&
+        (!input.clientIdempotency || !boundSession.capabilities.clientIdempotency);
+      let message;
+      if (uncertainWithoutIdempotency) {
+        const quarantinedAt = new Date().toISOString();
+        message = this.options.messages.quarantineDelivery(
+          messageId,
+          project,
+          identity.agentId,
+          quarantinedAt,
+        );
+        this.options.messages.pause(project, "participant", identity.agentId, quarantinedAt);
+      } else {
+        message = this.options.messages.resetSubmittedForRetry(messageId);
+      }
       this.events.emit(this.workEvent(project, identity.agentId));
       this.sendJson(response, 200, { message });
       return;

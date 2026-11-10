@@ -32,21 +32,26 @@ A successful notification write produces only `submitted`. It is not visible-ses
 
 The adapter does not answer permission notifications, auto-approve permission requests, inject hook context, or expand Claude Code's approval policy.
 
+### Standalone composition
+
+The visible Claude chat launches `node dist/cli/main.js adapter --config <path>` as its stdio channel child. The relay never launches a hidden replacement chat. That one channel connection exposes the six ordinary Synloq MCP tools and the Claude channel notification protocol. The standalone process authenticates its external per-role credential, verifies the configured project/role, registers the exact visible session after initialization, polls the ordinary HTTP delivery path, and closes its delivery loop and relay session on shutdown.
+
+Hooks invoke `node dist/cli/main.js claude-hook --config <path>` with the same strict external JSON configuration. The config contains no inline token, permits only loopback HTTP URLs, and requires adapter protocol `1`. The README and `test/e2e/real-clients.md` give complete commands and examples.
+
 ### Activation gate
 
-Active delivery starts disabled. It remains disabled unless all of these conditions hold:
+Active delivery starts disabled. Ordinary production submissions remain disabled unless all of these conditions hold:
 
 1. The initialized exchange exposes both required experimental capabilities.
 2. The operator-created adapter configuration has a non-empty `activationVerifiedAt`.
 3. The configuration's `protocolVersion` is Synloq adapter protocol version `1`.
 4. The submission's visible session ID exactly matches the configuration's `session_id` / `sessionId`.
 
-The operator must use one of these exact Claude Code activation mechanisms:
-
-- local development: `--dangerously-load-development-channels`;
-- managed deployments: the `allowedChannelPlugins` allowlist.
+For local development, the custom channel is explicitly selected as `server:synloq` with `--dangerously-load-development-channels server:synloq`. A bare flag or presence in `.mcp.json` is not activation evidence. Managed deployments require `channelsEnabled:true`, a packaged plugin in `allowedChannelPlugins`, and an explicit `--channels plugin:<name>@<marketplace>` selection. This MVP does not package Synloq as a managed plugin, so the managed path is also UNVERIFIED.
 
 Setting `activationVerifiedAt` is an operator assertion that the required activation mechanism and live behavior were checked for that same Claude session and protocol version. It must not be inferred from a mock test, client name, or client version.
+
+A separate controlled-acceptance field, `acceptanceMessageId`, resolves the evidence circularity without treating `activationVerifiedAt` as a bypass. When production verification is absent, the adapter permits only the configured message UUID and only once, while all capability, protocol, same-session, and fresh-idle requirements still apply. A successful notification write consumes the acceptance and disables further active delivery. Ordinary messages before or after that probe remain disabled. The strict external config rejects configurations containing both activation fields.
 
 If activation, either capability, or the same-session/protocol check fails, the adapter performs no channel injection. MCP inbox retrieval remains the fallback; it does not claim active delivery.
 
@@ -67,17 +72,17 @@ Every accepted hook heartbeats its mapped state. Hooks for a different visible s
 
 This procedure has **not** been executed as part of the mock-tested implementation:
 
-1. Start the intended Claude Code version with local `--dangerously-load-development-channels`, or configure managed `allowedChannelPlugins` for the Synloq channel server.
-2. Record the actual Claude `session_id`, Synloq protocol version, client version, and activation mechanism.
-3. Complete MCP initialization and confirm that both experimental capabilities are present.
-4. Register the same visible session, observe `SessionStart`, and send one Synloq message while it is freshly `idle`.
-5. Confirm that the exact channel notification is admitted to that visible session without steering a running response.
-6. Confirm that the notification write alone leaves the message `submitted`, and that only the matching `UserPromptSubmit` hook changes it to `delivered`.
-7. Confirm that a permission request still follows the client's existing approval policy and receives no automatic decision from Synloq.
-8. Repeat with activation disabled and with each capability absent; confirm zero injections and MCP inbox fallback.
-9. Only after these checks pass, record the evidence and set `activationVerifiedAt` for that same session and protocol version.
+1. Record the actual Claude `session_id`, Synloq adapter protocol version, MCP protocol revision, client version, and activation mechanism. Start the intended visible session with the exact `server:synloq` development channel command, or separately verify a packaged managed plugin path.
+2. Start with both activation fields absent. Complete MCP initialization, confirm both experimental capabilities and exactly six ordinary tools, register the same visible session, and confirm zero active injections with MCP inbox fallback.
+3. While delivery is disabled, send one probe and record its relay-generated UUID. Stop the channel, set only `acceptanceMessageId` to that UUID, and restart the same visible session and channel.
+4. Observe fresh idle state and confirm that exactly the configured notification is admitted once to that visible session without steering a running response. Confirm that a different message receives no injection.
+5. Confirm that the notification write alone leaves the message `submitted`, and that only the matching `UserPromptSubmit` hook changes it to `delivered`.
+6. Confirm that a permission request still follows the client's existing approval policy and receives no automatic decision from Synloq.
+7. Repeat with activation disabled and with each capability absent; confirm zero injections and MCP inbox fallback.
+8. Record the actual output and observed client behavior. Only after these checks pass, remove `acceptanceMessageId` and set `activationVerifiedAt` for that same session and protocol version.
+9. Restart the same visible session with verified production configuration and repeat an ordinary submission. If evidence is missing or a check fails, remove both fields and leave support UNVERIFIED.
 
-Until this evidence exists, Claude Code active delivery must remain disabled in operator configuration.
+Until this evidence exists, Claude Code active delivery must remain disabled in ordinary operator configuration. The complete executable matrix is `test/e2e/real-clients.md`.
 
 ## Kimi Code
 

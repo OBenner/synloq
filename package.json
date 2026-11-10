@@ -2,6 +2,9 @@
   "name": "synloq",
   "version": "0.1.0",
   "private": true,
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "packageManager": "pnpm@12.18.0",
   "engines": {

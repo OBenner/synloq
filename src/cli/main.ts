@@ -12,6 +12,11 @@ import { PROTOCOL_VERSION } from "../domain/session.js";
 import { startMcpStdio } from "../mcp/stdio.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import {
+  runStandaloneClaudeHook,
+  startStandaloneAdapter,
+  type StandaloneAdapterHandle,
+} from "./adapter.js";
+import {
   doctorCommand,
   inboxCommand,
   initCommand,
@@ -35,6 +40,8 @@ export interface CliIo {
 
 export interface MainDependencies {
   startMcp?: (configPath: string) => Promise<unknown>;
+  startAdapter?: (configPath: string) => Promise<StandaloneAdapterHandle>;
+  runHook?: (configPath: string) => Promise<void>;
   waitForShutdown?: () => Promise<void>;
 }
 
@@ -42,6 +49,8 @@ const commandNames = [
   "init",
   "serve",
   "mcp",
+  "adapter",
+  "claude-hook",
   "list",
   "inbox",
   "send",
@@ -65,6 +74,8 @@ const helpText: Record<CommandName, string> = {
   init: "Usage: synloq init --project-root <path>\n",
   serve: "Usage: synloq serve --project-root <path> [--host <127.0.0.1|::1>] [--port <number>]\n",
   mcp: "Usage: synloq mcp --config <path>\n",
+  adapter: "Usage: synloq adapter --config <path>\n",
+  "claude-hook": "Usage: synloq claude-hook --config <path>\n",
   list: "Usage: synloq list --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
     "Usage: synloq inbox --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
@@ -205,6 +216,33 @@ async function execute(
       return;
     }
     await (dependencies.startMcp ?? startMcpStdio)(requiredString(values, "config"));
+    return;
+  }
+
+  if (command === "claude-hook") {
+    const { values } = parse(command, args, { config: { type: "string" } });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    await (dependencies.runHook ?? runStandaloneClaudeHook)(requiredString(values, "config"));
+    return;
+  }
+
+  if (command === "adapter") {
+    const { values } = parse(command, args, { config: { type: "string" } });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    const handle = await (dependencies.startAdapter ?? startStandaloneAdapter)(
+      requiredString(values, "config"),
+    );
+    try {
+      await (dependencies.waitForShutdown ?? waitForSignal)();
+    } finally {
+      await handle.close();
+    }
     return;
   }
 
