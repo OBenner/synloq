@@ -79,6 +79,28 @@ This procedure has **not** been executed as part of the mock-tested implementati
 
 Until this evidence exists, Claude Code active delivery must remain disabled in operator configuration.
 
+## Kimi Code
+
+**Support status: `inbox-only`. Live ACP verification status: UNVERIFIED.** `KimiFallbackAdapter` reports no active delivery, state reporting, or client idempotency. Session state is always `unknown`, submission always fails with `DELIVERY_UNCERTAIN` before client or network activity, and doctor therefore reports `active-delivery-unsupported`. MCP inbox retrieval and `synloq_wait` remain available through the normal Kimi MCP connection.
+
+### Read-only ACP compatibility probe
+
+The automated tests use fake child processes and protocol fixtures; no real Kimi Code process or model was launched. To collect a live compatibility report, an operator can run this exact command from the Synloq repository with Node 24:
+
+```bash
+node scripts/probe-kimi-acp.ts --cwd <absolute-project-path>
+```
+
+Node 24 executes the erasable TypeScript directly; `tsx` and other additional runtime dependencies are not required. The command starts `kimi acp` as a new subprocess, speaks NDJSON JSON-RPC over stdio, and sends `initialize` with protocol version 2 as the latest supported version. It preserves the raw initialize result in its JSON report and uses the returned protocol version to negotiate subsequent behavior:
+
+- ACP v1 advertises resume with the `agentCapabilities.sessionCapabilities.resume` object marker.
+- ACP v2 advertises the session baseline, including resume, by providing `capabilities.session`.
+- Missing support or an unsupported negotiated version records a skip reason. The probe never falls back to the removed `session/load` method.
+
+Resume is attempted only when the operator adds `--session-id <id>` and the negotiated capabilities advertise support. Its parameters are exactly `{ sessionId, cwd, mcpServers: [] }`. Without the explicit flag, the report records `session-id-not-provided` and no existing chat is resumed. Every request has a five-second timeout, and the child is terminated after success or failure.
+
+The probe never sends `session/prompt` and never prompts an already open TUI. Its report always contains `activeDeliveryClaim: false` and `reason: "existing-tui-interaction-not-verified"`; a successful initialize or resume is not active-delivery evidence. Only the separate manual acceptance procedure may investigate prompting an already open TUI, and Kimi active delivery remains disabled unless that independent evidence supports a later implementation.
+
 ## OpenCode
 
 **Live verification status: UNVERIFIED.** The automated tests use fake normal and v2 SDK clients with controllable event streams. They verify Synloq's queued request, response validation, event handling, reconnect, receipt, and lifecycle behavior against `@opencode-ai/sdk` 1.19.5 types. No real OpenCode server or visible session was launched, and these tests do not establish support in any released OpenCode version.
