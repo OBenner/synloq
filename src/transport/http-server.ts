@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CredentialStore, Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Message } from "../domain/message.js";
+import type { SessionBinding } from "../domain/session.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { RelayService } from "../relay/relay-service.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
@@ -48,11 +49,18 @@ const inboxQuerySchema = z
     waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
   })
   .strict();
-const deliveryQuerySchema = z
-  .object({ waitMs: z.coerce.number().int().min(0).max(25_000).default(0) })
-  .strict();
+const bindingFields = {
+  sessionId: sessionFields.sessionId,
+  generation: z.coerce.number().int().positive(),
+};
+const bindingSchema = z.object(bindingFields).strict();
+const deliveryQuerySchema = bindingSchema.extend({
+  waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
+});
 const acknowledgeSchema = z.object({ messageId: z.string().uuid() }).strict();
-const registerSchema = z.object(sessionFields).strict();
+const registerSchema = z
+  .object({ ...sessionFields, acceptanceMessageId: z.string().uuid().optional() })
+  .strict();
 const heartbeatSchema = z
   .object({
     sessionId: sessionFields.sessionId,
@@ -63,7 +71,7 @@ const closeSchema = z.object({ sessionId: sessionFields.sessionId }).strict();
 const messageIdSchema = z.string().uuid();
 const receiptEvidenceSchema = z
   .object({
-    sessionId: sessionFields.sessionId,
+    ...bindingFields,
     project: z.string().min(1).max(128),
     from: agentId,
     messageId: messageIdSchema,
@@ -72,6 +80,7 @@ const receiptEvidenceSchema = z
   .strict();
 const receiptSchema = z
   .object({
+    ...bindingFields,
     state: z.enum(["submitted", "delivered"]),
     clientMessageId: z.string().min(1).max(256).optional(),
     evidence: receiptEvidenceSchema.optional(),
@@ -79,7 +88,7 @@ const receiptSchema = z
   .strict();
 const deliveryFailureSchema = z
   .object({
-    sessionId: sessionFields.sessionId,
+    ...bindingFields,
     code: z.enum(["RETRYABLE", "DELIVERY_UNCERTAIN"]),
     clientIdempotency: z.boolean(),
   })
@@ -239,7 +248,16 @@ export class RelayHttpServer {
     if (method === "POST" && path === "/v1/sessions/register") {
       const input = registerSchema.parse(await this.readJson(request));
       const session = this.options.sessions.register(
-        { ...input, project, agentId: identity.agentId },
+        {
+          sessionId: input.sessionId,
+          protocolVersion: input.protocolVersion,
+          capabilities: input.capabilities,
+          ...(input.acceptanceMessageId === undefined
+            ? {}
+            : { acceptanceMessageId: input.acceptanceMessageId }),
+          project,
+          agentId: identity.agentId,
+        },
         false,
       );
       this.changed(project, identity.agentId);
@@ -274,10 +292,24 @@ export class RelayHttpServer {
         this.workEvent(project, identity.agentId),
         query.waitMs,
         response,
-        () => this.nextDelivery(identity),
+        () => this.nextDelivery(identity, query),
         (value) => value.message !== null,
       );
       this.sendJson(response, 200, result);
+      return;
+    }
+
+    const authorizeMatch = /^\/v1\/deliveries\/([^/]+)\/authorize$/.exec(path);
+    if (method === "POST" && authorizeMatch) {
+      const messageId = messageIdSchema.parse(decodeURIComponent(authorizeMatch[1] ?? ""));
+      const binding = bindingSchema.parse(await this.readJson(request));
+      const message = this.options.messages.authorizeDelivery(
+        messageId,
+        project,
+        identity.agentId,
+        binding,
+      );
+      this.sendJson(response, 200, { message });
       return;
     }
 
@@ -293,34 +325,19 @@ export class RelayHttpServer {
           "only the authenticated recipient can post a delivery receipt",
         );
       }
-      if (input.evidence) {
-        const evidence = input.evidence;
-        if (input.state !== "delivered" || existing.deliveryState !== "submitted") {
-          throw new SynloqError("INVALID_INPUT", "delivery evidence requires a submitted message");
-        }
-        if (
-          input.clientMessageId !== messageId ||
-          evidence.messageId !== messageId ||
-          evidence.project !== existing.project ||
-          evidence.from !== existing.from ||
-          evidence.threadId !== existing.threadId
-        ) {
-          throw new SynloqError(
-            "INVALID_INPUT",
-            "delivery evidence provenance does not match the submitted message",
-          );
-        }
-        const boundSession = this.options.sessions
-          .list(project)
-          .find((candidate) => candidate.agentId === identity.agentId);
-        if (boundSession?.sessionId !== evidence.sessionId) {
-          throw new SynloqError(
-            "UNAUTHORIZED",
-            "delivery evidence session does not match the bound session",
-          );
-        }
-      }
-      const message = this.options.messages.setDeliveryState(messageId, input.state);
+      const message = this.options.messages.completeDeliveryReceipt(
+        messageId,
+        project,
+        identity.agentId,
+        { sessionId: input.sessionId, generation: input.generation },
+        {
+          state: input.state,
+          ...(input.clientMessageId === undefined
+            ? {}
+            : { clientMessageId: input.clientMessageId }),
+          ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
+        },
+      );
       this.events.emit(this.workEvent(project, identity.agentId));
       this.sendJson(response, 200, { message });
       return;
@@ -338,35 +355,14 @@ export class RelayHttpServer {
           "only the authenticated recipient can report a delivery failure",
         );
       }
-      if (existing.deliveryState !== "submitted") {
-        throw new SynloqError("INVALID_INPUT", "only a submitted message can report failure");
-      }
-      const boundSession = this.options.sessions
-        .list(project)
-        .find((candidate) => candidate.agentId === identity.agentId);
-      if (boundSession?.sessionId !== input.sessionId) {
-        throw new SynloqError(
-          "UNAUTHORIZED",
-          "delivery failure session does not match the bound session",
-        );
-      }
-
-      const uncertainWithoutIdempotency =
-        input.code === "DELIVERY_UNCERTAIN" &&
-        (!input.clientIdempotency || !boundSession.capabilities.clientIdempotency);
-      let message;
-      if (uncertainWithoutIdempotency) {
-        const quarantinedAt = new Date().toISOString();
-        message = this.options.messages.quarantineDelivery(
-          messageId,
-          project,
-          identity.agentId,
-          quarantinedAt,
-        );
-        this.options.messages.pause(project, "participant", identity.agentId, quarantinedAt);
-      } else {
-        message = this.options.messages.resetSubmittedForRetry(messageId);
-      }
+      const message = this.options.messages.reportDeliveryFailure(
+        messageId,
+        project,
+        identity.agentId,
+        input,
+        input.code,
+        input.clientIdempotency,
+      );
       this.events.emit(this.workEvent(project, identity.agentId));
       this.sendJson(response, 200, { message });
       return;
@@ -407,29 +403,13 @@ export class RelayHttpServer {
     throw new SynloqError("NOT_FOUND", "route not found");
   }
 
-  private nextDelivery(identity: Identity): { message: Message | null } {
-    const { project } = this.options;
-    const agentId = identity.agentId;
-    const session = this.options.sessions
-      .list(project)
-      .find((candidate) => candidate.agentId === agentId);
-    if (
-      !session ||
-      !session.capabilities.activeDelivery ||
-      !session.capabilities.stateReporting ||
-      this.options.sessions.effectiveState(project, agentId) !== "idle" ||
-      this.options.messages.isPaused(project, "project", "") ||
-      this.options.messages.isPaused(project, "participant", agentId)
-    ) {
-      return { message: null };
-    }
-
-    const pending = this.options.messages.nextPending(project, agentId);
-    if (!pending || this.options.messages.isPaused(project, "thread", pending.threadId)) {
-      return { message: null };
-    }
-    this.options.messages.setDeliveryState(pending.id, "submitted");
-    return { message: pending };
+  private nextDelivery(identity: Identity, binding: SessionBinding) {
+    const claimed = this.options.messages.claimNextDelivery(
+      this.options.project,
+      identity.agentId,
+      binding,
+    );
+    return claimed ?? { message: null, ...binding };
   }
 
   private accepted(message: Message): void {

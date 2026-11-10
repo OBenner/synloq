@@ -324,6 +324,7 @@ const kimiSession: AdapterSession = {
   project: "verdicta",
   agentId: "arch",
   sessionId: "kimi-session",
+  generation: 1,
   protocolVersion: PROTOCOL_VERSION,
   capabilities: {
     activeDelivery: false,

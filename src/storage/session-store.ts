@@ -25,11 +25,14 @@ interface SessionRow {
   last_heartbeat_at: string;
   state_observed_at: string;
   lease_expires_at: string;
+  generation: number;
+  acceptance_message_id: string | null;
 }
 
 const sessionColumns = `
   project, agent_id, session_id, protocol_version, active_delivery, state_reporting,
-  client_idempotency, state, last_heartbeat_at, state_observed_at, lease_expires_at
+  client_idempotency, state, last_heartbeat_at, state_observed_at, lease_expires_at,
+  generation, acceptance_message_id
 `;
 
 function toSession(row: SessionRow): AdapterSession {
@@ -37,12 +40,16 @@ function toSession(row: SessionRow): AdapterSession {
     project: row.project,
     agentId: row.agent_id,
     sessionId: row.session_id,
+    generation: row.generation,
     protocolVersion: row.protocol_version,
     capabilities: {
       activeDelivery: row.active_delivery === 1,
       stateReporting: row.state_reporting === 1,
       clientIdempotency: row.client_idempotency === 1,
     },
+    ...(row.acceptance_message_id === null
+      ? {}
+      : { acceptanceMessageId: row.acceptance_message_id }),
     state: row.state,
     lastHeartbeatAt: row.last_heartbeat_at,
     stateObservedAt: row.state_observed_at,
@@ -121,12 +128,62 @@ export class SessionStore {
       const now = this.clock.now();
       const observedAt = new Date(now).toISOString();
       const leaseExpiresAt = new Date(now + LEASE_DURATION_MS).toISOString();
+      if (existing) {
+        const submitted = this.database
+          .prepare(
+            `SELECT id, acceptance_consumed_generation FROM messages
+             WHERE project = ? AND recipient = ? AND delivery_state = 'submitted'
+             ORDER BY created_at, id`,
+          )
+          .all(registration.project, registration.agentId) as Array<{
+          id: string;
+          acceptance_consumed_generation: number | null;
+        }>;
+        for (const message of submitted) {
+          if (message.acceptance_consumed_generation !== null) continue;
+          if (existing.client_idempotency === 1) {
+            this.database
+              .prepare(
+                `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+                 claim_generation = NULL WHERE id = ? AND delivery_state = 'submitted'`,
+              )
+              .run(message.id);
+          } else {
+            this.database
+              .prepare(
+                `INSERT INTO delivery_quarantine (message_id, project, recipient, quarantined_at)
+                 VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
+              )
+              .run(message.id, registration.project, registration.agentId, observedAt);
+            this.database
+              .prepare(
+                `INSERT INTO pause_gates (project, scope, scope_id, created_at)
+                 VALUES (?, 'participant', ?, ?)
+                 ON CONFLICT(project, scope, scope_id) DO NOTHING`,
+              )
+              .run(registration.project, registration.agentId, observedAt);
+          }
+        }
+      }
+
+      const acceptanceConsumed =
+        registration.acceptanceMessageId !== undefined &&
+        this.database
+          .prepare(
+            `SELECT 1 AS consumed FROM messages
+             WHERE id = ? AND project = ? AND recipient = ?
+               AND acceptance_consumed_generation IS NOT NULL`,
+          )
+          .get(registration.acceptanceMessageId, registration.project, registration.agentId) !==
+          undefined;
+      const generation = (existing?.generation ?? 0) + 1;
       this.database
         .prepare(
           `INSERT INTO sessions (
              project, agent_id, session_id, protocol_version, active_delivery, state_reporting,
-             client_idempotency, state, last_heartbeat_at, state_observed_at, lease_expires_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?, ?)
+             client_idempotency, state, last_heartbeat_at, state_observed_at, lease_expires_at,
+             generation, acceptance_message_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', ?, ?, ?, ?, ?)
            ON CONFLICT(project, agent_id) DO UPDATE SET
              session_id = excluded.session_id,
              protocol_version = excluded.protocol_version,
@@ -136,19 +193,23 @@ export class SessionStore {
              state = excluded.state,
              last_heartbeat_at = excluded.last_heartbeat_at,
              state_observed_at = excluded.state_observed_at,
-             lease_expires_at = excluded.lease_expires_at`,
+             lease_expires_at = excluded.lease_expires_at,
+             generation = excluded.generation,
+             acceptance_message_id = excluded.acceptance_message_id`,
         )
         .run(
           registration.project,
           registration.agentId,
           registration.sessionId,
           registration.protocolVersion,
-          registration.capabilities.activeDelivery ? 1 : 0,
+          registration.capabilities.activeDelivery && !acceptanceConsumed ? 1 : 0,
           registration.capabilities.stateReporting ? 1 : 0,
           registration.capabilities.clientIdempotency ? 1 : 0,
           observedAt,
           observedAt,
           leaseExpiresAt,
+          generation,
+          registration.acceptanceMessageId ?? null,
         );
       const inserted = this.find(registration.project, registration.agentId);
       if (!inserted) throw new Error("registered session could not be read");

@@ -30,9 +30,12 @@ function adapterWith(submit: DeliveryAdapter["submit"], activeDelivery = true): 
   };
 }
 
+const binding = { sessionId: "session-arch", generation: 1 };
+
 function relayWith(messageValue: Message | null) {
   return {
-    nextDelivery: vi.fn().mockResolvedValue({ message: messageValue }),
+    nextDelivery: vi.fn().mockResolvedValue({ message: messageValue, ...binding }),
+    authorizeDelivery: vi.fn().mockResolvedValue({ message }),
     receipt: vi.fn().mockResolvedValue({ message }),
     deliveryFailure: vi.fn().mockResolvedValue({ message }),
   } as unknown as RelayHttpClient;
@@ -49,13 +52,13 @@ describe("HTTP adapter runner", () => {
     const delivered = adapterWith(vi.fn().mockResolvedValue({ state: "delivered" }));
     const submitted = adapterWith(vi.fn().mockResolvedValue({ state: "submitted" }));
 
-    await expect(new HttpAdapterRunner(relay, delivered, "session-arch").runOnce()).resolves.toBe(
+    await expect(new HttpAdapterRunner(relay, delivered, binding).runOnce()).resolves.toBe(
       "delivered",
     );
-    expect(relay.receipt).toHaveBeenCalledWith(message.id, { state: "delivered" });
+    expect(relay.receipt).toHaveBeenCalledWith(message.id, { state: "delivered" }, binding);
 
     vi.mocked(relay.receipt).mockClear();
-    await expect(new HttpAdapterRunner(relay, submitted, "session-arch").runOnce()).resolves.toBe(
+    await expect(new HttpAdapterRunner(relay, submitted, binding).runOnce()).resolves.toBe(
       "submitted",
     );
     expect(relay.receipt).not.toHaveBeenCalled();
@@ -64,7 +67,7 @@ describe("HTTP adapter runner", () => {
   it("fails closed without polling when active delivery is unavailable", async () => {
     const relay = relayWith(message);
     const adapter = adapterWith(vi.fn(), false);
-    const runner = new HttpAdapterRunner(relay, adapter, "session-arch");
+    const runner = new HttpAdapterRunner(relay, adapter, binding);
 
     await expect(runner.runOnce()).resolves.toBe("inactive");
     expect(relay.nextDelivery).not.toHaveBeenCalled();
@@ -76,11 +79,11 @@ describe("HTTP adapter runner", () => {
     const retryable = adapterWith(
       vi.fn().mockRejectedValue(new SynloqError("INVALID_INPUT", "not transmitted")),
     );
-    await expect(new HttpAdapterRunner(relay, retryable, "session-arch").runOnce()).resolves.toBe(
+    await expect(new HttpAdapterRunner(relay, retryable, binding).runOnce()).resolves.toBe(
       "failed",
     );
     expect(relay.deliveryFailure).toHaveBeenCalledWith(message.id, {
-      sessionId: "session-arch",
+      ...binding,
       code: "RETRYABLE",
       clientIdempotency: true,
     });
@@ -89,11 +92,11 @@ describe("HTTP adapter runner", () => {
       vi.fn().mockRejectedValue(new SynloqError("DELIVERY_UNCERTAIN", "unknown admission")),
     );
     uncertainAdapter.capabilities.clientIdempotency = false;
-    await expect(
-      new HttpAdapterRunner(relay, uncertainAdapter, "session-arch").runOnce(),
-    ).resolves.toBe("failed");
+    await expect(new HttpAdapterRunner(relay, uncertainAdapter, binding).runOnce()).resolves.toBe(
+      "failed",
+    );
     expect(relay.deliveryFailure).toHaveBeenLastCalledWith(message.id, {
-      sessionId: "session-arch",
+      ...binding,
       code: "DELIVERY_UNCERTAIN",
       clientIdempotency: false,
     });
@@ -113,7 +116,7 @@ describe("HTTP adapter runner", () => {
         });
       }),
     } as unknown as RelayHttpClient;
-    const runner = new HttpAdapterRunner(relay, adapterWith(vi.fn()), "session-arch", 25_000);
+    const runner = new HttpAdapterRunner(relay, adapterWith(vi.fn()), binding, 25_000);
     closers.push(() => runner.close());
     runner.start();
     await vi.waitFor(() => expect(relay.nextDelivery).toHaveBeenCalled(), {

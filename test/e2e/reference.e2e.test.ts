@@ -9,7 +9,7 @@ import { HttpAdapterRunner } from "../../src/adapters/http-runner.js";
 import { frameMessage, ReferenceAdapter } from "../../src/adapters/reference.js";
 import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
 import type { Message } from "../../src/domain/message.js";
-import { PROTOCOL_VERSION } from "../../src/domain/session.js";
+import { PROTOCOL_VERSION, type SessionBinding } from "../../src/domain/session.js";
 import { registerSynloqTools } from "../../src/mcp/tools.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
 
@@ -60,12 +60,14 @@ async function register(
   client: RelayHttpClient,
   adapter: ReferenceAdapter,
   sessionId: string,
-): Promise<void> {
-  await client.registerSession({
+): Promise<SessionBinding> {
+  const { session } = await client.registerSession({
     sessionId,
     protocolVersion: PROTOCOL_VERSION,
     capabilities: adapter.capabilities,
   });
+  await client.heartbeat({ sessionId, state: "idle" });
+  return { sessionId, generation: session.generation };
 }
 
 describe("reference end-to-end acceptance", () => {
@@ -91,13 +93,13 @@ describe("reference end-to-end acceptance", () => {
       let archRelay = new RelayHttpClient(relay.baseUrl, () => archToken);
       const ctoAdapter = new ReferenceAdapter();
       const archAdapter = new ReferenceAdapter();
-      await register(ctoRelay, ctoAdapter, CTO_SESSION);
-      await register(archRelay, archAdapter, ARCH_SESSION);
+      let ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);
+      let archBinding = await register(archRelay, archAdapter, ARCH_SESSION);
       let ctoMcp = await openMcp(ctoRelay);
       let archMcp = await openMcp(archRelay);
       connections = [ctoMcp, archMcp];
-      let ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, CTO_SESSION, 0);
-      let archRunner = new HttpAdapterRunner(archRelay, archAdapter, ARCH_SESSION, 0);
+      let ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, ctoBinding, 0);
+      let archRunner = new HttpAdapterRunner(archRelay, archAdapter, archBinding, 0);
       const archSubmit = vi.spyOn(archAdapter, "submit");
 
       // 1–2: the exact CTO question returns an accepted ID before visible delivery.
@@ -161,7 +163,8 @@ describe("reference end-to-end acceptance", () => {
       await expect(archRunner.runOnce()).resolves.toBe("empty");
       expect(archSubmit).toHaveBeenCalledTimes(2);
       archAdapter.setState(ARCH_SESSION, "idle");
-      await register(archRelay, archAdapter, ARCH_SESSION);
+      archBinding = await register(archRelay, archAdapter, ARCH_SESSION);
+      archRunner = new HttpAdapterRunner(archRelay, archAdapter, archBinding, 0);
       await expect(archRunner.runOnce()).resolves.toBe("delivered");
       expect(archAdapter.visible(ARCH_SESSION).map((entry) => entry.id)).toEqual([
         first.id,
@@ -239,13 +242,13 @@ describe("reference end-to-end acceptance", () => {
       archRelay = new RelayHttpClient(relay.baseUrl, () => archToken);
       ctoAdapter.setState(CTO_SESSION, "idle");
       archAdapter.setState(ARCH_SESSION, "idle");
-      await register(ctoRelay, ctoAdapter, CTO_SESSION);
-      await register(archRelay, archAdapter, ARCH_SESSION);
+      ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);
+      archBinding = await register(archRelay, archAdapter, ARCH_SESSION);
       ctoMcp = await openMcp(ctoRelay);
       archMcp = await openMcp(archRelay);
       connections = [ctoMcp, archMcp];
-      ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, CTO_SESSION, 0);
-      archRunner = new HttpAdapterRunner(archRelay, archAdapter, ARCH_SESSION, 0);
+      ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, ctoBinding, 0);
+      archRunner = new HttpAdapterRunner(archRelay, archAdapter, archBinding, 0);
       await expect(ctoRunner.runOnce()).resolves.toBe("empty");
       await expect(archRunner.runOnce()).resolves.toBe("empty");
       const afterRestart = snapshot(relay);

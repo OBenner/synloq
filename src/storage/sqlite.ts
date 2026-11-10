@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   delivery_state TEXT NOT NULL CHECK (delivery_state IN ('stored','submitted','delivered','acked')),
+  claim_session_id TEXT,
+  claim_generation INTEGER,
+  acceptance_consumed_generation INTEGER,
   UNIQUE(project, sender, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages(project, recipient, created_at, id);
@@ -39,6 +42,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_heartbeat_at TEXT NOT NULL,
   state_observed_at TEXT NOT NULL,
   lease_expires_at TEXT NOT NULL,
+  generation INTEGER NOT NULL DEFAULT 1,
+  acceptance_message_id TEXT,
   PRIMARY KEY(project, agent_id)
 );
 CREATE TABLE IF NOT EXISTS delivery_quarantine (
@@ -89,7 +94,8 @@ export function openDatabase(path: string): DatabaseSync {
       version?.user_version !== 0 &&
       version?.user_version !== 1 &&
       version?.user_version !== 2 &&
-      version?.user_version !== 3
+      version?.user_version !== 3 &&
+      version?.user_version !== 4
     ) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
@@ -97,7 +103,22 @@ export function openDatabase(path: string): DatabaseSync {
     const migrated = database;
     withTransaction(migrated, () => {
       migrated.exec(schema);
-      migrated.exec("PRAGMA user_version = 3");
+      const additions = [
+        ["messages", "claim_session_id", "TEXT"],
+        ["messages", "claim_generation", "INTEGER"],
+        ["messages", "acceptance_consumed_generation", "INTEGER"],
+        ["sessions", "generation", "INTEGER NOT NULL DEFAULT 1"],
+        ["sessions", "acceptance_message_id", "TEXT"],
+      ] as const;
+      for (const [table, column, definition] of additions) {
+        const columns = migrated.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+          name: string;
+        }>;
+        if (!columns.some((entry) => entry.name === column)) {
+          migrated.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        }
+      }
+      migrated.exec("PRAGMA user_version = 4");
     });
     return database;
   } catch (error) {

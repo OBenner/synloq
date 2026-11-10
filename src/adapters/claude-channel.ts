@@ -13,12 +13,24 @@ import {
 import { registerSynloqTools } from "../mcp/tools.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
 import { frameMessage } from "./reference.js";
-import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
+import type { DeliveryAdapter, DeliveryReceipt, DeliverySubmissionContext } from "./types.js";
 
 const claudeExperimentalCapabilities = {
   "claude/channel": {},
   "claude/channel/permission": {},
 };
+
+function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException("aborted", "AbortError"));
+  let abort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => reject(new DOMException("aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  return Promise.race([operation, aborted]).finally(() => {
+    signal.removeEventListener("abort", abort);
+  });
+}
 
 export interface ClaudeAdapterConfig {
   sessionId: string;
@@ -90,7 +102,11 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
     return "unknown";
   }
 
-  async submit(sessionId: string, message: Message): Promise<DeliveryReceipt> {
+  async submit(
+    sessionId: string,
+    message: Message,
+    context?: DeliverySubmissionContext,
+  ): Promise<DeliveryReceipt> {
     const original = this.receipts.get(message.id);
     if (original) return original;
     if (sessionId !== this.config.sessionId) {
@@ -112,7 +128,7 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
     const notification: ClaudeChannelNotification = {
       method: "notifications/claude/channel",
       params: {
-        content: frameMessage(message),
+        content: frameMessage(message, context?.generation),
         meta: {
           project: message.project,
           from: message.from,
@@ -121,9 +137,18 @@ export class ClaudeChannelAdapter implements DeliveryAdapter {
         },
       },
     };
-    await this.server.notification(
-      notification as unknown as Parameters<Server["notification"]>[0],
-    );
+    try {
+      const sent = this.server.notification(
+        notification as unknown as Parameters<Server["notification"]>[0],
+      );
+      if (context?.signal) await raceWithAbort(sent, context.signal);
+      else await sent;
+    } catch {
+      throw new SynloqError(
+        "DELIVERY_UNCERTAIN",
+        `Claude notification for ${message.id} has an uncertain outcome`,
+      );
+    }
     const receipt: DeliveryReceipt = { state: "submitted" };
     this.receipts.set(message.id, receipt);
     if (!verified && this.config.acceptanceMessageId === message.id) {
@@ -168,12 +193,7 @@ export async function runClaudeAdapter(
     markInitialized = resolve;
   });
   server.oninitialized = () => {
-    adapter.observeInitialize({
-      capabilities: {
-        tools: {},
-        experimental: claudeExperimentalCapabilities,
-      },
-    });
+    adapter.observeInitialize({ capabilities: server.getClientCapabilities() ?? {} });
     markInitialized();
   };
   await server.connect(transport);

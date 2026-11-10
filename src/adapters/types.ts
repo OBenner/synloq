@@ -12,10 +12,16 @@ export interface Clock {
 
 export interface DeliveryEvidence {
   sessionId: string;
+  generation: number;
   project: string;
   from: string;
   messageId: string;
   threadId: string;
+}
+
+export interface DeliverySubmissionContext {
+  generation: number;
+  signal?: AbortSignal;
 }
 
 export interface DeliveryReceipt {
@@ -27,7 +33,11 @@ export interface DeliveryReceipt {
 export interface DeliveryAdapter {
   readonly capabilities: AdapterCapabilities;
   state(sessionId: string): Promise<SessionState>;
-  submit(sessionId: string, message: Message): Promise<DeliveryReceipt>;
+  submit(
+    sessionId: string,
+    message: Message,
+    context?: DeliverySubmissionContext,
+  ): Promise<DeliveryReceipt>;
 }
 
 export function inactiveReason(

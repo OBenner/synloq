@@ -15,13 +15,14 @@ const hookSchema = z
   .passthrough();
 
 const synloqEnvelope = /<synloq([^>]*)>\n[\s\S]*?\n<\/synloq>/;
-const envelopeAttribute = /\s+(project|from|message|thread)="([^"]*)"/g;
+const envelopeAttribute = /\s+(project|from|message|thread|registration)="([^"]*)"/g;
 const provenanceSchema = z
   .object({
     project: z.string().min(1).max(128),
     from: agentId,
     message: z.string().uuid(),
     thread: z.string().min(1),
+    registration: z.coerce.number().int().positive(),
   })
   .strict();
 
@@ -69,6 +70,7 @@ function synloqProvenance(
     from: parsed.data.from,
     messageId: parsed.data.message,
     threadId: parsed.data.thread,
+    generation: parsed.data.registration,
   };
 }
 
@@ -92,14 +94,18 @@ export async function runClaudeHook(
   }
 
   const mapped = mapClaudeHook(hook.hook_event_name);
-  await client.heartbeat({ sessionId: hook.session_id, state: mapped.state });
+  const { session } = await client.heartbeat({ sessionId: hook.session_id, state: mapped.state });
   if (hook.hook_event_name !== "UserPromptSubmit") return;
 
   const provenance = synloqProvenance(hook.prompt);
   if (provenance === undefined || provenance.project !== config.project) return;
-  await client.receipt(provenance.messageId, {
-    state: "delivered",
-    clientMessageId: provenance.messageId,
-    evidence: { sessionId: hook.session_id, ...provenance },
-  });
+  await client.receipt(
+    provenance.messageId,
+    {
+      state: "delivered",
+      clientMessageId: provenance.messageId,
+      evidence: { sessionId: hook.session_id, ...provenance },
+    },
+    { sessionId: hook.session_id, generation: session.generation },
+  );
 }

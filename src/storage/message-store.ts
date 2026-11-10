@@ -1,6 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { Clock, DeliveryReceipt } from "../adapters/types.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, SendMessageInput } from "../domain/message.js";
+import type { SessionBinding } from "../domain/session.js";
 import { openDatabase, storageFailure, withTransaction } from "./sqlite.js";
 
 interface MessageRow {
@@ -15,6 +17,9 @@ interface MessageRow {
   created_at: string;
   idempotency_key: string;
   delivery_state: Message["deliveryState"];
+  claim_session_id: string | null;
+  claim_generation: number | null;
+  acceptance_consumed_generation: number | null;
 }
 
 interface CreateResult {
@@ -34,9 +39,26 @@ interface PendingUsage {
 
 export type PauseScope = "project" | "participant" | "thread";
 
+export interface ClaimedDelivery extends SessionBinding {
+  message: Message;
+}
+
+interface DeliverySessionRow {
+  session_id: string;
+  generation: number;
+  active_delivery: number;
+  state_reporting: number;
+  client_idempotency: number;
+  state: "idle" | "busy" | "closed" | "unknown";
+  state_observed_at: string;
+  lease_expires_at: string;
+  acceptance_message_id: string | null;
+}
+
 const messageColumns = `
   id, project, thread_id, sender, recipient, text, expects_reply, in_reply_to,
-  created_at, idempotency_key, delivery_state
+  created_at, idempotency_key, delivery_state, claim_session_id, claim_generation,
+  acceptance_consumed_generation
 `;
 
 function toMessage(row: MessageRow): Message {
@@ -84,7 +106,10 @@ function encodeCursor(message: Message): string {
 export class SQLiteMessageStore {
   private readonly database: DatabaseSync;
 
-  constructor(path: string) {
+  constructor(
+    path: string,
+    private readonly clock: Clock = { now: () => Date.now() },
+  ) {
     this.database = openDatabase(path);
   }
 
@@ -243,6 +268,275 @@ export class SQLiteMessageStore {
     });
   }
 
+  private deliverySession(
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+  ): DeliverySessionRow {
+    const row = this.database
+      .prepare(
+        `SELECT session_id, generation, active_delivery, state_reporting, client_idempotency,
+                state, state_observed_at, lease_expires_at, acceptance_message_id
+         FROM sessions WHERE project = ? AND agent_id = ?`,
+      )
+      .get(project, recipient) as DeliverySessionRow | undefined;
+    if (
+      !row ||
+      row.session_id !== binding.sessionId ||
+      row.generation !== binding.generation
+    ) {
+      throw new SynloqError(
+        "UNAUTHORIZED",
+        "delivery session registration is stale or does not match the visible binding",
+      );
+    }
+    return row;
+  }
+
+  private deliveryReady(
+    session: DeliverySessionRow,
+    project: string,
+    recipient: string,
+    threadId?: string,
+  ): boolean {
+    const now = this.clock.now();
+    const leaseExpiresAt = Date.parse(session.lease_expires_at);
+    const stateObservedAt = Date.parse(session.state_observed_at);
+    return (
+      session.active_delivery === 1 &&
+      session.state_reporting === 1 &&
+      session.state === "idle" &&
+      Number.isFinite(leaseExpiresAt) &&
+      Number.isFinite(stateObservedAt) &&
+      leaseExpiresAt > now &&
+      now - stateObservedAt <= 5_000 &&
+      !this.isPaused(project, "project", "") &&
+      !this.isPaused(project, "participant", recipient) &&
+      (threadId === undefined || !this.isPaused(project, "thread", threadId))
+    );
+  }
+
+  claimNextDelivery(
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+  ): ClaimedDelivery | null {
+    return this.write(() => {
+      const session = this.deliverySession(project, recipient, binding);
+      if (!this.deliveryReady(session, project, recipient)) return null;
+      const pendingRow = this.database
+        .prepare(
+          `SELECT ${messageColumns} FROM messages AS candidate
+           WHERE candidate.project = ? AND candidate.recipient = ?
+             AND candidate.delivery_state = 'stored'
+             AND NOT EXISTS (
+               SELECT 1 FROM messages AS blocker
+               WHERE blocker.project = candidate.project
+                 AND blocker.recipient = candidate.recipient
+                 AND blocker.delivery_state = 'submitted'
+                 AND (
+                   blocker.created_at < candidate.created_at OR
+                   (blocker.created_at = candidate.created_at AND blocker.id < candidate.id)
+                 )
+             )
+           ORDER BY candidate.created_at, candidate.id LIMIT 1`,
+        )
+        .get(project, recipient) as MessageRow | undefined;
+      if (!pendingRow || this.isPaused(project, "thread", pendingRow.thread_id)) return null;
+      if (
+        session.acceptance_message_id !== null &&
+        (pendingRow.id !== session.acceptance_message_id ||
+          pendingRow.acceptance_consumed_generation !== null)
+      ) {
+        return null;
+      }
+
+      const result = this.database
+        .prepare(
+          `UPDATE messages SET delivery_state = 'submitted', claim_session_id = ?,
+             claim_generation = ?,
+             acceptance_consumed_generation = CASE
+               WHEN ? IS NOT NULL AND ? = id THEN ?
+               ELSE acceptance_consumed_generation
+             END
+           WHERE id = ? AND delivery_state = 'stored'`,
+        )
+        .run(
+          binding.sessionId,
+          binding.generation,
+          session.acceptance_message_id,
+          session.acceptance_message_id,
+          binding.generation,
+          pendingRow.id,
+        );
+      if (result.changes !== 1) throw new Error("pending delivery changed during claim");
+      return { message: toMessage(pendingRow), ...binding };
+    });
+  }
+
+  authorizeDelivery(
+    id: string,
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+  ): Message {
+    return this.write(() => {
+      const row = this.findById(id);
+      if (!row || row.project !== project || row.recipient !== recipient) {
+        throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
+      }
+      const session = this.deliverySession(project, recipient, binding);
+      if (
+        row.delivery_state !== "submitted" ||
+        row.claim_session_id !== binding.sessionId ||
+        row.claim_generation !== binding.generation
+      ) {
+        throw new SynloqError("UNAUTHORIZED", "delivery claim is stale or no longer submitted");
+      }
+      if (!this.deliveryReady(session, project, recipient, row.thread_id)) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          "visible session is not freshly idle and unpaused for submission",
+        );
+      }
+      return toMessage(row);
+    });
+  }
+
+  private completionClaim(
+    id: string,
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+  ): { row: MessageRow; session: DeliverySessionRow } {
+    const row = this.findById(id);
+    if (!row || row.project !== project || row.recipient !== recipient) {
+      throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
+    }
+    const session = this.deliverySession(project, recipient, binding);
+    if (session.state === "closed") {
+      throw new SynloqError("UNAUTHORIZED", "the claiming visible session is closed");
+    }
+    if (
+      row.claim_session_id !== binding.sessionId ||
+      row.claim_generation !== binding.generation
+    ) {
+      throw new SynloqError("UNAUTHORIZED", "delivery completion uses a stale claim");
+    }
+    return { row, session };
+  }
+
+  completeDeliveryReceipt(
+    id: string,
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+    receipt: DeliveryReceipt,
+  ): Message {
+    return this.write(() => {
+      const before = this.findById(id);
+      if (
+        receipt.evidence &&
+        (receipt.state !== "delivered" ||
+          !before ||
+          (before.delivery_state !== "submitted" && before.delivery_state !== "delivered"))
+      ) {
+        throw new SynloqError("INVALID_INPUT", "delivery evidence requires a submitted message");
+      }
+      const { row } = this.completionClaim(id, project, recipient, binding);
+      const evidence = receipt.evidence;
+      if (
+        evidence &&
+        (receipt.clientMessageId !== id ||
+          evidence.messageId !== id ||
+          evidence.sessionId !== binding.sessionId ||
+          evidence.generation !== binding.generation ||
+          evidence.project !== row.project ||
+          evidence.from !== row.sender ||
+          evidence.threadId !== row.thread_id)
+      ) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          "delivery evidence provenance does not match the submitted claim",
+        );
+      }
+
+      if (receipt.state === "submitted") {
+        if (["submitted", "delivered", "acked"].includes(row.delivery_state)) {
+          return toMessage(row);
+        }
+        throw new SynloqError("INVALID_INPUT", "submitted evidence requires a claimed message");
+      }
+      if (row.delivery_state === "delivered" || row.delivery_state === "acked") {
+        return toMessage(row);
+      }
+      if (row.delivery_state !== "submitted") {
+        throw new SynloqError("INVALID_INPUT", "only a submitted message can be delivered");
+      }
+      return this.transition(row, "delivered");
+    });
+  }
+
+  reportDeliveryFailure(
+    id: string,
+    project: string,
+    recipient: string,
+    binding: SessionBinding,
+    code: "RETRYABLE" | "DELIVERY_UNCERTAIN",
+    clientIdempotency: boolean,
+  ): Message {
+    return this.write(() => {
+      const row = this.findById(id);
+      if (!row || row.project !== project || row.recipient !== recipient) {
+        throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
+      }
+      const session = this.deliverySession(project, recipient, binding);
+      if (session.state === "closed") {
+        throw new SynloqError("UNAUTHORIZED", "the claiming visible session is closed");
+      }
+      if (row.delivery_state === "stored" && code === "RETRYABLE") return toMessage(row);
+      if (
+        row.delivery_state !== "submitted" ||
+        row.claim_session_id !== binding.sessionId ||
+        row.claim_generation !== binding.generation
+      ) {
+        throw new SynloqError("UNAUTHORIZED", "delivery failure uses a stale claim");
+      }
+
+      if (
+        code === "DELIVERY_UNCERTAIN" &&
+        (!clientIdempotency || session.client_idempotency !== 1)
+      ) {
+        const quarantinedAt = new Date(this.clock.now()).toISOString();
+        this.database
+          .prepare(
+            `INSERT INTO delivery_quarantine (message_id, project, recipient, quarantined_at)
+             VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
+          )
+          .run(id, project, recipient, quarantinedAt);
+        this.database
+          .prepare(
+            `INSERT INTO pause_gates (project, scope, scope_id, created_at)
+             VALUES (?, 'participant', ?, ?)
+             ON CONFLICT(project, scope, scope_id) DO NOTHING`,
+          )
+          .run(project, recipient, quarantinedAt);
+        return toMessage(row);
+      }
+
+      const result = this.database
+        .prepare(
+          `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+           claim_generation = NULL WHERE id = ? AND delivery_state = 'submitted'`,
+        )
+        .run(id);
+      if (result.changes !== 1) throw new Error("delivery state changed during failure report");
+      const updated = this.findById(id);
+      if (!updated) throw new Error("reset message could not be read");
+      return toMessage(updated);
+    });
+  }
+
   private transition(row: MessageRow, target: Message["deliveryState"]): Message {
     const legal =
       (row.delivery_state === "stored" && target === "submitted") ||
@@ -264,7 +558,11 @@ export class SQLiteMessageStore {
     return toMessage(updated);
   }
 
-  setDeliveryState(id: string, target: Message["deliveryState"]): Message {
+  setDeliveryState(
+    id: string,
+    target: Message["deliveryState"],
+    binding?: SessionBinding,
+  ): Message {
     return this.write(() => {
       const row = this.findById(id);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
@@ -274,7 +572,28 @@ export class SQLiteMessageStore {
         if (!submitted) throw new Error("submitted message could not be read");
         return this.transition(submitted, "delivered");
       }
-      return this.transition(row, target);
+      const transitioned = this.transition(row, target);
+      if (target === "submitted" && binding) {
+        this.database
+          .prepare(
+            `UPDATE messages SET claim_session_id = ?, claim_generation = ?,
+               acceptance_consumed_generation = CASE
+                 WHEN EXISTS (
+                   SELECT 1 FROM sessions
+                   WHERE sessions.project = messages.project
+                     AND sessions.agent_id = messages.recipient
+                     AND sessions.session_id = ? AND sessions.generation = ?
+                     AND sessions.acceptance_message_id = messages.id
+                 ) THEN ? ELSE acceptance_consumed_generation
+               END
+             WHERE id = ?`,
+          )
+          .run(binding.sessionId, binding.generation, binding.sessionId, binding.generation, binding.generation, id);
+        const claimed = this.findById(id);
+        if (!claimed) throw new Error("claimed message could not be read");
+        return toMessage(claimed);
+      }
+      return transitioned;
     });
   }
 
@@ -319,14 +638,21 @@ export class SQLiteMessageStore {
     this.write(() => {
       this.database
         .prepare(
-          `UPDATE messages SET delivery_state = 'stored'
+          `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+             claim_generation = NULL
            WHERE id = ? AND delivery_state = 'submitted'
+             AND acceptance_consumed_generation IS NULL
              AND EXISTS (
                SELECT 1 FROM sessions
                WHERE sessions.project = messages.project
                  AND sessions.agent_id = messages.recipient
                  AND sessions.client_idempotency = 1
                  AND sessions.lease_expires_at <= ?
+                 AND (
+                   messages.claim_generation IS NULL OR
+                   (messages.claim_generation = sessions.generation AND
+                    messages.claim_session_id = sessions.session_id)
+                 )
              )
              AND NOT EXISTS (
                SELECT 1 FROM delivery_quarantine
@@ -348,7 +674,8 @@ export class SQLiteMessageStore {
       }
       const result = this.database
         .prepare(
-          "UPDATE messages SET delivery_state = 'stored' WHERE id = ? AND delivery_state = 'submitted'",
+          `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+           claim_generation = NULL WHERE id = ? AND delivery_state = 'submitted'`,
         )
         .run(id);
       if (result.changes !== 1) throw new Error("delivery state changed during transaction");

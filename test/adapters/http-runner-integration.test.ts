@@ -7,7 +7,7 @@ import { ReferenceAdapter } from "../../src/adapters/reference.js";
 import type { DeliveryAdapter } from "../../src/adapters/types.js";
 import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
 import { SynloqError } from "../../src/domain/errors.js";
-import { PROTOCOL_VERSION } from "../../src/domain/session.js";
+import { PROTOCOL_VERSION, type SessionBinding } from "../../src/domain/session.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
 
 const PROJECT = "verdicta";
@@ -55,12 +55,14 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function register(adapter: DeliveryAdapter): Promise<void> {
-  await arch.registerSession({
+async function register(adapter: DeliveryAdapter): Promise<SessionBinding> {
+  const { session } = await arch.registerSession({
     sessionId: SESSION,
     protocolVersion: PROTOCOL_VERSION,
     capabilities: adapter.capabilities,
   });
+  await arch.heartbeat({ sessionId: SESSION, state: "idle" });
+  return { sessionId: session.sessionId, generation: session.generation };
 }
 
 async function send(key: string) {
@@ -77,10 +79,10 @@ async function send(key: string) {
 describe("HTTP adapter failure recovery", () => {
   it("resets a retryable submission and preserves FIFO", async () => {
     const adapter = new ReferenceAdapter();
-    await register(adapter);
+    const binding = await register(adapter);
     const first = await send("http-runner-retry-1");
     const second = await send("http-runner-retry-2");
-    const runner = new HttpAdapterRunner(arch, adapter, SESSION, 0);
+    const runner = new HttpAdapterRunner(arch, adapter, binding, 0);
     adapter.failNext(first.id);
 
     await expect(runner.runOnce()).resolves.toBe("failed");
@@ -104,9 +106,9 @@ describe("HTTP adapter failure recovery", () => {
         throw new SynloqError("DELIVERY_UNCERTAIN", "admission outcome is unknown");
       },
     };
-    await register(adapter);
+    const binding = await register(adapter);
     const message = await send("http-runner-uncertain-1");
-    const runner = new HttpAdapterRunner(arch, adapter, SESSION, 0);
+    const runner = new HttpAdapterRunner(arch, adapter, binding, 0);
 
     await expect(runner.runOnce()).resolves.toBe("failed");
     expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
@@ -116,13 +118,13 @@ describe("HTTP adapter failure recovery", () => {
 
   it("rejects a failure report from a different participant", async () => {
     const adapter = new ReferenceAdapter();
-    await register(adapter);
+    const binding = await register(adapter);
     const message = await send("http-runner-owner-1");
-    await arch.nextDelivery({ waitMs: 0 });
+    await arch.nextDelivery({ waitMs: 0, ...binding });
 
     await expect(
       cto.deliveryFailure(message.id, {
-        sessionId: SESSION,
+        ...binding,
         code: "RETRYABLE",
         clientIdempotency: true,
       }),

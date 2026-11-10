@@ -284,6 +284,7 @@ describe("inactiveReason", () => {
   it("reports missing, incompatible, unsupported, non-idle, and ready states", () => {
     const session = {
       ...ctoSession("session-a"),
+      generation: 1,
       state: "idle" as const,
       lastHeartbeatAt: "2026-11-09T00:00:00.000Z",
       stateObservedAt: "2026-11-09T00:00:00.000Z",

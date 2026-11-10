@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeliveryReceipt } from "../../src/adapters/types.js";
 import { CredentialStore } from "../../src/config/credentials.js";
 import type { Participant } from "../../src/domain/message.js";
-import { PROTOCOL_VERSION } from "../../src/domain/session.js";
+import { PROTOCOL_VERSION, type SessionBinding } from "../../src/domain/session.js";
 import { Dispatcher } from "../../src/relay/dispatcher.js";
 import { ProtectionPolicy } from "../../src/relay/protection.js";
 import { RelayService } from "../../src/relay/relay-service.js";
@@ -101,6 +101,32 @@ async function post(path: string, token: string, body: string): Promise<Response
     headers: { ...authorized(token), "content-type": "application/json" },
     body,
   });
+}
+
+function archBinding(sessionId = "session-arch-a"): SessionBinding {
+  const session = fixture.sessions
+    .list(PROJECT)
+    .find((candidate) => candidate.agentId === "arch" && candidate.sessionId === sessionId);
+  if (!session) throw new Error("arch session is not registered");
+  return { sessionId, generation: session.generation };
+}
+
+async function registerArch(sessionId = "session-arch-a"): Promise<SessionBinding> {
+  const { session } = await fixture.arch.registerSession({
+    sessionId,
+    protocolVersion: PROTOCOL_VERSION,
+    capabilities,
+  });
+  await fixture.arch.heartbeat({ sessionId, state: "idle" });
+  return { sessionId, generation: session.generation };
+}
+
+function nextArch(waitMs = 0) {
+  return fixture.arch.nextDelivery({ waitMs, ...archBinding() });
+}
+
+function receiptArch(messageId: string, receipt: DeliveryReceipt) {
+  return fixture.arch.receipt(messageId, receipt, archBinding());
 }
 
 describe("RelayHttpServer authentication and participant routes", () => {
@@ -214,7 +240,7 @@ describe("RelayHttpServer sessions and active delivery", () => {
       project: PROJECT,
       agentId: "arch",
       sessionId: "session-arch-a",
-      state: "idle",
+      state: "unknown",
     });
 
     const heartbeat = await fixture.arch.heartbeat({
@@ -229,11 +255,7 @@ describe("RelayHttpServer sessions and active delivery", () => {
   });
 
   it("pulls one FIFO delivery and records its receipt", async () => {
-    await fixture.arch.registerSession({
-      sessionId: "session-arch-a",
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities,
-    });
+    const binding = await registerArch();
     const { message } = await fixture.cto.send({
       to: "arch",
       text: "Pull this delivery",
@@ -241,32 +263,24 @@ describe("RelayHttpServer sessions and active delivery", () => {
       idempotencyKey: "http-delivery-1",
     });
 
-    await expect(fixture.arch.nextDelivery({ waitMs: 0 })).resolves.toEqual({ message });
+    await expect(nextArch()).resolves.toEqual({ message, ...binding });
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
-    await expect(fixture.arch.nextDelivery({ waitMs: 0 })).resolves.toEqual({ message: null });
+    await expect(nextArch()).resolves.toEqual({ message: null, ...binding });
 
     const receipt: DeliveryReceipt = { state: "delivered", clientMessageId: message.id };
-    await expect(fixture.arch.receipt(message.id, receipt)).resolves.toEqual({
+    await expect(receiptArch(message.id, receipt)).resolves.toEqual({
       message: { ...message, deliveryState: "delivered" },
     });
   });
 
   it("returns an empty delivery after a normal long-poll timeout", async () => {
-    await fixture.arch.registerSession({
-      sessionId: "session-arch-a",
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities,
-    });
+    const binding = await registerArch();
 
-    await expect(fixture.arch.nextDelivery({ waitMs: 5 })).resolves.toEqual({ message: null });
+    await expect(nextArch(5)).resolves.toEqual({ message: null, ...binding });
   });
 
   it("wakes a delivery long poll after an idle heartbeat", async () => {
-    await fixture.arch.registerSession({
-      sessionId: "session-arch-a",
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities,
-    });
+    const binding = await registerArch();
     await fixture.arch.heartbeat({ sessionId: "session-arch-a", state: "busy" });
     const { message } = await fixture.cto.send({
       to: "arch",
@@ -274,20 +288,16 @@ describe("RelayHttpServer sessions and active delivery", () => {
       expectsReply: false,
       idempotencyKey: "http-delivery-wake-1",
     });
-    const waiting = fixture.arch.nextDelivery({ waitMs: 5_000 });
+    const waiting = nextArch(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     await fixture.arch.heartbeat({ sessionId: "session-arch-a", state: "idle" });
 
-    await expect(waiting).resolves.toEqual({ message });
+    await expect(waiting).resolves.toEqual({ message, ...binding });
   });
 
   it("keeps a delivery stored when its waiting adapter aborts", async () => {
-    await fixture.arch.registerSession({
-      sessionId: "session-arch-a",
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities,
-    });
+    const binding = await registerArch();
     const gate = { scope: "participant" as const, scopeId: "arch" };
     await fixture.operator.pause(gate);
     const { message } = await fixture.cto.send({
@@ -312,7 +322,12 @@ describe("RelayHttpServer sessions and active delivery", () => {
       return paused;
     });
     const controller = new AbortController();
-    const aborted = fetch(`${fixture.baseUrl}/v1/deliveries/next?waitMs=5000`, {
+    const query = new URLSearchParams({
+      ...binding,
+      generation: String(binding.generation),
+      waitMs: "5000",
+    });
+    const aborted = fetch(`${fixture.baseUrl}/v1/deliveries/next?${query}`, {
       headers: authorized(fixture.archToken),
       signal: controller.signal,
     });
@@ -327,7 +342,7 @@ describe("RelayHttpServer sessions and active delivery", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("stored");
-    await expect(fixture.arch.nextDelivery({ waitMs: 0 })).resolves.toEqual({ message });
+    await expect(nextArch()).resolves.toEqual({ message, ...binding });
   });
 
   it("does not expose replacement to an ordinary agent", async () => {
@@ -494,11 +509,12 @@ describe("RelayHttpServer operator routes and errors", () => {
 
 describe("RelayHttpClient resource behavior", () => {
   it("uses the required timeouts only for long polls", async () => {
+    await registerArch();
     const timeout = vi.spyOn(AbortSignal, "timeout");
 
     await fixture.cto.listParticipants();
     await fixture.arch.inbox({ limit: 1, waitMs: 9 });
-    await fixture.arch.nextDelivery({ waitMs: 11 });
+    await nextArch(11);
 
     expect(timeout).toHaveBeenNthCalledWith(1, 5_000);
     expect(timeout).toHaveBeenNthCalledWith(2, 5_009);
@@ -517,24 +533,25 @@ describe("RelayHttpClient resource behavior", () => {
 
 describe("Claude delivery receipt evidence", () => {
   async function createMessage(submitted: boolean) {
-    await fixture.arch.registerSession({
-      sessionId: "session-arch-a",
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities,
-    });
+    const binding = await registerArch();
     const { message } = await fixture.cto.send({
       to: "arch",
       text: "Correlate this receipt",
       expectsReply: false,
       idempotencyKey: `http-evidence-${submitted ? "submitted" : "stored"}`,
     });
-    if (submitted) await fixture.arch.nextDelivery({ waitMs: 0 });
-    return message;
+    if (submitted) await nextArch();
+    return { message, binding };
   }
 
-  function evidenceFor(message: { id: string; threadId: string }, sessionId = "session-arch-a") {
+  function evidenceFor(
+    message: { id: string; threadId: string },
+    binding = archBinding(),
+    sessionId = binding.sessionId,
+  ) {
     return {
       sessionId,
+      generation: binding.generation,
       project: PROJECT,
       from: "cto",
       messageId: message.id,
@@ -543,26 +560,34 @@ describe("Claude delivery receipt evidence", () => {
   }
 
   it("accepts exact evidence for a submitted message and bound session", async () => {
-    const message = await createMessage(true);
+    const { message, binding } = await createMessage(true);
 
     await expect(
-      fixture.arch.receipt(message.id, {
-        state: "delivered",
-        clientMessageId: message.id,
-        evidence: evidenceFor(message),
-      }),
+      fixture.arch.receipt(
+        message.id,
+        {
+          state: "delivered",
+          clientMessageId: message.id,
+          evidence: evidenceFor(message, binding),
+        },
+        binding,
+      ),
     ).resolves.toMatchObject({ message: { id: message.id, deliveryState: "delivered" } });
   });
 
   it("rejects evidence for a stored, unsubmitted UUID", async () => {
-    const message = await createMessage(false);
+    const { message, binding } = await createMessage(false);
 
     await expect(
-      fixture.arch.receipt(message.id, {
-        state: "delivered",
-        clientMessageId: message.id,
-        evidence: evidenceFor(message),
-      }),
+      fixture.arch.receipt(
+        message.id,
+        {
+          state: "delivered",
+          clientMessageId: message.id,
+          evidence: evidenceFor(message, binding),
+        },
+        binding,
+      ),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
       message: "delivery evidence requires a submitted message",
@@ -576,15 +601,15 @@ describe("Claude delivery receipt evidence", () => {
     [{ messageId: "f99b3f6d-e1a4-4d5f-9634-ee33c33efce8" }],
     [{ threadId: "other-thread" }],
   ])("rejects mismatched provenance %j", async (override) => {
-    const message = await createMessage(true);
-    const evidence = { ...evidenceFor(message), ...override };
+    const { message, binding } = await createMessage(true);
+    const evidence = { ...evidenceFor(message, binding), ...override };
 
     await expect(
-      fixture.arch.receipt(message.id, {
-        state: "delivered",
-        clientMessageId: message.id,
-        evidence,
-      }),
+      fixture.arch.receipt(
+        message.id,
+        { state: "delivered", clientMessageId: message.id, evidence },
+        binding,
+      ),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
       message: "delivery evidence provenance does not match the submitted message",
@@ -593,17 +618,21 @@ describe("Claude delivery receipt evidence", () => {
   });
 
   it("rejects evidence for a different bound session", async () => {
-    const message = await createMessage(true);
+    const { message, binding } = await createMessage(true);
 
     await expect(
-      fixture.arch.receipt(message.id, {
-        state: "delivered",
-        clientMessageId: message.id,
-        evidence: evidenceFor(message, "another-session"),
-      }),
+      fixture.arch.receipt(
+        message.id,
+        {
+          state: "delivered",
+          clientMessageId: message.id,
+          evidence: evidenceFor(message, binding, "another-session"),
+        },
+        binding,
+      ),
     ).rejects.toMatchObject({
-      code: "UNAUTHORIZED",
-      message: "delivery evidence session does not match the bound session",
+      code: "INVALID_INPUT",
+      message: "delivery evidence provenance does not match the submitted message",
     });
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
   });

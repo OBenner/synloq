@@ -2,9 +2,14 @@ import { z } from "zod";
 import type { DeliveryReceipt } from "../adapters/types.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
-import type { AdapterSession, SessionRegistration, SessionState } from "../domain/session.js";
+import type {
+  AdapterSession,
+  SessionBinding,
+  SessionRegistration,
+  SessionState,
+} from "../domain/session.js";
 import type { InboxResult, ReplyRequest, SendRequest } from "../relay/relay-service.js";
-import type { PauseScope } from "../storage/message-store.js";
+import type { ClaimedDelivery, PauseScope } from "../storage/message-store.js";
 
 const errorCodes = [
   "INVALID_INPUT",
@@ -39,8 +44,7 @@ export interface WaitOptions {
   signal?: AbortSignal;
 }
 
-export interface DeliveryFailureRequest {
-  sessionId: string;
+export interface DeliveryFailureRequest extends SessionBinding {
   code: "RETRYABLE" | "DELIVERY_UNCERTAIN";
   clientIdempotency: boolean;
 }
@@ -111,19 +115,40 @@ export class RelayHttpClient {
     return this.request("POST", "/v1/sessions/close", input);
   }
 
-  nextDelivery(options: WaitOptions = {}): Promise<{ message: Message | null }> {
-    const suffix = options.waitMs === undefined ? "" : `?waitMs=${options.waitMs}`;
+  nextDelivery(
+    options: WaitOptions & SessionBinding,
+  ): Promise<ClaimedDelivery | ({ message: null } & SessionBinding)> {
+    const query = new URLSearchParams({
+      sessionId: options.sessionId,
+      generation: String(options.generation),
+    });
+    if (options.waitMs !== undefined) query.set("waitMs", String(options.waitMs));
     return this.request(
       "GET",
-      `/v1/deliveries/next${suffix}`,
+      `/v1/deliveries/next?${query.toString()}`,
       undefined,
       this.longPollTimeout(options.waitMs),
       options.signal,
     );
   }
 
-  receipt(messageId: string, receipt: DeliveryReceipt): Promise<{ message: Message }> {
-    return this.request("POST", `/v1/deliveries/${encodeURIComponent(messageId)}/receipt`, receipt);
+  authorizeDelivery(messageId: string, binding: SessionBinding): Promise<{ message: Message }> {
+    return this.request(
+      "POST",
+      `/v1/deliveries/${encodeURIComponent(messageId)}/authorize`,
+      binding,
+    );
+  }
+
+  receipt(
+    messageId: string,
+    receipt: DeliveryReceipt,
+    binding: SessionBinding,
+  ): Promise<{ message: Message }> {
+    return this.request("POST", `/v1/deliveries/${encodeURIComponent(messageId)}/receipt`, {
+      ...receipt,
+      ...binding,
+    });
   }
 
   deliveryFailure(messageId: string, input: DeliveryFailureRequest): Promise<{ message: Message }> {

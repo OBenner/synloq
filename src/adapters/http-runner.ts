@@ -1,11 +1,16 @@
 import { SynloqError } from "../domain/errors.js";
-import type { RelayHttpClient } from "../transport/http-client.js";
-import type { DeliveryAdapter } from "./types.js";
+import type { SessionBinding } from "../domain/session.js";
+import type { DeliveryFailureRequest, RelayHttpClient } from "../transport/http-client.js";
+import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
 
 const INITIAL_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 30_000;
 
 export type AdapterPollResult = "inactive" | "empty" | "submitted" | "delivered" | "failed";
+
+type OutstandingOperation =
+  | { kind: "receipt"; messageId: string; receipt: DeliveryReceipt }
+  | { kind: "failure"; messageId: string; input: DeliveryFailureRequest };
 
 function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
@@ -24,12 +29,14 @@ export class HttpAdapterRunner {
   private readonly abortController = new AbortController();
   private task: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
+  private outstanding: OutstandingOperation | undefined;
 
   constructor(
     private readonly relay: RelayHttpClient,
     private readonly adapter: DeliveryAdapter,
-    private readonly sessionId: string,
+    private readonly binding: SessionBinding,
     private readonly waitMs = 25_000,
+    private readonly closeTimeoutMs = 5_000,
   ) {}
 
   start(): void {
@@ -45,35 +52,74 @@ export class HttpAdapterRunner {
     ) {
       return "inactive";
     }
+    if (this.outstanding) return this.completeOutstanding();
 
     const { message } = await this.relay.nextDelivery({
+      ...this.binding,
       waitMs: this.waitMs,
       signal: this.abortController.signal,
     });
     if (!message) return "empty";
 
+    await this.relay.authorizeDelivery(message.id, this.binding);
+    if (this.abortController.signal.aborted) return "inactive";
+    let receipt: DeliveryReceipt;
     try {
-      const receipt = await this.adapter.submit(this.sessionId, message);
-      if (receipt.state === "delivered") {
-        await this.relay.receipt(message.id, receipt);
-        return "delivered";
-      }
-      return "submitted";
-    } catch (error) {
-      const uncertain = error instanceof SynloqError && error.code === "DELIVERY_UNCERTAIN";
-      await this.relay.deliveryFailure(message.id, {
-        sessionId: this.sessionId,
-        code: uncertain ? "DELIVERY_UNCERTAIN" : "RETRYABLE",
-        clientIdempotency: this.adapter.capabilities.clientIdempotency,
+      receipt = await this.adapter.submit(this.binding.sessionId, message, {
+        generation: this.binding.generation,
+        signal: this.abortController.signal,
       });
-      return "failed";
+    } catch (error) {
+      if (this.abortController.signal.aborted) return "inactive";
+      const uncertain = error instanceof SynloqError && error.code === "DELIVERY_UNCERTAIN";
+      this.outstanding = {
+        kind: "failure",
+        messageId: message.id,
+        input: {
+          ...this.binding,
+          code: uncertain ? "DELIVERY_UNCERTAIN" : "RETRYABLE",
+          clientIdempotency: this.adapter.capabilities.clientIdempotency,
+        },
+      };
+      return this.completeOutstanding();
     }
+
+    if (this.abortController.signal.aborted) return "inactive";
+    if (receipt.state === "delivered") {
+      this.outstanding = { kind: "receipt", messageId: message.id, receipt };
+      return this.completeOutstanding();
+    }
+    return "submitted";
+  }
+
+  private async completeOutstanding(): Promise<AdapterPollResult> {
+    const operation = this.outstanding;
+    if (!operation) return "empty";
+    if (operation.kind === "receipt") {
+      await this.relay.receipt(operation.messageId, operation.receipt, this.binding);
+      this.outstanding = undefined;
+      return "delivered";
+    }
+    await this.relay.deliveryFailure(operation.messageId, operation.input);
+    this.outstanding = undefined;
+    return "failed";
   }
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.abortController.abort();
-    this.closePromise = this.task ?? Promise.resolve();
+    const task = this.task;
+    if (!task) {
+      this.closePromise = Promise.resolve();
+      return this.closePromise;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, this.closeTimeoutMs);
+    });
+    this.closePromise = Promise.race([task, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
     return this.closePromise;
   }
 

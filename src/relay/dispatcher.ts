@@ -112,15 +112,18 @@ export class Dispatcher {
     }
 
     let receipt: DeliveryReceipt;
+    const binding = { sessionId: session.sessionId, generation: session.generation };
     try {
-      receipt = await adapter.submit(session.sessionId, pending);
+      receipt = await adapter.submit(session.sessionId, pending, {
+        generation: session.generation,
+      });
     } catch (error) {
       this.handleSubmissionError(error, project, agentId, pending, key, adapter);
       return false;
     }
 
     if (receipt.state === "submitted") {
-      this.messages.setDeliveryState(pending.id, "submitted");
+      this.messages.setDeliveryState(pending.id, "submitted", binding);
       this.backoffs.delete(key);
       return false;
     }

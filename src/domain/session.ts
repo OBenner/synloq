@@ -8,15 +8,21 @@ export interface AdapterCapabilities {
   clientIdempotency: boolean;
 }
 
+export interface SessionBinding {
+  sessionId: string;
+  generation: number;
+}
+
 export interface SessionRegistration {
   project: string;
   agentId: string;
   sessionId: string;
   protocolVersion: number;
   capabilities: AdapterCapabilities;
+  acceptanceMessageId?: string;
 }
 
-export interface AdapterSession extends SessionRegistration {
+export interface AdapterSession extends SessionRegistration, SessionBinding {
   state: SessionState;
   lastHeartbeatAt: string;
   stateObservedAt: string;

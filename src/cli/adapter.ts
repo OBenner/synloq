@@ -17,6 +17,7 @@ export interface StandaloneAdapterHandle {
   kind: "claude" | "opencode";
   agentId: string;
   sessionId: string;
+  readonly closed: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -53,17 +54,26 @@ export async function startStandaloneAdapter(
     const runner = new HttpAdapterRunner(
       relay,
       adapter,
-      configuration.sessionId,
+      adapter.sessionBinding,
       dependencies.deliveryWaitMs,
     );
     runner.start();
+    let markClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
     return {
       kind: "opencode",
       agentId: configuration.agentId,
       sessionId: configuration.sessionId,
+      closed,
       close: closeOnce(async () => {
-        await runner.close();
-        await adapter.close();
+        try {
+          await runner.close();
+          await adapter.close();
+        } finally {
+          markClosed();
+        }
       }),
     };
   }
@@ -88,6 +98,9 @@ export async function startStandaloneAdapter(
       sessionId: configuration.sessionId,
       protocolVersion: configuration.protocolVersion,
       capabilities: running.adapter.capabilities,
+      ...(configuration.acceptanceMessageId === undefined
+        ? {}
+        : { acceptanceMessageId: configuration.acceptanceMessageId }),
     });
     if (
       session.project !== configuration.project ||
@@ -100,19 +113,32 @@ export async function startStandaloneAdapter(
     const runner = new HttpAdapterRunner(
       relay,
       running.adapter,
-      configuration.sessionId,
+      { sessionId: session.sessionId, generation: session.generation },
       dependencies.deliveryWaitMs,
     );
     runner.start();
+    let markClosed!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      markClosed = resolve;
+    });
+    const close = closeOnce(async () => {
+      try {
+        await runner.close();
+        await running.server.close();
+        await relay.closeSession({ sessionId: configuration.sessionId });
+      } finally {
+        markClosed();
+      }
+    });
+    running.server.onclose = () => {
+      void close().catch(() => undefined);
+    };
     return {
       kind: "claude",
       agentId: configuration.agentId,
       sessionId: configuration.sessionId,
-      close: closeOnce(async () => {
-        await runner.close();
-        await running.server.close();
-        await relay.closeSession({ sessionId: configuration.sessionId });
-      }),
+      closed,
+      close,
     };
   } catch (error) {
     await running.server.close();

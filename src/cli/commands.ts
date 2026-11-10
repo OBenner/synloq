@@ -84,7 +84,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot);
   const clock = options.clock ?? { now: () => Date.now() };
-  const messages = new SQLiteMessageStore(paths.database);
+  const messages = new SQLiteMessageStore(paths.database, clock);
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
   try {

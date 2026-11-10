@@ -379,7 +379,13 @@ describe("standalone adapter CLI", () => {
       runMain(["adapter", "--config", "/tmp/adapter.json"], io, {
         startAdapter: async (configPath) => {
           observedConfig = configPath;
-          return { kind: "claude", agentId: "cto", sessionId: CLAUDE_SESSION, close };
+          return {
+            kind: "claude",
+            agentId: "cto",
+            sessionId: CLAUDE_SESSION,
+            closed: Promise.resolve(),
+            close,
+          };
         },
         waitForShutdown: async () => undefined,
       }),

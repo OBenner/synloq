@@ -14,11 +14,17 @@ import type { Message } from "../domain/message.js";
 import {
   PROTOCOL_VERSION,
   type AdapterCapabilities,
+  type SessionBinding,
   type SessionState,
 } from "../domain/session.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
 import { frameMessage } from "./reference.js";
-import type { Clock, DeliveryAdapter, DeliveryReceipt } from "./types.js";
+import type {
+  Clock,
+  DeliveryAdapter,
+  DeliveryReceipt,
+  DeliverySubmissionContext,
+} from "./types.js";
 
 const INITIAL_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 30_000;
@@ -139,7 +145,11 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     return this.observedState;
   }
 
-  async submit(sessionId: string, message: Message): Promise<DeliveryReceipt> {
+  async submit(
+    sessionId: string,
+    message: Message,
+    context?: DeliverySubmissionContext,
+  ): Promise<DeliveryReceipt> {
     const original = this.receipts.get(message.id);
     if (original) return original;
     if (sessionId !== this.config.sessionId) {
@@ -154,7 +164,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     }
 
     try {
-      const response = await this.openCode.v2.session.prompt(
+      const prompt = this.openCode.v2.session.prompt(
         {
           sessionID: sessionId,
           prompt: { text: frameMessage(message) },
@@ -163,6 +173,9 @@ export class OpenCodeAdapter implements DeliveryAdapter {
         },
         { throwOnError: true },
       );
+      const response = context?.signal
+        ? await raceWithAbort(prompt, context.signal)
+        : await prompt;
       const admitted = response.data.data;
       if (!this.isMatchingAdmission(admitted, sessionId, message)) {
         throw this.deliveryUncertain(message.id);
@@ -313,19 +326,25 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   }
 }
 
+export type RegisteredOpenCodeAdapter = OpenCodeAdapter & {
+  readonly sessionBinding: SessionBinding;
+};
+
 export async function runOpenCodeAdapter(
   config: OpenCodeRunConfig,
   relay: RelayHttpClient,
   clients?: OpenCodeClientSet,
-): Promise<OpenCodeAdapter> {
+): Promise<RegisteredOpenCodeAdapter> {
   const openCode = clients?.openCode ?? createOpenCodeV2Client({ baseUrl: config.baseUrl });
   const client = clients?.client ?? createOpenCodeClient({ baseUrl: config.baseUrl });
   const adapter = new OpenCodeAdapter(openCode, client, relay, config);
-  await relay.registerSession({
+  const { session } = await relay.registerSession({
     sessionId: config.sessionId,
     protocolVersion: PROTOCOL_VERSION,
     capabilities: adapter.capabilities,
   });
   adapter.start();
-  return adapter;
+  return Object.assign(adapter, {
+    sessionBinding: { sessionId: session.sessionId, generation: session.generation },
+  });
 }

@@ -8,8 +8,9 @@ export interface VisibleEntry {
   content: string;
 }
 
-export function frameMessage(message: Message): string {
-  return `<synloq project="${message.project}" from="${message.from}" message="${message.id}" thread="${message.threadId}">\n${message.text}\n</synloq>`;
+export function frameMessage(message: Message, generation?: number): string {
+  const registration = generation === undefined ? "" : ` registration="${generation}"`;
+  return `<synloq project="${message.project}" from="${message.from}" message="${message.id}" thread="${message.threadId}"${registration}>\n${message.text}\n</synloq>`;
 }
 
 export class ReferenceAdapter implements DeliveryAdapter {
