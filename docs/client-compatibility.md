@@ -78,3 +78,44 @@ This procedure has **not** been executed as part of the mock-tested implementati
 9. Only after these checks pass, record the evidence and set `activationVerifiedAt` for that same session and protocol version.
 
 Until this evidence exists, Claude Code active delivery must remain disabled in operator configuration.
+
+## OpenCode
+
+**Live verification status: UNVERIFIED.** The automated tests use fake normal and v2 SDK clients with controllable event streams. They verify Synloq's queued request, response validation, event handling, reconnect, receipt, and lifecycle behavior against `@opencode-ai/sdk` 1.19.5 types. No real OpenCode server or visible session was launched, and these tests do not establish support in any released OpenCode version.
+
+### Queued prompt admission
+
+Submission calls `v2.session.prompt` with the bound `sessionID`, Synloq-framed prompt text, `delivery: "queue"`, and `resume: false`. There is no steering call path. A successful HTTP exchange alone is not delivery evidence: the response must contain a new `SessionInputAdmitted` inbox entry whose session ID, complete framed prompt, and queued delivery mode match the submission.
+
+A matching entry produces `delivered` with the admitted OpenCode entry ID as `clientMessageId`. The receipt is cached by the Synloq message UUID, so a repeated known message ID returns the original receipt without another prompt. Receipts are created only after response validation, never before the request.
+
+A post-transmission exception, malformed admission response, or response for another session produces `DELIVERY_UNCERTAIN` and disables `clientIdempotency`. The uncertain message cannot be blindly reposted. The dispatcher durably quarantines it as `submitted`, pauses that participant, and requires operator inspection. Known pre-transmission domain rejections remain ordinary retryable failures.
+
+### State, reconnect, and shutdown
+
+| OpenCode observation                      | Synloq state |
+| ----------------------------------------- | ------------ |
+| Matching `session.status` with `busy`     | `busy`       |
+| Matching `session.status` with `idle`     | `idle`       |
+| Matching `session.idle`                   | `idle`       |
+| Matching `session.deleted`                | `closed`     |
+| Initial state, EOF, or unsupported status | `unknown`    |
+
+Only the bound session's status, idle, and deletion events are tracked. EOF invalidates the prior state. Initial subscription, stream reconnect, and `server.connected` require a fresh `session.status({})` read containing the bound session before any idle or busy event is accepted. A missing matching status leaves the session `unknown`, even if a buffered idle event arrives.
+
+`start` runs event and relay-heartbeat loops with exponential backoff bounded between 200 ms and 30 seconds. `close` aborts both loops, reports `closed`, and closes the relay session.
+
+### Required live acceptance procedure
+
+This procedure has **not** been executed as part of the fake-SDK-tested implementation:
+
+1. Record the actual OpenCode version, SDK version, loopback server URL, visible session ID, and Synloq protocol version.
+2. Start the adapter against that server and confirm initial status plus matching busy, idle, and deletion observations without accepting another session's events.
+3. While the visible session is freshly idle, submit one Synloq message and record the exact queued request with `resume: false` and the returned `SessionInputAdmitted` entry.
+4. Confirm that the entry appears in the intended visible session with complete provenance and that the admitted entry ID produces exactly one delivered receipt on repeated submission.
+5. While a response is running, confirm that Synloq performs no submission and never steers it; after a fresh idle observation, confirm that queued admission drains in FIFO order.
+6. Interrupt and reconnect the event stream. Confirm `unknown` state and zero delivery until a fresh status read contains the bound session; repeat with `server.connected`.
+7. Inject a post-transmission transport failure. Confirm `DELIVERY_UNCERTAIN`, durable quarantine and participant pause, disabled client idempotency, no automatic repost, and the need for operator inspection.
+8. Close the adapter and confirm that event and heartbeat activity stops and the relay session becomes `closed`.
+
+Until equivalent evidence is recorded, OpenCode support must remain described as mock-tested and live-unverified.
