@@ -73,8 +73,8 @@ export class RelayHttpClient {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  listParticipants(): Promise<{ participants: Participant[] }> {
-    return this.request("GET", "/v1/participants");
+  listParticipants(timeoutMs = 5_000): Promise<{ participants: Participant[] }> {
+    return this.request("GET", "/v1/participants", undefined, timeoutMs);
   }
 
   send(input: SendRequest): Promise<{ message: Message }> {

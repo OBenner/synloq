@@ -236,4 +236,123 @@ describe("KimiWorkControlClient", () => {
       params: { agentId: "main", conversationKey: binding.conversationKey, limit: 50 },
     });
   });
+
+  it("creates an inactive client conversation with persistent role instructions", async () => {
+    const conversation = {
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      conversationKey: binding.conversationKey,
+      conversationId: "d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+      kernelSessionId: binding.kernelSessionId,
+      origin: "client",
+      workspacePath: binding.workspacePath,
+      clientInstructions: "Role: reviewer\nUse only your assigned Synloq channel.",
+      title: "Reviewer",
+      titleStatus: "manual",
+      createdAt: "2026-11-11T18:00:00.000Z",
+      updatedAt: "2026-11-11T18:00:00.000Z",
+    };
+    const rpc = new FakeRpc(() => ({ agentId: "main", conversation }));
+    const client = new KimiWorkControlClient(rpc);
+    const input = {
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      origin: "client" as const,
+      activate: false as const,
+      workspacePath: binding.workspacePath,
+      clientInstructions: conversation.clientInstructions,
+    };
+
+    await expect(client.create(input)).resolves.toEqual({
+      agentId: "main",
+      sessionKey: "agent:main:main",
+      conversationKey: binding.conversationKey,
+      conversationId: conversation.conversationId,
+      kernelSessionId: binding.kernelSessionId,
+      origin: "client",
+      workspacePath: binding.workspacePath,
+      clientInstructions: conversation.clientInstructions,
+      title: "Reviewer",
+    });
+    expect(rpc.calls).toEqual([{ method: "conversations.create", params: input }]);
+  });
+
+  it("lists exact client conversations with pagination", async () => {
+    const conversation = {
+      agentId: "main",
+      sessionKey: binding.sessionKey,
+      conversationKey: binding.conversationKey,
+      conversationId: "d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+      origin: "client",
+      workspacePath: binding.workspacePath,
+      title: "Any title",
+      titleStatus: "generated",
+      createdAt: "2026-11-11T18:00:00.000Z",
+      updatedAt: "2026-11-11T18:00:00.000Z",
+    };
+    const rpc = new FakeRpc(() => ({
+      agentId: "main",
+      sessions: [],
+      conversations: [conversation],
+      page: { limit: 100, hasMore: true, nextCursor: binding.conversationKey },
+    }));
+    const client = new KimiWorkControlClient(rpc);
+    const options = {
+      agentId: "main",
+      sessionKey: binding.sessionKey,
+      origin: "client" as const,
+      workspacePath: binding.workspacePath,
+      limit: 100,
+      includeTemporary: false,
+    };
+
+    await expect(client.list(options)).resolves.toEqual({
+      conversations: [
+        {
+          agentId: "main",
+          sessionKey: binding.sessionKey,
+          conversationKey: binding.conversationKey,
+          conversationId: conversation.conversationId,
+          origin: "client",
+          workspacePath: binding.workspacePath,
+          title: "Any title",
+        },
+      ],
+      page: { limit: 100, hasMore: true, nextCursor: binding.conversationKey },
+    });
+    expect(rpc.calls).toEqual([{ method: "conversations.list", params: options }]);
+  });
+
+  it.each([
+    ["missing conversation key", { conversationKey: undefined }],
+    ["wrong origin type", { origin: 1 }],
+    ["missing workspace", { workspacePath: undefined }],
+    ["empty instructions", { clientInstructions: "" }],
+  ])("rejects an invalid created conversation: %s", async (_name, override) => {
+    const rpc = new FakeRpc(() => ({
+      conversation: {
+        agentId: "main",
+        sessionKey: binding.sessionKey,
+        conversationKey: binding.conversationKey,
+        conversationId: "d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+        origin: "client",
+        workspacePath: binding.workspacePath,
+        clientInstructions: "Role instructions",
+        title: "Reviewer",
+        ...override,
+      },
+    }));
+    const client = new KimiWorkControlClient(rpc);
+
+    await expect(
+      client.create({
+        agentId: "main",
+        sessionKey: binding.sessionKey,
+        origin: "client",
+        activate: false,
+        workspacePath: binding.workspacePath,
+        clientInstructions: "Role instructions",
+      }),
+    ).rejects.toThrow();
+  });
 });

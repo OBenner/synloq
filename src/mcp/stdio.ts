@@ -14,6 +14,7 @@ import {
   resolveKimiWorkBinding,
   type ResolvedKimiWorkBinding,
 } from "../host/kimi-work/binding.js";
+import { startRelaySupervisor, type RelaySupervisorLoop } from "../relay/supervisor-loop.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { registerSynloqTools } from "./tools.js";
 
@@ -21,9 +22,15 @@ const configurationSchema = z
   .object({
     relayUrl: z.string().url(),
     credentialPath: z.string().min(1),
+    synloqHome: z.string().min(1).optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((configuration, context) => {
+    if (configuration.synloqHome && !configuration.kimiWork) {
+      context.addIssue({ code: "custom", message: "Automatic relay requires a Kimi Work binding" });
+    }
+  });
 
 export interface KimiWorkMcpBridge {
   runner: Pick<HttpAdapterRunner, "start" | "close">;
@@ -46,11 +53,17 @@ export interface McpStdioOptions {
   kimiWorkFactory?: KimiWorkFactory;
   kimiWorkStartupAttempts?: number;
   kimiWorkRetryDelayMs?: number;
+  relayFactory?: typeof startRelaySupervisor;
 }
 
-async function readConfiguration(
-  configPath: string,
-): Promise<{ relayUrl: string; token: string; kimiWork?: ResolvedKimiWorkBinding }> {
+interface McpConfiguration {
+  relayUrl: string;
+  token: string;
+  synloqHome?: string;
+  kimiWork?: ResolvedKimiWorkBinding;
+}
+
+async function readConfiguration(configPath: string): Promise<McpConfiguration> {
   let input: unknown;
   try {
     input = JSON.parse(await readFile(configPath, "utf8"));
@@ -74,7 +87,14 @@ async function readConfiguration(
   const kimiWork = configuration.data.kimiWork
     ? await resolveKimiWorkBinding(configPath, configuration.data.kimiWork)
     : undefined;
-  return { relayUrl: configuration.data.relayUrl, token, ...(kimiWork ? { kimiWork } : {}) };
+  return {
+    relayUrl: configuration.data.relayUrl,
+    token,
+    ...(configuration.data.synloqHome
+      ? { synloqHome: resolve(dirname(configPath), configuration.data.synloqHome) }
+      : {}),
+    ...(kimiWork ? { kimiWork } : {}),
+  };
 }
 
 async function defaultKimiWorkFactory(options: KimiWorkFactoryOptions): Promise<KimiWorkMcpBridge> {
@@ -101,64 +121,93 @@ function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
-function attachKimiWorkLifecycle(
-  server: McpServer,
+interface KimiWorkLifecycle {
+  start(): void;
+  stop(): Promise<void>;
+  close(): Promise<void>;
+}
+
+function createKimiWorkLifecycle(
   binding: ResolvedKimiWorkBinding,
   relay: RelayHttpClient,
   token: string,
   options: McpStdioOptions,
-): void {
+): KimiWorkLifecycle {
   const factory = options.kimiWorkFactory ?? defaultKimiWorkFactory;
-  const abort = new AbortController();
   const diagnostics = options.stderr ?? process.stderr;
   const attempts = Math.max(1, Math.floor(options.kimiWorkStartupAttempts ?? 5));
   const retryDelay = Math.max(0, options.kimiWorkRetryDelayMs ?? 200);
+  let abort: AbortController | undefined;
+  let task: Promise<void> | undefined;
   let bridge: KimiWorkMcpBridge | undefined;
-  let cleanupPromise: Promise<void> | undefined;
+  let closePromise: Promise<void> | undefined;
+  let closed = false;
 
   const closeBridge = async (value: KimiWorkMcpBridge | undefined) => {
     if (!value) return;
-    await value.runner.close();
-    await value.adapter.close();
-  };
-
-  const startup = (async () => {
-    for (let attempt = 1; attempt <= attempts && !abort.signal.aborted; attempt += 1) {
-      try {
-        const created = await factory({ binding, relay, token, signal: abort.signal });
-        if (abort.signal.aborted) {
-          await closeBridge(created);
-          return;
-        }
-        bridge = created;
-        created.runner.start();
-        return;
-      } catch {
-        if (abort.signal.aborted) return;
-        if (attempt === attempts) {
-          diagnostics.write(
-            `Synloq Kimi Work visible delivery unavailable for ${binding.conversationKey}\n`,
-          );
-          return;
-        }
-        await abortableSleep(retryDelay * 2 ** (attempt - 1), abort.signal);
-      }
+    try {
+      await value.runner.close();
+    } finally {
+      await value.adapter.close();
     }
-  })();
-
-  const cleanup = () => {
-    if (cleanupPromise) return cleanupPromise;
-    abort.abort();
-    cleanupPromise = (async () => {
-      await Promise.race([startup, abortableSleep(1_000, new AbortController().signal)]);
-      await closeBridge(bridge);
-    })();
-    return cleanupPromise;
   };
-  const previousClose = server.server.onclose;
-  server.server.onclose = () => {
-    previousClose?.();
-    void cleanup();
+
+  const start = () => {
+    if (closed || task) return;
+    const controller = new AbortController();
+    abort = controller;
+    const startup = (async () => {
+      for (let attempt = 1; attempt <= attempts && !controller.signal.aborted; attempt += 1) {
+        try {
+          const created = await factory({ binding, relay, token, signal: controller.signal });
+          if (controller.signal.aborted || closed) {
+            await closeBridge(created);
+            return;
+          }
+          bridge = created;
+          created.runner.start();
+          return;
+        } catch {
+          if (controller.signal.aborted || closed) return;
+          if (attempt === attempts) {
+            diagnostics.write(
+              `Synloq Kimi Work visible delivery unavailable for ${binding.conversationKey}\n`,
+            );
+            return;
+          }
+          await abortableSleep(retryDelay * 2 ** (attempt - 1), controller.signal);
+        }
+      }
+    })();
+    task = startup;
+    void startup.finally(() => {
+      if (task === startup) task = undefined;
+    });
+  };
+
+  const stop = async () => {
+    const controller = abort;
+    abort = undefined;
+    controller?.abort();
+    const startup = task;
+    task = undefined;
+    if (startup) {
+      await Promise.race([startup, abortableSleep(1_000, new AbortController().signal)]);
+    }
+    const current = bridge;
+    bridge = undefined;
+    await closeBridge(current);
+  };
+
+  return {
+    start,
+    stop,
+    close: () => {
+      if (closePromise) return closePromise;
+      closed = true;
+      closePromise = stop();
+      return closePromise;
+    },
   };
 }
 
@@ -167,14 +216,54 @@ export async function startMcpStdio(
   options: McpStdioOptions = {},
 ): Promise<McpServer> {
   const configuration = await readConfiguration(configPath);
-  const client = new RelayHttpClient(configuration.relayUrl, () => configuration.token);
+  const diagnostics = options.stderr ?? process.stderr;
+  let lifecycle: KimiWorkLifecycle | undefined;
+  let supervisor: RelaySupervisorLoop | undefined;
+  if (configuration.synloqHome && configuration.kimiWork) {
+    const participants = await loadManifest(configuration.kimiWork.workspacePath);
+    const project = participants[0]?.project;
+    if (!project) throw new SynloqError("INVALID_INPUT", "Synloq manifest has no project");
+    const relayFactory = options.relayFactory ?? startRelaySupervisor;
+    supervisor = await relayFactory({
+      projectRoot: configuration.kimiWork.workspacePath,
+      project,
+      relayUrl: configuration.relayUrl,
+      token: configuration.token,
+      synloqHome: configuration.synloqHome,
+      onOwnerLost: async () => lifecycle?.stop(),
+      onRecovered: () => lifecycle?.start(),
+      onDiagnostic: (message) => diagnostics.write(`${message}\n`),
+    });
+  }
+
+  const client =
+    supervisor?.client ?? new RelayHttpClient(configuration.relayUrl, () => configuration.token);
   const server = new McpServer({ name: "synloq", version: "0.1.0" });
   registerSynloqTools(server, client);
-  await server.connect(new StdioServerTransport(options.stdin, options.stdout));
-  if (configuration.kimiWork) {
-    attachKimiWorkLifecycle(server, configuration.kimiWork, client, configuration.token, options);
+  try {
+    await server.connect(new StdioServerTransport(options.stdin, options.stdout));
+  } catch (error) {
+    await supervisor?.close();
+    throw error;
   }
-  (options.stderr ?? process.stderr).write("Synloq MCP stdio bridge ready\n");
+  if (configuration.kimiWork) {
+    lifecycle = createKimiWorkLifecycle(
+      configuration.kimiWork,
+      client,
+      configuration.token,
+      options,
+    );
+    lifecycle.start();
+  }
+  const previousClose = server.server.onclose;
+  server.server.onclose = () => {
+    previousClose?.();
+    void (async () => {
+      await lifecycle?.close();
+      await supervisor?.close();
+    })();
+  };
+  diagnostics.write("Synloq MCP stdio bridge ready\n");
   return server;
 }
 

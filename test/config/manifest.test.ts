@@ -1,8 +1,8 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadManifest } from "../../src/config/manifest.js";
+import { loadManifest, writeManifest } from "../../src/config/manifest.js";
 
 async function manifestRoot(contents: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "synloq-manifest-"));
@@ -30,6 +30,42 @@ describe("loadManifest", () => {
         role: "Technical strategy and architecture",
       },
     ]);
+  });
+
+  it("writes arbitrary roles without adding instruction fields to the manifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-write-"));
+    await writeManifest(root, [
+      {
+        project: "example",
+        agentId: "product",
+        title: "Product",
+        role: "Own scope and priorities",
+      },
+      {
+        project: "example",
+        agentId: "reviewer",
+        title: "Reviewer",
+        role: "Review evidence and risks",
+      },
+    ]);
+
+    await expect(loadManifest(root)).resolves.toEqual([
+      {
+        project: "example",
+        agentId: "product",
+        title: "Product",
+        role: "Own scope and priorities",
+      },
+      {
+        project: "example",
+        agentId: "reviewer",
+        title: "Reviewer",
+        role: "Review evidence and risks",
+      },
+    ]);
+    await expect(readFile(join(root, "synloq.yaml"), "utf8")).resolves.not.toContain(
+      "instructions:",
+    );
   });
 
   it.each([

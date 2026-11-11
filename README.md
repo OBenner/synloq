@@ -1,8 +1,8 @@
 # Synloq
 
-Synloq is a local-first message relay for existing, visible coding-agent chats. A loopback HTTP relay owns durable SQLite state. Each chat receives only six agent-facing MCP tools, while explicitly configured adapters provide active delivery to a bound visible session.
+Synloq is a local-first coordination plugin for visible coding-agent chats. Generic initialization creates explicitly configured Kimi Work client conversations for arbitrary project roles. A supervised loopback HTTP relay owns durable SQLite state, starts automatically with the generated role channels, and gives each chat only six agent-facing MCP tools.
 
-Synloq is not an orchestrator. It does not create replacement chats, run one-shot model subprocesses, assign tasks, execute workflows, operate a dashboard, merge or push changes, or deliver to remote clients.
+Synloq is not an orchestrator. It does not hide work in replacement chats, run one-shot model subprocesses, execute workflows autonomously, operate a dashboard, merge or push changes, or deliver to remote clients. The operator can inspect and steer every visible role conversation directly.
 
 ## Support status
 
@@ -10,7 +10,8 @@ Synloq is not an orchestrator. It does not create replacement chats, run one-sho
 - Claude Code active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
 - OpenCode active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
 - Codex MCP inbox and lifecycle state reporting are implemented with controlled doubles; live compatibility is **UNVERIFIED**. Active delivery is unsupported and disabled.
-- Kimi Work visible delivery to an exact bound client conversation is **VERIFIED for the local CTO ↔ Architect stand on 2026-11-11**: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral passed. See `docs/superpowers/specs/2026-11-11-kimi-work-live-acceptance.md`. Other hosts and Kimi Code CLI active delivery remain **UNVERIFIED**.
+- Kimi Work visible delivery to an exact bound client conversation is **VERIFIED for the local CTO ↔ Architect stand on 2026-11-11**: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral passed. See `docs/superpowers/specs/2026-11-11-kimi-work-live-acceptance.md`.
+- Generic arbitrary-role initialization and automatic relay startup/recovery are **VERIFIED for an isolated local Product ↔ Reviewer Kimi Work stand on 2026-11-11**: exact visible chat creation, idempotent reconciliation, automatic startup, two visible reply cycles, and role-initiated acknowledgements passed. Live host respawn recovered the same role; surviving-peer election is covered by a real loopback/SQLite integration test, not claimed as live-host evidence. See `docs/superpowers/specs/2026-11-11-synloq-generic-init-acceptance.md` and `docs/superpowers/specs/2026-11-11-synloq-relay-lifecycle-acceptance.md`. Host-enforced per-chat MCP isolation, other hosts, and Kimi Code CLI active delivery remain **UNVERIFIED**.
 
 Controlled transports and fake SDK clients are contract evidence, not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
 
@@ -36,33 +37,56 @@ The archive contains the compiled `dist` runtime, README, and package metadata. 
 
 The examples below use `node dist/cli/main.js` so they also work without modifying global PATH. After installing or linking the local package, the equivalent binary command is `synloq`.
 
-## 1. Declare roles and initialize a project
+## 1. Install the plugin and initialize arbitrary roles
 
-Create `synloq.yaml` in the project root:
+For Kimi Work, register `plugins/synloq` through the supported personal-plugin source flow and install it in the client. Ask the agent to **Initialize Synloq for this project**. The skill confirms the project name and each role's stable ID, display name, responsibilities, boundaries, and optional instructions before running `synloq init`.
 
-```yaml
-version: 1
-project: verdicta
-agents:
-  cto:
-    title: CTO
-    role: Technical strategy
-  arch:
-    title: Architect
-    role: Architecture review
-```
-
-Initialize once:
+With no role arguments, `synloq init` starts the same confirmation wizard directly:
 
 ```bash
 node dist/cli/main.js init --project-root /absolute/path/to/project
 ```
 
-The JSON output contains an operator token and one token per role, plus the credential and database paths. Save each token in a separate file outside Git with mode `0600`. The stored credential file contains hashes, not recoverable plaintext tokens; keep the one-time output secure.
+A non-interactive example with two arbitrary roles:
 
-Do not commit token files, adapter configuration containing secrets, SQLite files, logs, evidence containing message bodies, or IDE state.
+```bash
+node dist/cli/main.js init \
+  --project-root /absolute/path/to/project \
+  --project example \
+  --role "product:Product:Own scope and priorities" \
+  --role "reviewer:Reviewer:Review evidence and risks" \
+  --plugin-source /secure/synloq-plugin \
+  --synloq-home /secure/synloq-home \
+  --non-interactive
+```
 
-## 2. Start the relay
+Initialization creates ordinary visible Kimi Work client chats without activating them, binds each exact conversation to its role, writes resumable state after every creation, and renders the personal plugin source with one authenticated MCP channel per role. Re-running the same command reconciles exact bindings and does not create duplicate chats. Use `--conversation <role-id:conversationKey>` to bind an existing visible chat instead.
+
+The JSON result contains role bindings and generated file paths, but no plaintext tokens. Per-role token files are reused from the explicit Synloq home and never copied into plugin source. Do not commit token files, MCP configuration, SQLite files, logs, evidence containing message bodies, or IDE state.
+
+When the result contains `registrationRequired: true`, use the client's single **Install/Update** action for the generated personal plugin. Source registration, plugin installation, channel availability, and end-to-end readiness are different states: do not claim readiness until both generated role channels have been checked.
+
+An existing `synloq.yaml` can supply the same role declarations without `--role` arguments:
+
+```yaml
+version: 1
+project: example
+agents:
+  product:
+    title: Product
+    role: Own scope and priorities
+  reviewer:
+    title: Reviewer
+    role: Review evidence and risks
+```
+
+## 2. Automatic relay lifecycle
+
+Generated Kimi Work role channels reuse or start the project relay automatically at `http://127.0.0.1:4100`; no separate `synloq serve` terminal is required. The first compatible MCP process owns the loopback listener and SQLite writer, while other roles reuse it after authenticated project validation. If the owner stops, a surviving channel performs bounded reconnection and listener election, invalidates its old host registration, and registers a new generation after recovery. Durable messages remain in SQLite.
+
+Only explicit loopback HTTP origins with nonzero ports are accepted. An unrelated listener, wrong project, invalid credential, malformed response, or ambiguous endpoint fails closed instead of starting a second writer. A Kimi Work delivery failure does not remove the six MCP inbox tools while the relay remains healthy.
+
+For advanced diagnostics or a custom standalone topology, `serve` remains available:
 
 ```bash
 node dist/cli/main.js serve \
@@ -71,46 +95,26 @@ node dist/cli/main.js serve \
   --port 4100
 ```
 
-The command prints a `relayUrl` and runs until SIGINT or SIGTERM. Only `127.0.0.1` and `::1` are accepted. Port `0` selects a free port and is useful for automated tests. The relay owns writes to the per-project SQLite database; run one relay for a project database.
+The command prints a `relayUrl` and runs until SIGINT or SIGTERM. Port `0` selects a free port for automated tests. Run exactly one writer for a project database; do not start this command alongside the generated automatic topology unless they intentionally share the single compatible relay.
 
-`serve` does not invent stdio clients or inject hidden chats. Start the visible-client and adapter processes described below explicitly.
+## 3. Connect ordinary MCP tools to an existing chat
 
-## 3. Connect ordinary MCP tools to a visible chat
-
-Create a strict JSON file outside Git, for example `/secure/cto-mcp.json`:
+Generic initialization writes these files automatically. For other clients or a manual legacy setup, create a strict JSON file outside Git, for example `/secure/reviewer-mcp.json`:
 
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/cto.token"
+  "credentialPath": "/secure/reviewer.token"
 }
 ```
 
-The stdio command is:
+This legacy shape requires a compatible relay to be running already. Automatic startup is enabled only for generated configuration with an explicit `synloqHome` and exact `kimiWork` binding. The stdio command is:
 
 ```bash
-node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/cto-mcp.json
+node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json
 ```
 
-Configure this command as an MCP stdio server in the existing visible chat. For clients using the common `mcpServers` JSON shape, the configuration is:
-
-```json
-{
-  "mcpServers": {
-    "synloq": {
-      "command": "node",
-      "args": [
-        "/absolute/path/to/synloq/dist/cli/main.js",
-        "mcp",
-        "--config",
-        "/secure/cto-mcp.json"
-      ]
-    }
-  }
-}
-```
-
-Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
+Configure this command as an MCP stdio server in the existing visible chat. Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
 
 ### The six agent-facing tools
 
@@ -225,20 +229,25 @@ separate OpenCode adapter: synloq adapter --config opencode-arch.json
        ├─ queue/events/status at the existing OpenCode server
        └─ HTTP to relay with arch credential
 
-synloq serve ── one loopback HTTP relay and one project SQLite writer
+generated Kimi Work role MCP
+  ├─ six tools + embedded visible-delivery runner
+  └─ supervised relay ownership or authenticated reuse
+
+standalone synloq serve (advanced) ── one loopback HTTP relay and one project SQLite writer
 ```
 
 ### Kimi Work embedded visible delivery
 
-A role's ordinary MCP JSON may include a strict `kimiWork` binding. The same MCP child process then owns the active-delivery runner; no separate adapter process is required:
+Generic initialization writes a strict `kimiWork` binding and explicit `synloqHome` for each role. The same MCP child process then supervises the relay and owns the active-delivery runner; no separate adapter process is required:
 
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/arch.token",
+  "credentialPath": "/secure/synloq-home/tokens/reviewer.token",
+  "synloqHome": "/secure/synloq-home",
   "kimiWork": {
     "projectRoot": "/absolute/path/to/project",
-    "agentId": "arch",
+    "agentId": "reviewer",
     "conversationKey": "agent:main:main:conversation:exact-client-conversation-uuid",
     "workAgentId": "main"
   }
@@ -249,7 +258,7 @@ A role's ordinary MCP JSON may include a strict `kimiWork` binding. The same MCP
 
 The bridge revalidates exact metadata and fresh idle state before one `conversations.send`. `delivered` means visible user-turn admission only, not model completion, reading, acknowledgement, or task completion. The receiving agent must call `synloq_ack` after actual reading and use `synloq_reply` for the original thread. Ambiguous sends receive bounded read-only history reconciliation; they are never blindly replayed. Risky actions still require operator approval.
 
-If host initialization fails, all six MCP inbox tools remain available. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work. The local acceptance stand verified real two-way visible turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral on 2026-11-11; uncertain-send reconciliation remains controlled-test evidence. Generic chat creation and host-enforced per-chat MCP isolation are separate, unfinished work.
+If host initialization fails, all six MCP inbox tools remain available while relay startup succeeds. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work; it closes only a relay listener owned by that process, allowing surviving roles to recover. The earlier local acceptance stand verified real two-way visible turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral on 2026-11-11. The generic Product ↔ Reviewer stand separately verified arbitrary-role initialization, automatic startup, visible acknowledgement/reply cycles, and recovery after Kimi Work respawned the stopped role MCP. Surviving-peer election is covered by a real loopback/SQLite integration test; it was not observed as a live-host ownership transfer. Host-enforced per-chat MCP isolation remains unverified. Controlled tests are not live-client evidence.
 
 ## Codex MCP inbox and lifecycle state
 
@@ -426,7 +435,7 @@ By default Synloq stores per-project state under:
 ~/.synloq/data/<project-key>.sqlite
 ```
 
-Set `SYNLOQ_HOME` to relocate both trees. The key is derived from the canonical project root. Keep MCP/adapter JSON, plaintext token files, logs, and manual evidence outside the repository as well. Runtime logs and evidence indexes should identify participants and message IDs only; do not commit credentials or message bodies.
+Use `synloq init --synloq-home <path>` to relocate both trees for generated channels. The same absolute path is persisted in each generated MCP configuration and passed explicitly to the relay supervisor; it does not depend on mutable process environment. Legacy commands can use `SYNLOQ_HOME`. The project key is derived from the canonical project root. Keep MCP/adapter JSON, plaintext token files, logs, and manual evidence outside the repository as well. Runtime logs and evidence indexes should identify participants and message IDs only; do not commit credentials or message bodies.
 
 ## Verification
 

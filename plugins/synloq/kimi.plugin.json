@@ -1,0 +1,38 @@
+{
+  "$schema": "https://catalog.msh.team/misc/kimi.plugin.schema.json",
+  "name": "synloq",
+  "version": "0.1.0",
+  "description": "Local coordination between visible project role chats.",
+  "keywords": ["multi-agent", "mcp", "local-first", "agent-communication"],
+  "author": "Synloq contributors",
+  "license": "UNKNOWN",
+  "skillInstructions": "Initialize and coordinate arbitrary visible project role chats. Use only the MCP channel assigned to the current role. Acknowledge only after actual reading, reply in the original thread, and request operator approval for risky actions.",
+  "interface": {
+    "displayName": "Synloq",
+    "shortDescription": "Visible role-chat coordination",
+    "longDescription": "Initialize arbitrary project roles and coordinate their ordinary visible Kimi Work chats through authenticated local channels.",
+    "developerName": "Synloq contributors",
+    "websiteURL": "",
+    "iconUrl": "",
+    "category": "PRODUCTIVITY",
+    "defaultLocale": "en-US",
+    "locales": "./locales/",
+    "tryPrompts": [
+      "Initialize Synloq for this project.",
+      "Send a bounded question to another project role.",
+      "Reply in the original Synloq thread after reading."
+    ],
+    "skillOverrides": {
+      "synloq": {
+        "displayName": "Synloq",
+        "description": "Visible role-chat coordination"
+      }
+    },
+    "hostKind": "local",
+    "platforms": ["macos", "linux", "windows"],
+    "mcpOverrides": {}
+  },
+  "skills": "./skills/",
+  "mcpServers": {},
+  "agents": ["./agents/"]
+}

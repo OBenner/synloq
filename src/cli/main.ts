@@ -20,7 +20,6 @@ import {
 import {
   doctorCommand,
   inboxCommand,
-  initCommand,
   listCommand,
   pauseCommand,
   replaceSessionCommand,
@@ -29,6 +28,7 @@ import {
   serveCommand,
 } from "./commands.js";
 import { formatDoctorReport } from "./doctor.js";
+import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
 
 interface Output {
   write(chunk: string): boolean;
@@ -39,7 +39,7 @@ export interface CliIo {
   stderr: Output;
 }
 
-export interface MainDependencies {
+export interface MainDependencies extends GenericInitDependencies {
   startMcp?: (configPath: string) => Promise<unknown>;
   startAdapter?: (configPath: string) => Promise<StandaloneAdapterHandle>;
   runHook?: (configPath: string) => Promise<void>;
@@ -74,7 +74,7 @@ const relayOptions: NonNullable<ParseArgsConfig["options"]> = {
 };
 
 const helpText: Record<CommandName, string> = {
-  init: "Usage: synloq init --project-root <path>\n",
+  init: "Usage: synloq init [--project-root <path>] [--role <id:title:role> ...] [--non-interactive]\n",
   serve: "Usage: synloq serve --project-root <path> [--host <127.0.0.1|::1>] [--port <number>]\n",
   mcp: "Usage: synloq mcp --config <path>\n",
   adapter: "Usage: synloq adapter --config <path>\n",
@@ -192,12 +192,7 @@ async function execute(
   dependencies: MainDependencies,
 ): Promise<void> {
   if (command === "init") {
-    const { values } = parse(command, args, { "project-root": { type: "string" } });
-    if (value(values, "help")) {
-      io.stdout.write(helpText[command]);
-      return;
-    }
-    writeJson(io, await initCommand({ projectRoot: requiredString(values, "project-root") }));
+    await runGenericInit(args, io, dependencies);
     return;
   }
 

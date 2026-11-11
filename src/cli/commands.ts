@@ -31,6 +31,7 @@ export interface InitResult {
 
 export interface ServeOptions {
   projectRoot: string;
+  synloqHome?: string;
   host?: string;
   port?: number;
   adapters?: ReadonlyMap<string, DeliveryAdapter>;
@@ -82,7 +83,7 @@ export async function initCommand(options: InitOptions): Promise<InitResult> {
 export async function serveCommand(options: ServeOptions): Promise<ServeHandle> {
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
-  const paths = await projectPaths(options.projectRoot);
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
   const messages = new SQLiteMessageStore(paths.database, clock);
   let sessions: SessionStore | undefined;
@@ -99,7 +100,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
         sessions,
         new ProtectionPolicy(messages, undefined, undefined, clock),
       ),
-      credentials: new CredentialStore(options.projectRoot),
+      credentials: new CredentialStore(options.projectRoot, options.synloqHome),
       sessions,
       dispatcher,
       messages,

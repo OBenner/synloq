@@ -11,6 +11,7 @@ export const kimiWorkConfigurationSchema = z
     agentId,
     conversationKey: z.string().min(1).max(256),
     workAgentId: z.string().min(1).max(128).default("main"),
+    kernelSessionId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -50,6 +51,7 @@ export async function resolveKimiWorkBinding(
       workAgentId: configuration.workAgentId,
       conversationKey: configuration.conversationKey,
       sessionKey: parseConversationKey(configuration.conversationKey),
+      ...(configuration.kernelSessionId ? { kernelSessionId: configuration.kernelSessionId } : {}),
       workspacePath: await realpath(resolve(dirname(configPath), configuration.projectRoot)),
     };
   } catch (error) {

@@ -1,0 +1,18 @@
+{
+  "displayName": "Synloq",
+  "shortDescription": "Visible role-chat coordination",
+  "longDescription": "Initialize arbitrary project roles and coordinate their ordinary visible Kimi Work chats through authenticated local channels.",
+  "developerName": "Synloq contributors",
+  "tryPrompts": [
+    "Initialize Synloq for this project.",
+    "Send a bounded question to another project role.",
+    "Reply in the original Synloq thread after reading."
+  ],
+  "mcpOverrides": {},
+  "skillOverrides": {
+    "synloq": {
+      "displayName": "Synloq",
+      "description": "Visible role-chat coordination"
+    }
+  }
+}

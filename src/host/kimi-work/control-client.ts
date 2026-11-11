@@ -32,6 +32,88 @@ export interface KimiWorkSendResult {
   accepted: true;
 }
 
+export interface KimiWorkConversationSummary {
+  agentId: string;
+  sessionKey: string;
+  conversationKey: string;
+  conversationId: string;
+  kernelSessionId?: string;
+  origin: string;
+  workspacePath?: string;
+  clientInstructions?: string;
+  title: string;
+}
+
+export interface KimiWorkCreateInput {
+  agentId: string;
+  sessionKey: string;
+  origin: "client";
+  activate: false;
+  workspacePath: string;
+  clientInstructions: string;
+}
+
+export interface KimiWorkListOptions {
+  agentId: string;
+  sessionKey?: string;
+  origin?: "client";
+  workspacePath?: string;
+  limit?: number;
+  cursor?: string;
+  includeTemporary?: boolean;
+}
+
+export interface KimiWorkListResult {
+  conversations: KimiWorkConversationSummary[];
+  page: { limit: number; hasMore: boolean; nextCursor?: string };
+}
+
+const conversationSummarySchema = z
+  .object({
+    agentId: z.string().min(1),
+    sessionKey: z.string().min(1),
+    conversationKey: z.string().min(1),
+    conversationId: z.string().min(1),
+    kernelSessionId: z.string().min(1).optional(),
+    origin: z.string().min(1),
+    workspacePath: z.string().min(1).optional(),
+    clientInstructions: z.string().min(1).optional(),
+    title: z.string(),
+  })
+  .passthrough();
+
+const createSchema = z.object({ conversation: conversationSummarySchema }).passthrough();
+const listSchema = z
+  .object({
+    conversations: z.array(conversationSummarySchema),
+    page: z
+      .object({
+        limit: z.number().int().positive(),
+        hasMore: z.boolean(),
+        nextCursor: z.string().min(1).optional(),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
+function conversationSummary(
+  conversation: z.infer<typeof conversationSummarySchema>,
+): KimiWorkConversationSummary {
+  return {
+    agentId: conversation.agentId,
+    sessionKey: conversation.sessionKey,
+    conversationKey: conversation.conversationKey,
+    conversationId: conversation.conversationId,
+    ...(conversation.kernelSessionId ? { kernelSessionId: conversation.kernelSessionId } : {}),
+    origin: conversation.origin,
+    ...(conversation.workspacePath ? { workspacePath: conversation.workspacePath } : {}),
+    ...(conversation.clientInstructions
+      ? { clientInstructions: conversation.clientInstructions }
+      : {}),
+    title: conversation.title,
+  };
+}
+
 const metadataSchema = z
   .object({
     conversation: z
@@ -87,6 +169,33 @@ const sendSchema = z
 
 export class KimiWorkControlClient {
   constructor(private readonly rpc: Pick<KimiWorkJsonRpcConnection, "request">) {}
+
+  async create(input: KimiWorkCreateInput): Promise<KimiWorkConversationSummary> {
+    const result = await this.rpc.request("conversations.create", input, createSchema);
+    const conversation = conversationSummary(result.conversation);
+    if (
+      conversation.agentId !== input.agentId ||
+      conversation.sessionKey !== input.sessionKey ||
+      conversation.origin !== input.origin ||
+      conversation.workspacePath !== input.workspacePath ||
+      conversation.clientInstructions !== input.clientInstructions
+    ) {
+      throw new Error("Kimi Work create result does not match the request");
+    }
+    return conversation;
+  }
+
+  async list(options: KimiWorkListOptions): Promise<KimiWorkListResult> {
+    const result = await this.rpc.request("conversations.list", options, listSchema);
+    return {
+      conversations: result.conversations.map(conversationSummary),
+      page: {
+        limit: result.page.limit,
+        hasMore: result.page.hasMore,
+        ...(result.page.nextCursor ? { nextCursor: result.page.nextCursor } : {}),
+      },
+    };
+  }
 
   async metadata(binding: KimiWorkBinding): Promise<KimiWorkMetadata> {
     const result = await this.rpc.request(
