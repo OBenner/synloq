@@ -13,6 +13,7 @@ import { startMcpStdio } from "../mcp/stdio.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import {
   runStandaloneClaudeHook,
+  runStandaloneCodexHook,
   startStandaloneAdapter,
   type StandaloneAdapterHandle,
 } from "./adapter.js";
@@ -42,6 +43,7 @@ export interface MainDependencies {
   startMcp?: (configPath: string) => Promise<unknown>;
   startAdapter?: (configPath: string) => Promise<StandaloneAdapterHandle>;
   runHook?: (configPath: string) => Promise<void>;
+  runCodexHook?: (configPath: string) => Promise<void>;
   waitForShutdown?: () => Promise<void>;
 }
 
@@ -51,6 +53,7 @@ const commandNames = [
   "mcp",
   "adapter",
   "claude-hook",
+  "codex-hook",
   "list",
   "inbox",
   "send",
@@ -76,6 +79,7 @@ const helpText: Record<CommandName, string> = {
   mcp: "Usage: synloq mcp --config <path>\n",
   adapter: "Usage: synloq adapter --config <path>\n",
   "claude-hook": "Usage: synloq claude-hook --config <path>\n",
+  "codex-hook": "Usage: synloq codex-hook --config <path>\n",
   list: "Usage: synloq list --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
     "Usage: synloq inbox --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
@@ -226,6 +230,16 @@ async function execute(
       return;
     }
     await (dependencies.runHook ?? runStandaloneClaudeHook)(requiredString(values, "config"));
+    return;
+  }
+
+  if (command === "codex-hook") {
+    const { values } = parse(command, args, { config: { type: "string" } });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    await (dependencies.runCodexHook ?? runStandaloneCodexHook)(requiredString(values, "config"));
     return;
   }
 

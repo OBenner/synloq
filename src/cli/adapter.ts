@@ -6,6 +6,7 @@ import { loadAdapterConfiguration } from "../config/adapter.js";
 import { SynloqError } from "../domain/errors.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { runClaudeHook, type ClaudeHookIo } from "./claude-hook.js";
+import { runCodexHook, type CodexHookIo } from "./codex-hook.js";
 
 export interface StandaloneAdapterDependencies {
   claudeTransport?: Transport;
@@ -172,4 +173,17 @@ export async function runStandaloneClaudeHook(
     },
     io,
   );
+}
+
+export async function runStandaloneCodexHook(
+  configPath: string,
+  io: CodexHookIo = {},
+): Promise<void> {
+  const loaded = await loadAdapterConfiguration(configPath);
+  const { configuration } = loaded;
+  if (configuration.kind !== "codex") {
+    throw new SynloqError("INVALID_INPUT", "Codex hooks require a Codex adapter configuration");
+  }
+  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token);
+  await runCodexHook(relay, configuration, io);
 }

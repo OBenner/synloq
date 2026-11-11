@@ -396,7 +396,7 @@ function testIo(): {
 }
 
 describe("standalone adapter CLI", () => {
-  it.each(["adapter", "claude-hook"])(
+  it.each(["adapter", "claude-hook", "codex-hook"])(
     "prints %s help without loading configuration",
     async (command) => {
       const { io, output } = testIo();
