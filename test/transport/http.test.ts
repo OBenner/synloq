@@ -50,8 +50,9 @@ beforeEach(async () => {
   const ctoToken = await credentials.issue(PROJECT, "cto");
   const archToken = await credentials.issue(PROJECT, "arch");
   const operatorToken = await credentials.issue(PROJECT, "operator");
-  const messages = new SQLiteMessageStore(":memory:");
-  const sessions = new SessionStore(":memory:");
+  const database = join(root, "synloq.sqlite");
+  const messages = new SQLiteMessageStore(database);
+  const sessions = new SessionStore(database);
   const relay = new RelayService(participants, messages, sessions, new ProtectionPolicy(messages));
   const dispatcher = new Dispatcher(messages, sessions, new Map());
   const server = new RelayHttpServer({
@@ -225,7 +226,10 @@ describe("RelayHttpServer authentication and participant routes", () => {
       idempotencyKey: "http-wake-inbox-1",
     });
 
-    await expect(waiting).resolves.toEqual({ messages: [message], nextCursor: undefined });
+    await expect(waiting).resolves.toEqual({
+      messages: [message],
+      nextCursor: undefined,
+    });
   });
 });
 
@@ -249,7 +253,9 @@ describe("RelayHttpServer sessions and active delivery", () => {
     });
     expect(heartbeat.session.state).toBe("busy");
 
-    const closed = await fixture.arch.closeSession({ sessionId: "session-arch-a" });
+    const closed = await fixture.arch.closeSession({
+      sessionId: "session-arch-a",
+    });
     expect(closed.session.state).toBe("closed");
     expect(fixture.sessions.list(PROJECT)[0]?.state).toBe("closed");
   });
@@ -267,7 +273,10 @@ describe("RelayHttpServer sessions and active delivery", () => {
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
     await expect(nextArch()).resolves.toEqual({ message: null, ...binding });
 
-    const receipt: DeliveryReceipt = { state: "delivered", clientMessageId: message.id };
+    const receipt: DeliveryReceipt = {
+      state: "delivered",
+      clientMessageId: message.id,
+    };
     await expect(receiptArch(message.id, receipt)).resolves.toEqual({
       message: { ...message, deliveryState: "delivered" },
     });
@@ -281,7 +290,10 @@ describe("RelayHttpServer sessions and active delivery", () => {
 
   it("wakes a delivery long poll after an idle heartbeat", async () => {
     const binding = await registerArch();
-    await fixture.arch.heartbeat({ sessionId: "session-arch-a", state: "busy" });
+    await fixture.arch.heartbeat({
+      sessionId: "session-arch-a",
+      state: "busy",
+    });
     const { message } = await fixture.cto.send({
       to: "arch",
       text: "Wait until idle",
@@ -291,7 +303,10 @@ describe("RelayHttpServer sessions and active delivery", () => {
     const waiting = nextArch(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    await fixture.arch.heartbeat({ sessionId: "session-arch-a", state: "idle" });
+    await fixture.arch.heartbeat({
+      sessionId: "session-arch-a",
+      state: "idle",
+    });
 
     await expect(waiting).resolves.toEqual({ message, ...binding });
   });
@@ -394,9 +409,16 @@ describe("RelayHttpServer operator routes and errors", () => {
       capabilities,
     });
 
-    await expect(fixture.cto.doctor()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(fixture.cto.doctor()).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
     await expect(fixture.operator.doctor()).resolves.toEqual({
-      sessions: [expect.objectContaining({ agentId: "arch", sessionId: "session-arch-a" })],
+      sessions: [
+        expect.objectContaining({
+          agentId: "arch",
+          sessionId: "session-arch-a",
+        }),
+      ],
     });
   });
 
@@ -527,7 +549,10 @@ describe("RelayHttpClient resource behavior", () => {
 
     await fixture.server.close();
 
-    await expect(waiting).resolves.toEqual({ messages: [], nextCursor: undefined });
+    await expect(waiting).resolves.toEqual({
+      messages: [],
+      nextCursor: undefined,
+    });
   });
 });
 
@@ -572,7 +597,9 @@ describe("Claude delivery receipt evidence", () => {
         },
         binding,
       ),
-    ).resolves.toMatchObject({ message: { id: message.id, deliveryState: "delivered" } });
+    ).resolves.toMatchObject({
+      message: { id: message.id, deliveryState: "delivered" },
+    });
   });
 
   it("rejects evidence for a stored, unsubmitted UUID", async () => {
@@ -612,7 +639,7 @@ describe("Claude delivery receipt evidence", () => {
       ),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "delivery evidence provenance does not match the submitted message",
+      message: "delivery evidence provenance does not match the submitted claim",
     });
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
   });
@@ -632,7 +659,7 @@ describe("Claude delivery receipt evidence", () => {
       ),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "delivery evidence provenance does not match the submitted message",
+      message: "delivery evidence provenance does not match the submitted claim",
     });
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
   });

@@ -59,8 +59,9 @@ describe("Claude composition entry points", () => {
     const credentials = new CredentialStore(root);
     const ctoToken = await credentials.issue(PROJECT, "cto");
     const archToken = await credentials.issue(PROJECT, "arch");
-    const messages = new SQLiteMessageStore(":memory:");
-    const sessions = new SessionStore(":memory:");
+    const database = join(root, "synloq.sqlite");
+    const messages = new SQLiteMessageStore(database);
+    const sessions = new SessionStore(database);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const running = await runClaudeAdapter(
       {
@@ -72,7 +73,14 @@ describe("Claude composition entry points", () => {
     );
     const mcpClient = new Client(
       { name: "entrypoint-mock-claude", version: "0.0.0" },
-      { capabilities: {} },
+      {
+        capabilities: {
+          experimental: {
+            "claude/channel": {},
+            "claude/channel/permission": {},
+          },
+        },
+      },
     );
     const notifications: Notification[] = [];
     mcpClient.fallbackNotificationHandler = async (notification) => {
@@ -121,14 +129,14 @@ describe("Claude composition entry points", () => {
       expect(notifications).toHaveLength(1);
       expect(notifications[0]).toMatchObject({
         method: "notifications/claude/channel",
-        params: { content: frameMessage(message) },
+        params: { content: frameMessage(message, 1) },
       });
       expect(messages.getMessage(message.id)?.deliveryState).toBe("submitted");
 
       await runClaudeHook(
         arch,
         { project: PROJECT, agentId: "arch", sessionId: SESSION_ID },
-        { stdin: hookInput("UserPromptSubmit", frameMessage(message)) },
+        { stdin: hookInput("UserPromptSubmit", frameMessage(message, 1)) },
       );
       expect(messages.getMessage(message.id)?.deliveryState).toBe("delivered");
     } finally {

@@ -59,7 +59,10 @@ const deliveryQuerySchema = bindingSchema.extend({
 });
 const acknowledgeSchema = z.object({ messageId: z.string().uuid() }).strict();
 const registerSchema = z
-  .object({ ...sessionFields, acceptanceMessageId: z.string().uuid().optional() })
+  .object({
+    ...sessionFields,
+    acceptanceMessageId: z.string().uuid().optional(),
+  })
   .strict();
 const heartbeatSchema = z
   .object({
@@ -292,7 +295,11 @@ export class RelayHttpServer {
         this.workEvent(project, identity.agentId),
         query.waitMs,
         response,
-        () => this.nextDelivery(identity, query),
+        () =>
+          this.nextDelivery(identity, {
+            sessionId: query.sessionId,
+            generation: query.generation,
+          }),
         (value) => value.message !== null,
       );
       this.sendJson(response, 200, result);
@@ -396,7 +403,9 @@ export class RelayHttpServer {
 
     if (method === "GET" && path === "/v1/operator/doctor") {
       this.requireOperator(identity);
-      this.sendJson(response, 200, { sessions: this.options.sessions.list(project) });
+      this.sendJson(response, 200, {
+        sessions: this.options.sessions.list(project),
+      });
       return;
     }
 

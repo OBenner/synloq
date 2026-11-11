@@ -118,6 +118,7 @@ function makeFixture(
     },
     false,
   );
+  sessions.heartbeat(PROJECT, AGENT, SESSION, "idle");
   const dispatcher = new Dispatcher(store, sessions, new Map([[KEY, adapter]]), clock);
   const fixture = { clock, store, sessions, adapter, dispatcher };
   fixtures.push(fixture);
@@ -198,7 +199,10 @@ describe("Dispatcher", () => {
         markStarted();
         return blocked;
       }
-      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+      return Promise.resolve({
+        state: "delivered",
+        clientMessageId: message.id,
+      });
     };
 
     const firstKick = f.dispatcher.kick(PROJECT, AGENT);
@@ -273,7 +277,10 @@ describe("Dispatcher", () => {
         failed.add(message.id);
         return Promise.reject(new Error("transient failure"));
       }
-      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+      return Promise.resolve({
+        state: "delivered",
+        clientMessageId: message.id,
+      });
     };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
@@ -331,7 +338,10 @@ describe("Dispatcher", () => {
       if (attempts === 1) {
         return Promise.reject(new SynloqError("DELIVERY_UNCERTAIN", "retry safely"));
       }
-      return Promise.resolve({ state: "delivered", clientMessageId: candidate.id });
+      return Promise.resolve({
+        state: "delivered",
+        clientMessageId: candidate.id,
+      });
     };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
@@ -363,7 +373,10 @@ describe("Dispatcher", () => {
         started.resolve(undefined);
         return blocked.promise;
       }
-      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+      return Promise.resolve({
+        state: "delivered",
+        clientMessageId: message.id,
+      });
     };
 
     const firstAttempt = f.dispatcher.runOnce(PROJECT, AGENT);
@@ -390,7 +403,10 @@ describe("Dispatcher", () => {
         started.resolve(undefined);
         return blocked.promise;
       }
-      return Promise.resolve({ state: "delivered", clientMessageId: message.id });
+      return Promise.resolve({
+        state: "delivered",
+        clientMessageId: message.id,
+      });
     };
 
     const attempt = f.dispatcher.runOnce(PROJECT, AGENT);
@@ -509,6 +525,7 @@ describe("Dispatcher", () => {
       },
       false,
     );
+    heartbeat(f);
     await f.dispatcher.kick(PROJECT, AGENT);
 
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);

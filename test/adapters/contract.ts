@@ -103,6 +103,7 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
 
     beforeEach(() => {
       h = factory();
+      h.setState("idle");
     });
 
     afterEach(() => {
@@ -201,7 +202,10 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       const retry = await h.adapter.submit(CONTRACT_SESSION, message);
 
       expect(retry).toBe(first);
-      expect(retry).toEqual({ state: "delivered", clientMessageId: message.id });
+      expect(retry).toEqual({
+        state: "delivered",
+        clientMessageId: message.id,
+      });
       expect(h.visible.map((entry) => entry.id)).toEqual([message.id]);
     });
 
@@ -217,7 +221,9 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       expect(h.store.getMessage(first.id)?.deliveryState).toBe("stored");
       expect(h.store.getMessage(second.id)?.deliveryState).toBe("stored");
       expect(submit).toHaveBeenCalledTimes(1);
-      expect(submit).toHaveBeenCalledWith(CONTRACT_SESSION, first);
+      expect(submit).toHaveBeenCalledWith(CONTRACT_SESSION, first, {
+        generation: 1,
+      });
       expect(h.visible).toEqual([]);
     });
 

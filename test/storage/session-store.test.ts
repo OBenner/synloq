@@ -40,7 +40,10 @@ const stores: SessionStore[] = [];
 const messageStores: SQLiteMessageStore[] = [];
 const temporaryDirectories: string[] = [];
 
-function makeStore(path = ":memory:"): { store: SessionStore; clock: MutableClock } {
+function makeStore(path = ":memory:"): {
+  store: SessionStore;
+  clock: MutableClock;
+} {
   const clock = new MutableClock();
   const store = new SessionStore(path, clock);
   clocks.push(clock);
@@ -130,7 +133,7 @@ describe("SessionStore", () => {
     expect(store.list("verdicta").map((session) => session.agentId)).toEqual(["cto"]);
   });
 
-  it("allows same-session reconnect with fresh idle state and capabilities", () => {
+  it("allows same-session reconnect with fresh lease and capabilities before state arrives", () => {
     const { store, clock } = makeStore();
     store.register(ctoSession("session-a"), false);
     store.heartbeat("verdicta", "cto", "session-a", "closed");
@@ -139,12 +142,14 @@ describe("SessionStore", () => {
     const reconnected = store.register(ctoSession("session-a"), false);
 
     expect(reconnected).toMatchObject({
-      state: "idle",
+      state: "unknown",
       capabilities: ctoSession("session-a").capabilities,
       lastHeartbeatAt: new Date(clock.now()).toISOString(),
       stateObservedAt: new Date(clock.now()).toISOString(),
       leaseExpiresAt: new Date(clock.now() + 15_000).toISOString(),
     });
+    expect(store.effectiveState("verdicta", "cto")).toBe("unknown");
+    store.heartbeat("verdicta", "cto", "session-a", "idle");
     expect(store.effectiveState("verdicta", "cto")).toBe("idle");
     expect(store.list("verdicta")).toHaveLength(1);
   });
@@ -179,6 +184,7 @@ describe("SessionStore", () => {
     const database = join(directory, "synloq.sqlite");
     const { store, clock } = makeStore(database);
     store.register(ctoSession("session-a"), false);
+    store.heartbeat("verdicta", "cto", "session-a", "idle");
     clock.advance(14_999);
 
     // Isolate lease expiry from the independently tested five-second state timeout.
@@ -195,6 +201,7 @@ describe("SessionStore", () => {
   it("forces unknown only after the five-second state freshness boundary", () => {
     const { store, clock } = makeStore();
     store.register(ctoSession("session-a"), false);
+    store.heartbeat("verdicta", "cto", "session-a", "idle");
     clock.advance(5_000);
     expect(store.effectiveState("verdicta", "cto")).toBe("idle");
     clock.advance(1);
@@ -250,6 +257,7 @@ describe("SessionStore", () => {
   it("rejects heartbeat and close from a different session without changing state", () => {
     const { store } = makeStore();
     store.register(ctoSession("session-a"), false);
+    store.heartbeat("verdicta", "cto", "session-a", "idle");
 
     expect(() => store.heartbeat("verdicta", "cto", "session-b", "busy")).toThrow(
       expect.objectContaining({ code: "UNAUTHORIZED" }),
@@ -260,7 +268,7 @@ describe("SessionStore", () => {
     expect(store.list("verdicta")[0]?.state).toBe("idle");
   });
 
-  it("persists sessions in user_version 3 and restores them after reopening", () => {
+  it("persists sessions in user_version 4 and restores them after reopening", () => {
     const directory = mkdtempSync(join(tmpdir(), "synloq-sessions-"));
     temporaryDirectories.push(directory);
     const database = join(directory, "synloq.sqlite");
@@ -274,9 +282,11 @@ describe("SessionStore", () => {
     const reopened = makeStore(database);
     expect(reopened.store.list("verdicta")).toEqual([persisted]);
     const inspector = new DatabaseSync(database);
-    const version = inspector.prepare("PRAGMA user_version").get() as { user_version: number };
+    const version = inspector.prepare("PRAGMA user_version").get() as {
+      user_version: number;
+    };
     inspector.close();
-    expect(version.user_version).toBe(3);
+    expect(version.user_version).toBe(4);
   });
 });
 

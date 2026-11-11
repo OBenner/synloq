@@ -280,11 +280,7 @@ export class SQLiteMessageStore {
          FROM sessions WHERE project = ? AND agent_id = ?`,
       )
       .get(project, recipient) as DeliverySessionRow | undefined;
-    if (
-      !row ||
-      row.session_id !== binding.sessionId ||
-      row.generation !== binding.generation
-    ) {
+    if (!row || row.session_id !== binding.sessionId || row.generation !== binding.generation) {
       throw new SynloqError(
         "UNAUTHORIZED",
         "delivery session registration is stale or does not match the visible binding",
@@ -417,10 +413,7 @@ export class SQLiteMessageStore {
     if (session.state === "closed") {
       throw new SynloqError("UNAUTHORIZED", "the claiming visible session is closed");
     }
-    if (
-      row.claim_session_id !== binding.sessionId ||
-      row.claim_generation !== binding.generation
-    ) {
+    if (row.claim_session_id !== binding.sessionId || row.claim_generation !== binding.generation) {
       throw new SynloqError("UNAUTHORIZED", "delivery completion uses a stale claim");
     }
     return { row, session };
@@ -588,7 +581,14 @@ export class SQLiteMessageStore {
                END
              WHERE id = ?`,
           )
-          .run(binding.sessionId, binding.generation, binding.sessionId, binding.generation, binding.generation, id);
+          .run(
+            binding.sessionId,
+            binding.generation,
+            binding.sessionId,
+            binding.generation,
+            binding.generation,
+            id,
+          );
         const claimed = this.findById(id);
         if (!claimed) throw new Error("claimed message could not be read");
         return toMessage(claimed);

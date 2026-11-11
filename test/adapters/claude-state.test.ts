@@ -26,7 +26,7 @@ const message: Message = {
 };
 
 function fakeClient() {
-  const heartbeat = vi.fn().mockResolvedValue(undefined);
+  const heartbeat = vi.fn().mockResolvedValue({ session: { generation: 1 } });
   const receipt = vi.fn().mockResolvedValue(undefined);
   return {
     heartbeat,
@@ -72,23 +72,31 @@ describe("Claude hook state mapping", () => {
     const hook = {
       session_id: config.sessionId,
       hook_event_name: "UserPromptSubmit",
-      prompt: frameMessage(message),
+      prompt: frameMessage(message, 1),
     };
 
     const { result, output } = await invokeHook(client, hook);
 
-    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "busy" });
-    expect(receipt).toHaveBeenCalledWith(message.id, {
-      state: "delivered",
-      clientMessageId: message.id,
-      evidence: {
-        sessionId: config.sessionId,
-        project: message.project,
-        from: message.from,
-        messageId: message.id,
-        threadId: message.threadId,
-      },
+    expect(heartbeat).toHaveBeenCalledWith({
+      sessionId: config.sessionId,
+      state: "busy",
     });
+    expect(receipt).toHaveBeenCalledWith(
+      message.id,
+      {
+        state: "delivered",
+        clientMessageId: message.id,
+        evidence: {
+          sessionId: config.sessionId,
+          generation: 1,
+          project: message.project,
+          from: message.from,
+          messageId: message.id,
+          threadId: message.threadId,
+        },
+      },
+      { sessionId: config.sessionId, generation: 1 },
+    );
     expect(result).toBeUndefined();
     expect(output).toBe("");
   });
@@ -102,7 +110,10 @@ describe("Claude hook state mapping", () => {
       prompt: frameMessage(message),
     });
 
-    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "idle" });
+    expect(heartbeat).toHaveBeenCalledWith({
+      sessionId: config.sessionId,
+      state: "idle",
+    });
     expect(receipt).not.toHaveBeenCalled();
   });
 
@@ -116,7 +127,10 @@ describe("Claude hook state mapping", () => {
       tool_input: { command: "echo unsafe-auto-approval" },
     });
 
-    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "unknown" });
+    expect(heartbeat).toHaveBeenCalledWith({
+      sessionId: config.sessionId,
+      state: "unknown",
+    });
     expect(receipt).not.toHaveBeenCalled();
     expect(result).toBeUndefined();
     expect(output).toBe("");

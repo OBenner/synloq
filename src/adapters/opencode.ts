@@ -173,9 +173,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
         },
         { throwOnError: true },
       );
-      const response = context?.signal
-        ? await raceWithAbort(prompt, context.signal)
-        : await prompt;
+      const response = context?.signal ? await raceWithAbort(prompt, context.signal) : await prompt;
       const admitted = response.data.data;
       if (!this.isMatchingAdmission(admitted, sessionId, message)) {
         throw this.deliveryUncertain(message.id);

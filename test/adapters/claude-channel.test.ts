@@ -54,7 +54,12 @@ async function connectMockClaude(): Promise<{
   await client.connect(clientTransport);
   const capabilities = client.getServerCapabilities();
   if (!capabilities) throw new Error("mock initialize returned no capabilities");
-  return { server, client, initialized: { capabilities }, channelNotifications };
+  return {
+    server,
+    client,
+    initialized: { capabilities },
+    channelNotifications,
+  };
 }
 
 function verifiedConfig(sessionId = "claude-session-1") {
@@ -81,7 +86,14 @@ describe("Claude channel protocol", () => {
     closers.push(() => running.server.close());
     const runningClient = new Client(
       { name: "mock-running-claude", version: "0.0.0" },
-      { capabilities: {} },
+      {
+        capabilities: {
+          experimental: {
+            "claude/channel": {},
+            "claude/channel/permission": {},
+          },
+        },
+      },
     );
     const runningNotifications: Notification[] = [];
     runningClient.fallbackNotificationHandler = async (notification) => {
@@ -119,7 +131,9 @@ describe("Claude channel protocol", () => {
   it.each([
     [
       "missing activation",
-      { experimental: { "claude/channel": {}, "claude/channel/permission": {} } },
+      {
+        experimental: { "claude/channel": {}, "claude/channel/permission": {} },
+      },
       false,
     ],
     ["missing channel", { experimental: { "claude/channel/permission": {} } }, true],

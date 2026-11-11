@@ -113,13 +113,30 @@ async function writeConfig(home: string, input: ConfigInput): Promise<string> {
 
 async function connectClaude(
   configPath: string,
-): Promise<{ handle: StandaloneAdapterHandle; client: Client; notifications: Notification[] }> {
+  activeDelivery = false,
+): Promise<{
+  handle: StandaloneAdapterHandle;
+  client: Client;
+  notifications: Notification[];
+}> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const starting = startStandaloneAdapter(configPath, {
     claudeTransport: serverTransport,
     deliveryWaitMs: 5,
   });
-  const client = new Client({ name: "controlled-claude", version: "0.0.0" });
+  const client = new Client(
+    { name: "controlled-claude", version: "0.0.0" },
+    {
+      capabilities: activeDelivery
+        ? {
+            experimental: {
+              "claude/channel": {},
+              "claude/channel/permission": {},
+            },
+          }
+        : {},
+    },
+  );
   const notifications: Notification[] = [];
   client.fallbackNotificationHandler = async (notification) => {
     notifications.push(notification);
@@ -184,9 +201,13 @@ function fakeOpenCode(sessionId: string) {
       },
     }),
   );
-  const status = vi.fn(async () => ({ data: { [sessionId]: { type: "idle" } } }));
+  const status = vi.fn(async () => ({
+    data: { [sessionId]: { type: "idle" } },
+  }));
   const subscribe = vi.fn((options?: { signal?: AbortSignal }) => {
-    options?.signal?.addEventListener("abort", () => stream.end(), { once: true });
+    options?.signal?.addEventListener("abort", () => stream.end(), {
+      once: true,
+    });
     return Promise.resolve({ stream });
   });
   return {
@@ -230,7 +251,11 @@ describe("standalone real-client composition", () => {
         agentId: "cto",
         sessionId: CLAUDE_SESSION,
         protocolVersion: 1,
-        capabilities: { activeDelivery: false, stateReporting: true, clientIdempotency: true },
+        capabilities: {
+          activeDelivery: false,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
       },
     ]);
 
@@ -255,7 +280,16 @@ describe("standalone real-client composition", () => {
       sessionId: CLAUDE_SESSION,
       acceptanceMessageId: message.id,
     });
-    const { notifications } = await connectClaude(configPath);
+    const { notifications } = await connectClaude(configPath, true);
+    expect(current.relay.sessions.list(PROJECT)[0]?.generation).toBe(1);
+    await runStandaloneClaudeHook(configPath, {
+      stdin: Readable.from([
+        JSON.stringify({
+          session_id: CLAUDE_SESSION,
+          hook_event_name: "SessionStart",
+        }),
+      ]),
+    });
 
     await vi.waitFor(
       () => {
@@ -266,7 +300,7 @@ describe("standalone real-client composition", () => {
     expect(notifications[0]).toMatchObject({
       method: "notifications/claude/channel",
       params: {
-        content: frameMessage(message),
+        content: frameMessage(message, 1),
         meta: { message: message.id, thread: message.threadId },
       },
     });
@@ -277,7 +311,7 @@ describe("standalone real-client composition", () => {
         JSON.stringify({
           session_id: CLAUDE_SESSION,
           hook_event_name: "UserPromptSubmit",
-          prompt: frameMessage(message),
+          prompt: frameMessage(message, 1),
         }),
       ]),
     });
@@ -336,7 +370,10 @@ describe("standalone real-client composition", () => {
   });
 });
 
-function testIo(): { io: CliIo; output: () => { stdout: string; stderr: string } } {
+function testIo(): {
+  io: CliIo;
+  output: () => { stdout: string; stderr: string };
+} {
   let stdout = "";
   let stderr = "";
   return {

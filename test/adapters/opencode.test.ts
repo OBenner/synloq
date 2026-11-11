@@ -90,7 +90,9 @@ function messageId(parameters: PromptParameters): string {
   return /message="([^"]+)"/.exec(parameters.prompt.text)?.[1] ?? "opencode-entry";
 }
 
-function admission(parameters: PromptParameters): { data: { data: AdmittedEntry } } {
+function admission(parameters: PromptParameters): {
+  data: { data: AdmittedEntry };
+} {
   return {
     data: {
       data: {
@@ -118,7 +120,9 @@ class FakeSdk {
   readonly subscribe = vi.fn((options?: { signal?: AbortSignal }) => {
     const stream = new FakeEventStream();
     this.streams.push(stream);
-    options?.signal?.addEventListener("abort", () => stream.end(), { once: true });
+    options?.signal?.addEventListener("abort", () => stream.end(), {
+      once: true,
+    });
     return Promise.resolve({ stream });
   });
 
@@ -130,7 +134,9 @@ class FakeSdk {
   }
 
   asV2Client(): OpenCodeV2Client {
-    return { v2: { session: { prompt: this.prompt } } } as unknown as OpenCodeV2Client;
+    return {
+      v2: { session: { prompt: this.prompt } },
+    } as unknown as OpenCodeV2Client;
   }
 }
 
@@ -138,7 +144,9 @@ function makeRelay(): RelayHttpClient {
   return {
     heartbeat: vi.fn().mockResolvedValue({}),
     closeSession: vi.fn().mockResolvedValue({}),
-    registerSession: vi.fn().mockResolvedValue({}),
+    registerSession: vi.fn().mockResolvedValue({
+      session: { sessionId: SESSION_ID, generation: 1 },
+    }),
   } as unknown as RelayHttpClient;
 }
 
@@ -235,7 +243,10 @@ describe("OpenCode queued prompt adapter", () => {
 
     const receipt = await adapter.submit(SESSION_ID, message);
 
-    expect(receipt).toEqual({ state: "delivered", clientMessageId: message.id });
+    expect(receipt).toEqual({
+      state: "delivered",
+      clientMessageId: message.id,
+    });
   });
 
   it("does not accept another session's inbox entry as delivery evidence", async () => {
@@ -332,8 +343,14 @@ describe("OpenCode queued prompt adapter", () => {
       type: "session.status",
       properties: { sessionID: "ses_other", status: { type: "busy" } },
     });
-    sdk.streams[0]?.push({ type: "session.idle", properties: { sessionID: "ses_other" } });
-    sdk.streams[0]?.push({ type: "session.deleted", properties: { sessionID: "ses_other" } });
+    sdk.streams[0]?.push({
+      type: "session.idle",
+      properties: { sessionID: "ses_other" },
+    });
+    sdk.streams[0]?.push({
+      type: "session.deleted",
+      properties: { sessionID: "ses_other" },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(await adapter.state(SESSION_ID)).toBe("idle");
@@ -344,9 +361,15 @@ describe("OpenCode queued prompt adapter", () => {
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.push({ type: "session.deleted", properties: { sessionID: SESSION_ID } });
+    sdk.streams[0]?.push({
+      type: "session.deleted",
+      properties: { sessionID: SESSION_ID },
+    });
     await expectState(adapter, "closed");
-    sdk.streams[0]?.push({ type: "session.idle", properties: { sessionID: SESSION_ID } });
+    sdk.streams[0]?.push({
+      type: "session.idle",
+      properties: { sessionID: SESSION_ID },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(await adapter.state(SESSION_ID)).toBe("closed");
@@ -378,7 +401,9 @@ describe("OpenCode queued prompt adapter", () => {
 
     sdk.streams[0]?.end();
     await expectState(adapter, "unknown");
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
+      timeout: 2_000,
+    });
     await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
 
     expect(await adapter.state(SESSION_ID)).toBe("unknown");
@@ -396,9 +421,14 @@ describe("OpenCode queued prompt adapter", () => {
     await expectState(adapter, "idle");
 
     sdk.streams[0]?.end();
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
+      timeout: 2_000,
+    });
     await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
-    sdk.streams[1]?.push({ type: "session.idle", properties: { sessionID: SESSION_ID } });
+    sdk.streams[1]?.push({
+      type: "session.idle",
+      properties: { sessionID: SESSION_ID },
+    });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(await adapter.state(SESSION_ID)).toBe("unknown");
@@ -534,7 +564,9 @@ describe("OpenCode dispatcher local freshness", () => {
     adapter.start();
     await expectState(adapter, "idle");
     sdk.streams[0]?.end();
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
+      timeout: 2_000,
+    });
     await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
     expect(await adapter.state(SESSION_ID)).toBe("unknown");
 
@@ -584,7 +616,10 @@ describe("OpenCode dispatcher local freshness", () => {
       await blocked;
       return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
     });
-    sdk.streams[0]?.push({ type: "session.deleted", properties: { sessionID: SESSION_ID } });
+    sdk.streams[0]?.push({
+      type: "session.deleted",
+      properties: { sessionID: SESSION_ID },
+    });
     await expectState(adapter, "closed");
 
     try {

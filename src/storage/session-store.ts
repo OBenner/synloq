@@ -133,6 +133,9 @@ export class SessionStore {
           .prepare(
             `SELECT id, acceptance_consumed_generation FROM messages
              WHERE project = ? AND recipient = ? AND delivery_state = 'submitted'
+               AND NOT EXISTS (
+                 SELECT 1 FROM delivery_quarantine WHERE message_id = messages.id
+               )
              ORDER BY created_at, id`,
           )
           .all(registration.project, registration.agentId) as Array<{
@@ -141,7 +144,11 @@ export class SessionStore {
         }>;
         for (const message of submitted) {
           if (message.acceptance_consumed_generation !== null) continue;
-          if (existing.client_idempotency === 1) {
+          if (
+            existing.session_id === registration.sessionId &&
+            existing.client_idempotency === 1 &&
+            registration.capabilities.clientIdempotency
+          ) {
             this.database
               .prepare(
                 `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,

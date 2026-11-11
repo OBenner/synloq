@@ -17,8 +17,18 @@ const PROJECT = "verdicta";
 const secretMessageBody = "secret-message-body-do-not-print";
 const secretToken = "secret-operator-token-do-not-print";
 const participants: Participant[] = [
-  { project: PROJECT, agentId: "cto", title: "CTO", role: "Technical strategy" },
-  { project: PROJECT, agentId: "arch", title: "Architect", role: "Architecture review" },
+  {
+    project: PROJECT,
+    agentId: "cto",
+    title: "CTO",
+    role: "Technical strategy",
+  },
+  {
+    project: PROJECT,
+    agentId: "arch",
+    title: "Architect",
+    role: "Architecture review",
+  },
 ];
 const manifest = `project: verdicta
 agents:
@@ -108,6 +118,7 @@ describe("DoctorReport", () => {
       },
       false,
     );
+    fixture.sessions.heartbeat(PROJECT, "arch", "arch-visible-session", "idle");
     fixture.messages.create(
       {
         project: PROJECT,
@@ -311,7 +322,10 @@ describe("DoctorReport", () => {
 
   it("never prints credentials or message bodies", async () => {
     const initialized = await initCommand({ projectRoot: fixture.root });
-    initialized.credentials.push({ agentId: "test-secret", token: secretToken });
+    initialized.credentials.push({
+      agentId: "test-secret",
+      token: secretToken,
+    });
     const capabilities = {
       activeDelivery: false,
       stateReporting: true,
