@@ -84,6 +84,45 @@ This procedure has **not** been executed as part of the mock-tested implementati
 
 Until this evidence exists, Claude Code active delivery must remain disabled in ordinary operator configuration. The complete executable matrix is `test/e2e/real-clients.md`.
 
+## Codex
+
+**Support: authenticated MCP inbox plus lifecycle state reporting. Live verification status: UNVERIFIED. Active delivery: unsupported and disabled.** Automated tests use a mocked relay, fake hook input, and fake app-server processes. No Codex executable or visible Codex chat was launched in the implementation environment.
+
+The existing stdio MCP bridge exposes exactly the six ordinary Synloq tools. One Codex configuration scope, normally one `CODEX_HOME`, represents exactly one Synloq role credential. Configuring several role servers in one shared Desktop/CLI scope is not an approved multi-role setup because per-thread role identity has not been demonstrated. Shared Desktop multi-role binding remains UNVERIFIED.
+
+The separate strict adapter JSON uses `kind:"codex"`, the exact visible `session_id`, an external role credential, loopback relay URL, and protocol `1`. `synloq codex-hook --config <path>` rejects malformed or oversized input and a different session ID before relay mutation. On `SessionStart` it registers with `activeDelivery:false`, `stateReporting:true`, and `clientIdempotency:false`. Generic `synloq adapter --config` rejects Codex explicitly; there is no Codex active runner, production activation field, or active-delivery acceptance flag.
+
+### Hook state reporting
+
+| Codex observation                                           | Synloq state |
+| ----------------------------------------------------------- | ------------ |
+| `SessionStart` with `startup`, `resume`, `clear`, or `fork` | `idle`       |
+| `SessionStart` with `compact`                               | `busy`       |
+| `UserPromptSubmit`                                          | `busy`       |
+| `PreModelRequest`                                           | `busy`       |
+| `Stop`                                                      | `idle`       |
+| `Interrupt`                                                 | `unknown`    |
+| `SessionEnd`                                                | `closed`     |
+| Valid but unsupported event or `SessionStart.source`        | `unknown`    |
+| Missing or malformed event envelope                         | rejected     |
+
+`Interrupt` does not prove that turn cleanup finished. `PostModelRequest` is not idle evidence because tools or another model attempt may follow. Subagent events do not make the parent idle. Hook stdout is empty: Synloq emits no `additionalContext`, continuation, permission decision, or message delivery. Existing lease and state-freshness rules still bound heartbeat freshness.
+
+### Read-only app-server compatibility probe
+
+Run from the Synloq repository with Node 24:
+
+```bash
+node scripts/probe-codex-app-server.ts --cwd /absolute/project/path
+node scripts/probe-codex-app-server.ts --cwd /absolute/project/path --thread-id REPLACE_WITH_VISIBLE_THREAD_ID
+```
+
+The first command collects executable version, app-server help/schema availability, and sanitized initialize metadata without resuming a thread. The second explicitly opts into only `thread/resume` and `thread/read` for the configured ID. A missing or mismatched resumed ID, writer conflict, or read failure is recorded without retry. No thread is synthesized and no prompt, turn, steering, approval, configuration, or one-shot exec method is called.
+
+Metadata help/schema output is represented by byte count and SHA-256. Initialize data is recursively sanitized: prompt/text/turn/token/secret/account/auth keys are removed, strings and arrays are bounded, and depth is limited. Resume/read results are not embedded. Reports contain only the exact attached thread ID, status, and numeric error codes. Process/request phases default to five seconds, retained protocol frames are capped at 1 MiB, stderr is drained, and cleanup escalates from SIGTERM to SIGKILL rather than claiming a live child exited.
+
+Every report contains `activeDeliveryClaim:false` and `reason:"visible-session-submission-not-verified"`. Successful initialize, schema generation, resume, or read is compatibility evidence only, never active-delivery evidence. Live MCP/hooks/probe status remains UNVERIFIED until the operator matrix in `test/e2e/real-clients.md` is completed; even a successful matrix does not enable active delivery in this increment.
+
 ## Kimi Code
 
 **Support status: `inbox-only`. Live ACP verification status: UNVERIFIED.** `KimiFallbackAdapter` reports no active delivery, state reporting, or client idempotency. Session state is always `unknown`, submission always fails with `DELIVERY_UNCERTAIN` before client or network activity, and doctor therefore reports `active-delivery-unsupported`. MCP inbox retrieval and `synloq_wait` remain available through the normal Kimi MCP connection.

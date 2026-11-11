@@ -4,7 +4,7 @@ This is an operator-executed acceptance procedure, not an automated test. Record
 
 ## Current execution status
 
-**INCOMPLETE — Claude Code and OpenCode live verification remain UNVERIFIED.** On 2026-11-10 in the implementation environment, `claude`, `opencode`, and `kimi` were not found on PATH. Node was `v24.21.0` and pnpm was `12.18.0`. No visible real client was launched and no manual matrix step was executed. Kimi remains `inbox-only` and its live ACP status remains UNVERIFIED.
+**INCOMPLETE — Claude Code, OpenCode, and Codex live verification remain UNVERIFIED.** On 2026-11-10 in the implementation environment, `claude`, `opencode`, and `kimi` were not found on PATH. On 2026-11-11, `codex` was also not found. Node was `v24.21.0` and pnpm was `12.18.0`. No visible real client was launched and no manual matrix step was executed. Codex active delivery is unsupported and disabled. Kimi remains `inbox-only` and its live ACP status remains UNVERIFIED.
 
 Use the evidence template at the end for a later run. A client missing from any required step leaves that client's status UNVERIFIED.
 
@@ -40,6 +40,7 @@ Run and save the output before starting the clients:
   pnpm --version
   claude --version
   opencode --version
+  codex --version
   kimi --version
   node -p "require('./node_modules/@modelcontextprotocol/sdk/package.json').version"
   node -p "require('./node_modules/@opencode-ai/sdk/package.json').version"
@@ -54,6 +55,9 @@ Required record:
 | ------------------------------------------------ | -------------- |
 | Claude Code version                              | UNVERIFIED     |
 | OpenCode version                                 | UNVERIFIED     |
+| Codex version and CLI/Desktop surface            | UNVERIFIED     |
+| Codex configuration scope / `CODEX_HOME`         | UNVERIFIED     |
+| Codex visible `session_id`                       | UNVERIFIED     |
 | MCP SDK version                                  | UNVERIFIED     |
 | OpenCode SDK version                             | UNVERIFIED     |
 | MCP protocol revision negotiated by Claude       | UNVERIFIED     |
@@ -400,7 +404,115 @@ Connect the existing visible Kimi chat to the ordinary `synloq mcp` stdio comman
 
 Only a separate, independently observed safe interaction with an already open Kimi TUI could justify a later active-delivery task. This matrix does not implement or authorize that delivery; MVP support remains `inbox-only`.
 
-## 10. Evidence record and verdict
+## 10. Codex MCP inbox, lifecycle hooks, and read-only probe
+
+This section verifies only the implemented Codex inbox/state foundation. It cannot accept or enable active delivery. Use one Codex configuration scope for the `cto` role; do not add the `arch` credential to this scope.
+
+1. Record `codex --version`, CLI/Desktop surface, the exact visible `$CODEX_SESSION`, Synloq protocol `1`, and an isolated configuration scope. Use the same scope for MCP, hooks, and the intended visible chat:
+
+   ```bash
+   export CODEX_HOME="$SECURE/codex-cto-home"
+   export CODEX_SESSION=REPLACE_WITH_VISIBLE_CODEX_SESSION_ID
+   mkdir -p "$CODEX_HOME"
+   codex --version 2>&1 | tee "$SECURE/evidence/codex-version.txt"
+   ```
+
+2. Create `$SECURE/codex-cto.json` and `$SECURE/codex-mcp.json`, replacing the absolute project path. The visible session, role, and credential must match:
+
+   ```json
+   {
+     "version": 1,
+     "kind": "codex",
+     "project": "verdicta",
+     "projectRoot": "/absolute/path/to/acceptance-project",
+     "agentId": "cto",
+     "sessionId": "REPLACE_WITH_VISIBLE_CODEX_SESSION_ID",
+     "relayUrl": "http://127.0.0.1:4100",
+     "credentialPath": "/absolute/path/outside/git/synloq-acceptance/cto.token",
+     "protocolVersion": 1
+   }
+   ```
+
+   ```json
+   {
+     "relayUrl": "http://127.0.0.1:4100",
+     "credentialPath": "/absolute/path/outside/git/synloq-acceptance/cto.token"
+   }
+   ```
+
+   Register and record the MCP server. No token is placed in `config.toml` or on the command line:
+
+   ```bash
+   codex mcp add synloq-cto -- node "$SYNLOQ_CHECKOUT/dist/mcp/stdio.js" "$SECURE/codex-mcp.json"
+   codex mcp list 2>&1 | tee "$SECURE/evidence/codex-mcp-list.txt"
+   ```
+
+3. Generate the six-event `$CODEX_HOME/hooks.json` with absolute paths and the same handler shape documented in the README:
+
+   ```bash
+   node --input-type=module <<'NODE' > "$CODEX_HOME/hooks.json"
+   const command = `node ${JSON.stringify(`${process.env.SYNLOQ_CHECKOUT}/dist/cli/main.js`)} codex-hook --config ${JSON.stringify(`${process.env.SECURE}/codex-cto.json`)}`;
+   const events = ["SessionStart", "UserPromptSubmit", "PreModelRequest", "Stop", "Interrupt", "SessionEnd"];
+   const hooks = Object.fromEntries(events.map((event) => [event, [{ hooks: [{
+     type: "command",
+     command,
+     timeout: event === "Interrupt" || event === "SessionEnd" ? 3 : event === "SessionStart" ? 15 : 10,
+   }] }]]));
+   process.stdout.write(`${JSON.stringify({ hooks }, null, 2)}\n`);
+   NODE
+   ```
+
+   Start or select the intended visible chat under this exact `CODEX_HOME`. For project-local hooks, trust the project first. Open `/hooks`, review the exact definitions, and trust them without any bypass flag. Save the source/review output in `$SECURE/evidence/codex-hooks-review.txt`.
+
+4. Verify exactly `synloq_list`, `synloq_send`, `synloq_reply`, `synloq_inbox`, `synloq_wait`, and `synloq_ack`. Exercise all six and save each tool JSON result externally:
+
+   | Action                                                     | Required observation                                                             |
+   | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+   | `synloq_list` in Codex `cto`                               | Both declared roles; no registration or permission tools.                        |
+   | `synloq_send` from `cto` to `arch`                         | Immediate UUID, stored acceptance, original thread ID, and idempotency behavior. |
+   | `synloq_inbox` and bounded `synloq_wait` in visible `arch` | The exact message with complete provenance; wait timeout is normal and bounded.  |
+   | `synloq_reply` from `arch`                                 | Same original thread and `inReplyTo` equal to the question UUID.                 |
+   | `synloq_inbox` / `synloq_wait` in Codex `cto`              | The reply is retrievable without human copying.                                  |
+   | `synloq_ack` in each role                                  | Own incoming message succeeds; cross-role acknowledgement is rejected.           |
+
+5. Stop and restart `serve` with the exact same project/database, then reconnect the visible MCP clients. Save `doctor` and inbox results before and after in `codex-relay-restart-*.txt`. IDs and history must survive, pending messages must not disappear or duplicate, and the original idempotency key must return the original message.
+
+6. Exercise trusted hooks and save `doctor` after each observation. Require `idle` for `SessionStart` startup/resume/clear/fork, `busy` for compact, prompt, and model-request activity, `idle` for Stop, `unknown` for Interrupt, and `closed` for SessionEnd. Interrupt must never be treated as fresh idle. Reconnect must create a new registration generation without replacing the session binding.
+
+   Reject a wrong visible session before mutation:
+
+   ```bash
+   node "$SYNLOQ_CHECKOUT/dist/cli/main.js" doctor --project-root "$PROJECT" > "$SECURE/evidence/codex-wrong-session-before.txt"
+   printf '%s\n' '{"session_id":"definitely-another-thread","hook_event_name":"SessionStart","source":"startup"}' \
+     | node "$SYNLOQ_CHECKOUT/dist/cli/main.js" codex-hook --config "$SECURE/codex-cto.json" \
+       > "$SECURE/evidence/codex-wrong-session-stdout.txt" \
+       2> "$SECURE/evidence/codex-wrong-session-stderr.txt"
+   test $? -eq 1
+   node "$SYNLOQ_CHECKOUT/dist/cli/main.js" doctor --project-root "$PROJECT" > "$SECURE/evidence/codex-wrong-session-after.txt"
+   ```
+
+   Required: empty stdout, a non-secret validation error, and no session/heartbeat change. Generic `node "$SYNLOQ_CHECKOUT/dist/cli/main.js" adapter --config "$SECURE/codex-cto.json"` must also reject Codex rather than starting active delivery.
+
+7. Run both read-only probes and retain only their sanitized JSON reports:
+
+   ```bash
+   node scripts/probe-codex-app-server.ts --cwd "$PROJECT" \
+     > "$SECURE/evidence/codex-app-server-probe.json"
+   node scripts/probe-codex-app-server.ts --cwd "$PROJECT" --thread-id "$CODEX_SESSION" \
+     > "$SECURE/evidence/codex-app-server-resume-probe.json"
+   ```
+
+   Required: the first run records `thread-id-not-provided` and sends no resume. The second permits only resume/read for `$CODEX_SESSION`; record attached, mismatch, writer-conflict, or error exactly as observed. Help/schema are hashes, initialize contains no prompt/text/turn/token/secret/account/auth payloads, and every report says `activeDeliveryClaim:false` with `visible-session-submission-not-verified`.
+
+8. Complete the Codex evidence checklist:
+
+   - [ ] Version, CLI/Desktop surface, `CODEX_HOME`, visible session ID, and protocol are recorded.
+   - [ ] All six MCP tools and relay-restart durability have actual external output files.
+   - [ ] Trusted hook states, reconnect generation, wrong-session rejection, and Interrupt `unknown` have actual observations.
+   - [ ] Both sanitized probe reports are stored outside Git.
+   - [ ] No active-delivery acceptance is possible in this increment; mocks or a successful read-only probe do not upgrade active-delivery status.
+
+## 11. Evidence record and verdict
 
 Copy this template into `$SECURE/evidence/result.md` and complete it with observed values:
 
@@ -410,6 +522,9 @@ Exact checkout/commit:
 Installed versions and exact launch commands:
 Claude visible session / role / protocol / channel ID / activation mechanism:
 OpenCode visible session / role / protocol / loopback URL:
+Codex visible session / role / protocol / surface / CODEX_HOME:
+Codex MCP tools, restart durability, hook states, and wrong-session observations:
+Codex probe report paths and sanitized results:
 Cross-client question ID and thread ID:
 Reply ID, thread ID, and inReplyTo:
 Busy/idle observations:
@@ -422,13 +537,16 @@ Evidence files (outside Git):
 Unexpected behavior or failed checks:
 Claude verdict: VERIFIED / UNVERIFIED
 OpenCode verdict: VERIFIED / UNVERIFIED
+Codex verdict: MCP/HOOKS/PROBE VERIFIED or UNVERIFIED; active delivery UNSUPPORTED
 Kimi verdict: INBOX-ONLY; active delivery UNVERIFIED
 ```
 
-Change `docs/client-compatibility.md` to `verified` only for a client whose complete required evidence was actually observed and recorded. Otherwise leave it UNVERIFIED and report the real-client acceptance gate as incomplete.
+Change `docs/client-compatibility.md` to `verified` only for a client and capability whose complete required evidence was actually observed and recorded. Otherwise leave it UNVERIFIED and report the real-client acceptance gate as incomplete. Codex active delivery remains unsupported even when its read-only/inbox evidence passes.
 
 ## Client command references
 
 - Claude channels: https://code.claude.com/docs/en/channels and https://code.claude.com/docs/en/channels-reference
 - Claude hooks and MCP: https://code.claude.com/docs/en/hooks and https://code.claude.com/docs/en/mcp
+- Codex hooks and MCP: https://developers.openai.com/codex/hooks and https://developers.openai.com/codex/mcp
+- Codex app-server protocol: https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md
 - OpenCode CLI/server and MCP: https://opencode.ai/docs/cli/ , https://opencode.ai/docs/server/ , and https://opencode.ai/docs/mcp-servers/
