@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { CodexJsonRpcConnection, CodexRpcError } from "./codex-app-server/json-rpc.js";
+import { CodexJsonRpcConnection, CodexRpcError } from "./codex-app-server/json-rpc.ts";
 
 export interface CommandResult {
   stdout: string;

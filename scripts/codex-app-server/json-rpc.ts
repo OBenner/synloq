@@ -7,13 +7,16 @@ export interface CodexRpcOptions {
 }
 
 export class CodexRpcError extends Error {
-  constructor(
-    readonly method: string,
-    readonly rpcCode?: number,
-    readonly remoteDetail?: string,
-  ) {
+  readonly method: string;
+  readonly rpcCode?: number;
+  readonly remoteDetail?: string;
+
+  constructor(method: string, rpcCode?: number, remoteDetail?: string) {
     super(rpcCode === undefined ? `${method} failed` : `${method} failed with JSON-RPC ${rpcCode}`);
     this.name = "CodexRpcError";
+    this.method = method;
+    if (rpcCode !== undefined) this.rpcCode = rpcCode;
+    if (remoteDetail !== undefined) this.remoteDetail = remoteDetail;
   }
 }
 
@@ -25,6 +28,7 @@ interface PendingRequest {
 }
 
 export class CodexJsonRpcConnection {
+  private readonly child: ChildProcessWithoutNullStreams;
   private readonly timeoutMs: number;
   private readonly maxBufferBytes: number;
   private readonly pending = new Map<number, PendingRequest>();
@@ -35,14 +39,13 @@ export class CodexJsonRpcConnection {
   private failure: CodexRpcError | undefined;
   private closePromise: Promise<void> | undefined;
 
-  constructor(
-    private readonly child: ChildProcessWithoutNullStreams,
-    options: CodexRpcOptions = {},
-  ) {
+  constructor(child: ChildProcessWithoutNullStreams, options: CodexRpcOptions = {}) {
+    this.child = child;
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.maxBufferBytes = options.maxBufferBytes ?? 1_048_576;
     this.child.stdout.on("data", this.onStdoutData);
     this.child.stderr.on("data", this.onStderrData);
+    this.child.stdin.on("error", this.onStdinError);
     this.child.on("exit", this.onProcessExit);
     this.child.on("error", this.onProcessError);
   }
@@ -105,6 +108,10 @@ export class CodexJsonRpcConnection {
 
   private readonly onStderrData = (chunk: Buffer | string): void => {
     this.stderrTail = `${this.stderrTail}${String(chunk)}`.slice(-16_384);
+  };
+
+  private readonly onStdinError = (): void => {
+    this.failAll(new CodexRpcError("Codex app-server stdin"));
   };
 
   private readonly onProcessExit = (): void => {
@@ -195,6 +202,7 @@ export class CodexJsonRpcConnection {
     this.failAll(new CodexRpcError("connection closed"));
     this.child.stdout.off("data", this.onStdoutData);
     this.child.stderr.off("data", this.onStderrData);
+    this.child.stdin.off("error", this.onStdinError);
     this.child.off("exit", this.onProcessExit);
     this.child.off("error", this.onProcessError);
     this.child.stdin.destroy();

@@ -1,7 +1,7 @@
 # Codex fail-closed adapter design
 
 - **Date:** 2026-11-11
-- **Status:** approved design and implementation plan, implementation in progress
+- **Status:** controlled-doubles implementation complete; live Codex compatibility and active delivery remain UNVERIFIED
 - **Product:** Synloq
 - **Initial scope:** MCP inbox, lifecycle hooks, and a read-only Codex app-server compatibility probe
 - **Active delivery:** disabled and live-unverified

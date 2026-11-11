@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { CodexJsonRpcConnection, CodexRpcError } from "../../scripts/codex-app-server/json-rpc.js";
 import {
@@ -114,6 +115,22 @@ describe("Codex app-server JSON-RPC transport", () => {
     const pending = connection.request("initialize", {});
     child.stdout.write("not-json\n");
     await expect(pending).rejects.toThrow("malformed JSON");
+    await connection.close();
+  });
+
+  it("rejects pending requests on stdin failure without leaking stream details", async () => {
+    const { child } = fakeConnection();
+    const connection = new CodexJsonRpcConnection(child, { timeoutMs: 5 });
+    const pending = connection.request("initialize", {});
+    const observed = vi.fn();
+    child.stdin.once("error", observed);
+
+    child.stdin.emit("error", new Error("EPIPE token=do-not-report"));
+
+    const error = await pending.catch((reason: unknown) => reason);
+    expect(observed).toHaveBeenCalledOnce();
+    expect(error).toMatchObject({ message: "Codex app-server stdin failed" });
+    expect((error as Error).message).not.toContain("do-not-report");
     await connection.close();
   });
 
@@ -344,5 +361,28 @@ describe("Codex read-only app-server probe", () => {
     expect(serialized).not.toContain("secret");
     expect(serialized).not.toContain("private");
     expect(serialized).not.toContain(schema);
+  });
+
+  it("runs directly with Node 24 TypeScript module resolution", async () => {
+    const scriptPath = fileURLToPath(
+      new URL("../../scripts/probe-codex-app-server.ts", import.meta.url),
+    );
+    const result = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      execFile(
+        process.execPath,
+        [scriptPath, "--cwd", "relative-path"],
+        { encoding: "utf8", timeout: 5_000, killSignal: "SIGKILL" },
+        (error, _stdout, stderr) => {
+          resolve({
+            code: error === null ? 0 : typeof error.code === "number" ? error.code : null,
+            stderr,
+          });
+        },
+      );
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("--cwd must be an absolute project path");
+    expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
   });
 });
