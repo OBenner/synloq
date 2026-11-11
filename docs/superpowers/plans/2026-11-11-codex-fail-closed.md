@@ -1004,7 +1004,7 @@ it("sanitizes initialize recursively and hashes rather than embeds the schema", 
     capabilities: { experimental: { safe: true } },
     nested: {},
     safe: "visible",
-    list: ["x".repeat(256), ...Array.from({ length: 31 }, (_, index) => index + 1)],
+    list: ["x".repeat(256), ...Array.from({ length: 31 }, (_, index) => index)],
   });
   const serialized = JSON.stringify(report);
   expect(serialized).not.toContain("secret");
