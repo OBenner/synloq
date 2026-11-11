@@ -697,7 +697,15 @@ export class SQLiteMessageStore {
         throw new SynloqError("UNAUTHORIZED", "only the recipient can acknowledge a message");
       }
       if (row.delivery_state === "acked") return toMessage(row);
-      return this.transition(row, "acked");
+      if (row.delivery_state === "stored") this.transition(row, "submitted");
+
+      const submitted = this.findById(id);
+      if (!submitted) throw new Error("submitted message could not be read");
+      if (submitted.delivery_state === "submitted") this.transition(submitted, "delivered");
+
+      const delivered = this.findById(id);
+      if (!delivered) throw new Error("delivered message could not be read");
+      return this.transition(delivered, "acked");
     });
   }
 

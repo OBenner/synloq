@@ -10,7 +10,7 @@ Synloq is not an orchestrator. It does not create replacement chats, run one-sho
 - Claude Code active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
 - OpenCode active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
 - Codex MCP inbox and lifecycle state reporting are implemented with controlled doubles; live compatibility is **UNVERIFIED**. Active delivery is unsupported and disabled.
-- Kimi Code is **inbox-only**; active delivery and safe existing-TUI interaction are **UNVERIFIED**.
+- Kimi Work visible delivery to an exact bound client conversation is **VERIFIED for the local CTO ↔ Architect stand on 2026-11-11**: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral passed. See `docs/superpowers/specs/2026-11-11-kimi-work-live-acceptance.md`. Other hosts and Kimi Code CLI active delivery remain **UNVERIFIED**.
 
 Controlled transports and fake SDK clients are contract evidence, not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
 
@@ -228,7 +228,28 @@ separate OpenCode adapter: synloq adapter --config opencode-arch.json
 synloq serve ── one loopback HTTP relay and one project SQLite writer
 ```
 
-Kimi uses only the ordinary MCP stdio bridge. No Kimi active-delivery adapter is enabled.
+### Kimi Work embedded visible delivery
+
+A role's ordinary MCP JSON may include a strict `kimiWork` binding. The same MCP child process then owns the active-delivery runner; no separate adapter process is required:
+
+```json
+{
+  "relayUrl": "http://127.0.0.1:4100",
+  "credentialPath": "/secure/arch.token",
+  "kimiWork": {
+    "projectRoot": "/absolute/path/to/project",
+    "agentId": "arch",
+    "conversationKey": "agent:main:main:conversation:exact-client-conversation-uuid",
+    "workAgentId": "main"
+  }
+}
+```
+
+`agentId` is the Synloq role declared in `synloq.yaml`; it is distinct from Kimi Work's `workAgentId`. The relay authenticates the role token and validates its project, role, and session binding during adapter registration. `conversationKey` must identify an existing visible `origin: "client"` conversation in the same canonical project workspace. The installed Kimi Work local-control endpoint and token are discovered in memory through `kimi-daimon status --json`; tokens are never added to role JSON. `KIMI_WORK_EXECUTABLE`, `KIMI_WORK_CLI`, and `KIMI_WORK_CONFIG` are optional installation overrides.
+
+The bridge revalidates exact metadata and fresh idle state before one `conversations.send`. `delivered` means visible user-turn admission only, not model completion, reading, acknowledgement, or task completion. The receiving agent must call `synloq_ack` after actual reading and use `synloq_reply` for the original thread. Ambiguous sends receive bounded read-only history reconciliation; they are never blindly replayed. Risky actions still require operator approval.
+
+If host initialization fails, all six MCP inbox tools remain available. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work. The local acceptance stand verified real two-way visible turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral on 2026-11-11; uncertain-send reconciliation remains controlled-test evidence. Generic chat creation and host-enforced per-chat MCP isolation are separate, unfinished work.
 
 ## Codex MCP inbox and lifecycle state
 

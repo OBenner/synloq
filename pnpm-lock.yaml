@@ -213,6 +213,9 @@ importers:
       "@opencode-ai/sdk":
         specifier: 1.19.5
         version: 1.19.5
+      ws:
+        specifier: ^8.22.2
+        version: 8.22.2
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -223,6 +226,9 @@ importers:
       "@types/node":
         specifier: ^24.10.0
         version: 24.19.2
+      "@types/ws":
+        specifier: ^8.18.2
+        version: 8.18.2
       prettier:
         specifier: 3.9.10
         version: 3.9.10
@@ -456,6 +462,12 @@ packages:
     resolution:
       {
         integrity: sha512-93d49wCWJkCyN87MxLpNN6KXPCwFw7bVUg79mGUV1OS40JGWwVCr8n61DXCSqz7CV6/VfPkb7xec7uP2M+QHWQ==,
+      }
+
+  "@types/ws@8.18.2":
+    resolution:
+      {
+        integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==,
       }
 
   "@typescript/typescript-aix-ppc64@7.0.2":
@@ -1641,6 +1653,21 @@ packages:
         integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==,
       }
 
+  ws@8.22.2:
+    resolution:
+      {
+        integrity: sha512-/rEZ2ejown2N5gxVTHUu9bVVC7ttu0/Tgzf5hbTOixR3Fs7mbbXgn2DbdbcKgJOmpQMtrIUWivtYuVMnp/W/yA==,
+      }
+    engines: { node: ">=10.0.0" }
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ">=5.0.2"
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yaml@2.9.1:
     resolution:
       {
@@ -1764,6 +1791,10 @@ snapshots:
   "@types/node@24.19.2":
     dependencies:
       undici-types: 7.24.6
+
+  "@types/ws@8.18.2":
+    dependencies:
+      "@types/node": 24.19.2
 
   "@typescript/typescript-aix-ppc64@7.0.2":
     optional: true
@@ -2386,6 +2417,8 @@ snapshots:
   why-is-node-running@3.2.1: {}
 
   wrappy@1.0.2: {}
+
+  ws@8.22.2: {}
 
   yaml@2.9.1: {}
 

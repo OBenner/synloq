@@ -1,0 +1,9 @@
+version: 1
+project: synloq
+agents:
+  cto:
+    title: CTO
+    role: Technical strategy, task decomposition, and coordination
+  arch:
+    title: Architect
+    role: Architecture review, risks, and verification

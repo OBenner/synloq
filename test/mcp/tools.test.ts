@@ -204,6 +204,29 @@ describe("Synloq agent-facing MCP tools", () => {
     );
   });
 
+  it("acknowledges an inbox message without an active delivery adapter", async () => {
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "Read and acknowledge me",
+      expectsReply: false,
+      idempotencyKey: "mcp-inbox-ack-1",
+    });
+    const inbox = await fixture.mcpClient.callTool({ name: "synloq_inbox", arguments: {} });
+    expect(inbox.structuredContent).toMatchObject({
+      messages: [{ id: message.id, deliveryState: "stored" }],
+    });
+
+    const result = await fixture.mcpClient.callTool({
+      name: "synloq_ack",
+      arguments: { messageId: message.id },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      message: { id: message.id, deliveryState: "acked" },
+    });
+  });
+
   it("acknowledges a delivered message", async () => {
     const { message } = await fixture.cto.send({
       to: "arch",
