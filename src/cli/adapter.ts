@@ -78,6 +78,13 @@ export async function startStandaloneAdapter(
     };
   }
 
+  if (configuration.kind === "codex") {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      "Codex active delivery is unsupported; use codex-hook and MCP inbox",
+    );
+  }
+
   const running = await runClaudeAdapter(
     {
       sessionId: configuration.sessionId,

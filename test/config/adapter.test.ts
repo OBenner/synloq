@@ -112,4 +112,46 @@ describe("standalone adapter configuration", () => {
       code: "INVALID_INPUT",
     });
   });
+
+  it("loads a strict Codex hook configuration without activation fields", async () => {
+    await writeConfiguration({ ...validConfiguration(), kind: "codex" });
+
+    const loaded = await loadAdapterConfiguration(configPath);
+    expect(loaded.configuration).toMatchObject({
+      kind: "codex",
+      project: "verdicta",
+      agentId: "cto",
+      sessionId: "claude-visible-cto",
+      protocolVersion: 1,
+    });
+    expect(loaded.configuration).not.toHaveProperty("activationVerifiedAt");
+    expect(loaded.configuration).not.toHaveProperty("acceptanceMessageId");
+  });
+
+  it("rejects Codex in the generic active adapter runner", async () => {
+    const { startStandaloneAdapter } = await import("../../src/cli/adapter.js");
+    await writeConfiguration({ ...validConfiguration(), kind: "codex" });
+
+    await expect(startStandaloneAdapter(configPath)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Codex active delivery is unsupported; use codex-hook and MCP inbox",
+    });
+  });
+
+  it.each(["activationVerifiedAt", "acceptanceMessageId"])(
+    "rejects a Codex %s field",
+    async (field) => {
+      await writeConfiguration({
+        ...validConfiguration(),
+        kind: "codex",
+        [field]:
+          field === "acceptanceMessageId"
+            ? "69d2065f-46a4-4b2f-9482-f9a64f349e26"
+            : "2026-11-11T00:00:00.000Z",
+      });
+      await expect(loadAdapterConfiguration(configPath)).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+      });
+    },
+  );
 });

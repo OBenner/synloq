@@ -64,7 +64,14 @@ const openCodeSchema = z
   })
   .strict();
 
-const configurationSchema = z.union([claudeSchema, openCodeSchema]);
+const codexSchema = z
+  .object({
+    ...commonFields,
+    kind: z.literal("codex"),
+  })
+  .strict();
+
+const configurationSchema = z.union([claudeSchema, openCodeSchema, codexSchema]);
 
 export type StandaloneAdapterConfiguration = z.infer<typeof configurationSchema>;
 
