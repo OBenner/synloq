@@ -520,9 +520,13 @@ export class SQLiteMessageStore {
       const result = this.database
         .prepare(
           `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
-           claim_generation = NULL WHERE id = ? AND delivery_state = 'submitted'`,
+           claim_generation = NULL,
+           acceptance_consumed_generation = CASE
+             WHEN ? = 'RETRYABLE' THEN NULL ELSE acceptance_consumed_generation
+           END
+           WHERE id = ? AND delivery_state = 'submitted'`,
         )
-        .run(id);
+        .run(code, id);
       if (result.changes !== 1) throw new Error("delivery state changed during failure report");
       const updated = this.findById(id);
       if (!updated) throw new Error("reset message could not be read");

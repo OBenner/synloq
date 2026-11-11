@@ -92,9 +92,6 @@ export class Dispatcher {
       return false;
     }
 
-    const pending = this.messages.nextPending(project, agentId);
-    if (!pending || this.messages.isPaused(project, "thread", pending.threadId)) return false;
-
     const backoff = this.backoffs.get(key);
     if (backoff && this.clock.now() < backoff.retryAt) return false;
 
@@ -111,26 +108,51 @@ export class Dispatcher {
       return false;
     }
 
-    let receipt: DeliveryReceipt;
     const binding = { sessionId: session.sessionId, generation: session.generation };
+    let claimed;
+    try {
+      claimed = this.messages.claimNextDelivery(project, agentId, binding);
+    } catch (error) {
+      if (error instanceof SynloqError && error.code === "UNAUTHORIZED") return false;
+      throw error;
+    }
+    if (!claimed) return false;
+    const pending = claimed.message;
+
+    try {
+      this.messages.authorizeDelivery(pending.id, project, agentId, binding);
+    } catch (error) {
+      this.handleSubmissionError(error, project, agentId, pending, key, adapter, binding);
+      return false;
+    }
+
+    let receipt: DeliveryReceipt;
     try {
       receipt = await adapter.submit(session.sessionId, pending, {
         generation: session.generation,
       });
     } catch (error) {
-      this.handleSubmissionError(error, project, agentId, pending, key, adapter);
+      this.handleSubmissionError(error, project, agentId, pending, key, adapter, binding);
       return false;
     }
 
-    if (receipt.state === "submitted") {
-      this.messages.setDeliveryState(pending.id, "submitted", binding);
+    try {
+      const completed = this.messages.completeDeliveryReceipt(
+        pending.id,
+        project,
+        agentId,
+        binding,
+        receipt,
+      );
       this.backoffs.delete(key);
-      return false;
+      return completed.deliveryState === "delivered" || completed.deliveryState === "acked";
+    } catch (error) {
+      if (error instanceof SynloqError && error.code === "UNAUTHORIZED") {
+        this.backoffs.delete(key);
+        return false;
+      }
+      throw error;
     }
-
-    this.messages.setDeliveryState(pending.id, "delivered");
-    this.backoffs.delete(key);
-    return true;
   }
 
   private handleSubmissionError(
@@ -140,17 +162,32 @@ export class Dispatcher {
     pending: Message,
     key: string,
     adapter: DeliveryAdapter,
+    binding: { sessionId: string; generation: number },
   ): void {
     const session = this.sessions.list(project).find((candidate) => candidate.agentId === agentId);
+    const uncertain = error instanceof SynloqError && error.code === "DELIVERY_UNCERTAIN";
     const uncertainWithoutIdempotency =
-      error instanceof SynloqError &&
-      error.code === "DELIVERY_UNCERTAIN" &&
+      uncertain &&
       (!adapter.capabilities.clientIdempotency || !session?.capabilities.clientIdempotency);
 
+    try {
+      this.messages.reportDeliveryFailure(
+        pending.id,
+        project,
+        agentId,
+        binding,
+        uncertain ? "DELIVERY_UNCERTAIN" : "RETRYABLE",
+        adapter.capabilities.clientIdempotency,
+      );
+    } catch (failureError) {
+      if (failureError instanceof SynloqError && failureError.code === "UNAUTHORIZED") {
+        this.backoffs.delete(key);
+        return;
+      }
+      throw failureError;
+    }
+
     if (uncertainWithoutIdempotency) {
-      const quarantinedAt = new Date(this.clock.now()).toISOString();
-      this.messages.quarantineDelivery(pending.id, project, agentId, quarantinedAt);
-      this.messages.pause(project, "participant", agentId, quarantinedAt);
       this.backoffs.delete(key);
       return;
     }

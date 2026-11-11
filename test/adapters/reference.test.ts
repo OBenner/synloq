@@ -10,6 +10,7 @@ import {
   CONTRACT_SESSION,
   MutableClock,
   contractCapabilities,
+  contractDatabase,
   contractRegistration,
   runAdapterContract,
   type Harness,
@@ -19,8 +20,9 @@ runAdapterContract(
   "ReferenceAdapter delivery contract",
   (capabilities = contractCapabilities()) => {
     const clock = new MutableClock();
-    const store = new SQLiteMessageStore(":memory:");
-    const sessions = new SessionStore(":memory:", clock);
+    const database = contractDatabase();
+    const store = new SQLiteMessageStore(database, clock);
+    const sessions = new SessionStore(database, clock);
     const adapter = new ReferenceAdapter(capabilities);
     sessions.register(contractRegistration(CONTRACT_SESSION, capabilities), false);
     const dispatcher = new Dispatcher(

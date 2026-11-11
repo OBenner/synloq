@@ -18,6 +18,7 @@ import {
   CONTRACT_SESSION,
   MutableClock,
   contractCapabilities,
+  contractDatabase,
   contractRegistration,
   runAdapterContract,
   type Harness,
@@ -92,8 +93,9 @@ class ObservedOpenCodeContractAdapter implements DeliveryAdapter {
 
 runAdapterContract("OpenCodeAdapter delivery contract", (capabilities = contractCapabilities()) => {
   const clock = new MutableClock();
-  const store = new SQLiteMessageStore(":memory:");
-  const sessions = new SessionStore(":memory:", clock);
+  const database = contractDatabase();
+  const store = new SQLiteMessageStore(database, clock);
+  const sessions = new SessionStore(database, clock);
   const visible: VisibleEntry[] = [];
   const failures = new Set<string>();
   const prompt = vi.fn(async (parameters: PromptParameters) => {

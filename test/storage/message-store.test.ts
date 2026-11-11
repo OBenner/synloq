@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SynloqError } from "../../src/domain/errors.js";
 import type { SendMessageInput } from "../../src/domain/message.js";
+import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
+import { SessionStore } from "../../src/storage/session-store.js";
 
 const validInput: SendMessageInput = {
   project: "verdicta",
@@ -331,4 +333,49 @@ describe("SQLiteMessageStore", () => {
     expect((thrown as Error).cause).toBeInstanceOf(Error);
     expect(readFileSync(blockingFile, "utf8")).toBe("unchanged");
   });
+
+  it.each(["RETRYABLE", "DELIVERY_UNCERTAIN"] as const)(
+    "restores acceptance allowance only when a %s failure permits it",
+    (code) => {
+      const directory = temporaryDirectory("synloq-acceptance-retry-");
+      const database = join(directory, "messages.sqlite");
+      const store = makeStore(database);
+      const sessions = new SessionStore(database);
+      const messageId = crypto.randomUUID();
+      createAt(store, messageId, "2026-11-09T00:00:00.000Z");
+
+      try {
+        const session = sessions.register(
+          {
+            project: "verdicta",
+            agentId: "arch",
+            sessionId: "claude-visible-arch",
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: {
+              activeDelivery: true,
+              stateReporting: true,
+              clientIdempotency: true,
+            },
+            acceptanceMessageId: messageId,
+          },
+          false,
+        );
+        sessions.heartbeat("verdicta", "arch", session.sessionId, "idle");
+        const binding = { sessionId: session.sessionId, generation: session.generation };
+
+        expect(store.claimNextDelivery("verdicta", "arch", binding)?.message.id).toBe(messageId);
+        store.reportDeliveryFailure(messageId, "verdicta", "arch", binding, code, true);
+        expect(store.getMessage(messageId)?.deliveryState).toBe("stored");
+
+        const retry = store.claimNextDelivery("verdicta", "arch", binding);
+        if (code === "RETRYABLE") {
+          expect(retry?.message.id).toBe(messageId);
+        } else {
+          expect(retry).toBeNull();
+        }
+      } finally {
+        sessions.close();
+      }
+    },
+  );
 });

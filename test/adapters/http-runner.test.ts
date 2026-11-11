@@ -128,4 +128,21 @@ describe("HTTP adapter runner", () => {
     expect(observedSignal?.aborted).toBe(true);
     expect(relay.nextDelivery).toHaveBeenCalledTimes(1);
   });
+
+  it("releases a claimed message when authorization fails before submission", async () => {
+    const relay = relayWith(message);
+    vi.mocked(relay.authorizeDelivery).mockRejectedValue(
+      new SynloqError("INVALID_INPUT", "visible session became busy"),
+    );
+    const adapter = adapterWith(vi.fn());
+    const runner = new HttpAdapterRunner(relay, adapter, binding);
+
+    await expect(runner.runOnce()).resolves.toBe("failed");
+    expect(adapter.submit).not.toHaveBeenCalled();
+    expect(relay.deliveryFailure).toHaveBeenCalledWith(message.id, {
+      ...binding,
+      code: "RETRYABLE",
+      clientIdempotency: true,
+    });
+  });
 });

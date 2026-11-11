@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inactiveReason, type Clock, type DeliveryAdapter } from "../../src/adapters/types.js";
 import type { Message } from "../../src/domain/message.js";
@@ -14,6 +17,19 @@ import type { SessionStore } from "../../src/storage/session-store.js";
 export const CONTRACT_PROJECT = "verdicta";
 export const CONTRACT_AGENT = "arch";
 export const CONTRACT_SESSION = "session-arch";
+
+const contractDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of contractDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+export function contractDatabase(): string {
+  const directory = mkdtempSync(join(tmpdir(), "synloq-adapter-contract-"));
+  contractDirectories.push(directory);
+  return join(directory, "synloq.sqlite");
+}
 
 export interface VisibleEntry {
   id: string;

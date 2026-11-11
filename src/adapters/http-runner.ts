@@ -61,7 +61,21 @@ export class HttpAdapterRunner {
     });
     if (!message) return "empty";
 
-    await this.relay.authorizeDelivery(message.id, this.binding);
+    try {
+      await this.relay.authorizeDelivery(message.id, this.binding);
+    } catch {
+      if (this.abortController.signal.aborted) return "inactive";
+      this.outstanding = {
+        kind: "failure",
+        messageId: message.id,
+        input: {
+          ...this.binding,
+          code: "RETRYABLE",
+          clientIdempotency: this.adapter.capabilities.clientIdempotency,
+        },
+      };
+      return this.completeOutstanding();
+    }
     if (this.abortController.signal.aborted) return "inactive";
     let receipt: DeliveryReceipt;
     try {
