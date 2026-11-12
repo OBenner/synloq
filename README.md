@@ -4,6 +4,15 @@ Synloq is a local-first coordination plugin for visible coding-agent chats. Gene
 
 Synloq is not an orchestrator. It does not hide work in replacement chats, run one-shot model subprocesses, execute workflows autonomously, operate a dashboard, merge or push changes, or deliver to remote clients. The operator can inspect and steer every visible role conversation directly.
 
+> **Alpha (0.x).** Synloq is pre-1.0: the wire protocol and on-disk formats may change between releases, and database migrations are forward-only. Pin a commit and read the release notes before upgrading.
+
+## Quickstart
+
+1. Build from a checkout: `pnpm install --frozen-lockfile && pnpm build` (Node.js 24+).
+2. Register `plugins/synloq` as a personal plugin source in Kimi Work and use the single Install/Update action.
+3. In a project chat, ask the agent to **Initialize Synloq for this project** and confirm each role's name and responsibilities.
+4. The role chats appear in the project and coordinate through the local relay automatically — no separate server or manual MCP configuration is required.
+
 ## Support status
 
 **Supported (verified live):**
