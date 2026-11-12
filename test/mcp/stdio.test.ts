@@ -295,6 +295,65 @@ describe("Synloq MCP stdio bridge", () => {
     await server.close();
   });
 
+  it("runs exactly one recovery when runner and heartbeat report a stale binding concurrently", async () => {
+    const { root, configPath } = await configuration();
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://127.0.0.1:49152",
+        credentialPath: join(root, "agent.token"),
+        kimiWork: {
+          projectRoot: root,
+          agentId: "arch",
+          conversationKey: "agent:main:main:conversation:d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+          workAgentId: "main",
+        },
+      }),
+    );
+    const bridges = [
+      {
+        runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined) },
+      },
+      {
+        runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined) },
+      },
+    ];
+    const kimiWorkFactory = vi
+      .fn()
+      .mockResolvedValueOnce(bridges[0])
+      .mockResolvedValueOnce(bridges[1]);
+    const server = await startMcpStdio(configPath, {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new Writable({ write: (_chunk, _encoding, callback) => callback() }),
+      kimiWorkFactory,
+    });
+
+    await vi.waitFor(() => expect(bridges[0]!.runner.start).toHaveBeenCalledTimes(1));
+    const factoryOptions = kimiWorkFactory.mock.calls[0]![0] as {
+      onUnauthorized?: (error: unknown) => void;
+    };
+    expect(typeof factoryOptions.onUnauthorized).toBe("function");
+    const runnerCallback = (bridges[0]!.runner as { onUnauthorized?: (error: unknown) => void })
+      .onUnauthorized!;
+    const stale = Object.assign(new Error("session generation is stale"), {
+      code: "UNAUTHORIZED",
+    });
+
+    // Runner loop and adapter heartbeat may detect the stale generation at the
+    // same time; both paths funnel into one single-flight recovery.
+    runnerCallback(stale);
+    factoryOptions.onUnauthorized!(stale);
+    factoryOptions.onUnauthorized!(stale);
+
+    await vi.waitFor(() => expect(bridges[1]!.runner.start).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(kimiWorkFactory).toHaveBeenCalledTimes(2);
+    await server.close();
+  });
+
   it("rejects strict configuration without writing the credential to diagnostics", async () => {
     const { root, configPath, token } = await configuration();
     await writeFile(

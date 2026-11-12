@@ -57,11 +57,13 @@ export interface KimiWorkAdapterOptions {
   reconciliationDelayMs?: number;
   closeControl?: () => Promise<void>;
   reconnect?: () => Promise<KimiWorkControl | KimiWorkClientHandle>;
+  onUnauthorized?: (error: SynloqError) => void;
 }
 
 export interface KimiWorkAdapterClients {
   control?: KimiWorkControl;
   connect?: () => Promise<KimiWorkClientHandle>;
+  onUnauthorized?: (error: SynloqError) => void;
 }
 
 function backoffDelay(failures: number): number {
@@ -332,7 +334,11 @@ export class KimiWorkAdapter implements DeliveryAdapter {
         ...(this.generation === undefined ? {} : { generation: this.generation }),
       });
     });
-    this.reportQueue = request.catch(() => undefined);
+    this.reportQueue = request.catch((error: unknown) => {
+      if (error instanceof SynloqError && error.code === "UNAUTHORIZED") {
+        this.options.onUnauthorized?.(error);
+      }
+    });
     return request;
   }
 
@@ -421,6 +427,7 @@ export async function runKimiWorkAdapter(
   const adapter = new KimiWorkAdapter(initial, relay, config, {
     closeControl,
     ...(reconnect ? { reconnect } : {}),
+    ...(clients.onUnauthorized ? { onUnauthorized: clients.onUnauthorized } : {}),
   });
 
   try {

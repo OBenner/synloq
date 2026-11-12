@@ -6,7 +6,7 @@ import type { Readable, Writable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { runKimiWorkAdapter, type KimiWorkAdapter } from "../adapters/kimi-work.js";
-import { HttpAdapterRunner } from "../adapters/http-runner.js";
+import { HttpAdapterRunner, OutstandingTracker } from "../adapters/http-runner.js";
 import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
 import {
@@ -48,6 +48,8 @@ export interface KimiWorkFactoryOptions {
   relay: RelayHttpClient;
   token: string;
   signal: AbortSignal;
+  onUnauthorized: (error: SynloqError) => void;
+  outstanding: OutstandingTracker;
 }
 
 export type KimiWorkFactory = (options: KimiWorkFactoryOptions) => Promise<KimiWorkMcpBridge>;
@@ -107,10 +109,19 @@ async function defaultKimiWorkFactory(options: KimiWorkFactoryOptions): Promise<
   const participants = await loadManifest(options.binding.workspacePath);
   const project = participants[0]?.project;
   if (!project) throw new SynloqError("INVALID_INPUT", "Synloq manifest has no project");
-  const adapter = await runKimiWorkAdapter({ ...options.binding, project }, options.relay);
+  const adapter = await runKimiWorkAdapter({ ...options.binding, project }, options.relay, {
+    onUnauthorized: options.onUnauthorized,
+  });
   return {
     adapter,
-    runner: new HttpAdapterRunner(options.relay, adapter, adapter.sessionBinding),
+    runner: new HttpAdapterRunner(
+      options.relay,
+      adapter,
+      adapter.sessionBinding,
+      undefined,
+      undefined,
+      options.outstanding,
+    ),
   };
 }
 
@@ -148,6 +159,26 @@ function createKimiWorkLifecycle(
   let bridge: KimiWorkMcpBridge | undefined;
   let closePromise: Promise<void> | undefined;
   let closed = false;
+  let recovering = false;
+  const outstanding = new OutstandingTracker();
+
+  const recover = (error: SynloqError) => {
+    if (closed || recovering) return;
+    recovering = true;
+    const raw = `${error.code}: ${error.message}`;
+    const detail = token === "" ? raw : raw.split(token).join("[redacted]");
+    diagnostics.write(
+      `Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}\n`,
+    );
+    void (async () => {
+      try {
+        await stop();
+        start();
+      } finally {
+        recovering = false;
+      }
+    })();
+  };
 
   const closeBridge = async (value: KimiWorkMcpBridge | undefined) => {
     if (!value) return;
@@ -165,24 +196,20 @@ function createKimiWorkLifecycle(
     const startup = (async () => {
       for (let attempt = 1; attempt <= attempts && !controller.signal.aborted; attempt += 1) {
         try {
-          const created = await factory({ binding, relay, token, signal: controller.signal });
+          const created = await factory({
+            binding,
+            relay,
+            token,
+            signal: controller.signal,
+            onUnauthorized: recover,
+            outstanding,
+          });
           if (controller.signal.aborted || closed) {
             await closeBridge(created);
             return;
           }
           bridge = created;
-          created.runner.onUnauthorized = (unauthorized) => {
-            if (closed) return;
-            const raw = `${unauthorized.code}: ${unauthorized.message}`;
-            const detail = token === "" ? raw : raw.split(token).join("[redacted]");
-            diagnostics.write(
-              `Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}\n`,
-            );
-            void (async () => {
-              await stop();
-              start();
-            })();
-          };
+          created.runner.onUnauthorized = recover;
           created.runner.start();
           return;
         } catch (error) {

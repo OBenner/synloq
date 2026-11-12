@@ -8,9 +8,29 @@ const MAX_BACKOFF_MS = 30_000;
 
 export type AdapterPollResult = "inactive" | "empty" | "submitted" | "delivered" | "failed";
 
-type OutstandingOperation =
+export type OutstandingOperation =
   | { kind: "receipt"; messageId: string; receipt: DeliveryReceipt }
   | { kind: "failure"; messageId: string; input: DeliveryFailureRequest };
+
+/**
+ * Holds the in-flight receipt/failure across runner instances so a
+ * stop/start recovery (stale generation) does not lose it.
+ */
+export class OutstandingTracker {
+  private operation: OutstandingOperation | undefined;
+
+  get(): OutstandingOperation | undefined {
+    return this.operation;
+  }
+
+  set(operation: OutstandingOperation): void {
+    this.operation = operation;
+  }
+
+  clear(): void {
+    this.operation = undefined;
+  }
+}
 
 function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
@@ -31,7 +51,6 @@ export class HttpAdapterRunner {
   private readonly abortController = new AbortController();
   private task: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
-  private outstanding: OutstandingOperation | undefined;
 
   constructor(
     private readonly relay: RelayHttpClient,
@@ -39,6 +58,7 @@ export class HttpAdapterRunner {
     private readonly binding: SessionBinding,
     private readonly waitMs = 25_000,
     private readonly closeTimeoutMs = 5_000,
+    private readonly tracker: OutstandingTracker = new OutstandingTracker(),
   ) {}
 
   start(): void {
@@ -54,7 +74,7 @@ export class HttpAdapterRunner {
     ) {
       return "inactive";
     }
-    if (this.outstanding) return this.completeOutstanding();
+    if (this.tracker.get()) return this.completeOutstanding();
 
     const { message } = await this.relay.nextDelivery({
       ...this.binding,
@@ -67,7 +87,7 @@ export class HttpAdapterRunner {
       await this.relay.authorizeDelivery(message.id, this.binding);
     } catch {
       if (this.abortController.signal.aborted) return "inactive";
-      this.outstanding = {
+      this.tracker.set({
         kind: "failure",
         messageId: message.id,
         input: {
@@ -75,7 +95,7 @@ export class HttpAdapterRunner {
           code: "RETRYABLE",
           clientIdempotency: this.adapter.capabilities.clientIdempotency,
         },
-      };
+      });
       return this.completeOutstanding();
     }
     if (this.abortController.signal.aborted) return "inactive";
@@ -88,7 +108,7 @@ export class HttpAdapterRunner {
     } catch (error) {
       if (this.abortController.signal.aborted) return "inactive";
       const uncertain = error instanceof SynloqError && error.code === "DELIVERY_UNCERTAIN";
-      this.outstanding = {
+      this.tracker.set({
         kind: "failure",
         messageId: message.id,
         input: {
@@ -96,28 +116,31 @@ export class HttpAdapterRunner {
           code: uncertain ? "DELIVERY_UNCERTAIN" : "RETRYABLE",
           clientIdempotency: this.adapter.capabilities.clientIdempotency,
         },
-      };
+      });
       return this.completeOutstanding();
     }
 
     if (this.abortController.signal.aborted) return "inactive";
     if (receipt.state === "delivered") {
-      this.outstanding = { kind: "receipt", messageId: message.id, receipt };
+      this.tracker.set({ kind: "receipt", messageId: message.id, receipt });
       return this.completeOutstanding();
     }
     return "submitted";
   }
 
   private async completeOutstanding(): Promise<AdapterPollResult> {
-    const operation = this.outstanding;
+    const operation = this.tracker.get();
     if (!operation) return "empty";
     if (operation.kind === "receipt") {
       await this.relay.receipt(operation.messageId, operation.receipt, this.binding);
-      this.outstanding = undefined;
+      this.tracker.clear();
       return "delivered";
     }
-    await this.relay.deliveryFailure(operation.messageId, operation.input);
-    this.outstanding = undefined;
+    await this.relay.deliveryFailure(operation.messageId, {
+      ...operation.input,
+      ...this.binding,
+    });
+    this.tracker.clear();
     return "failed";
   }
 

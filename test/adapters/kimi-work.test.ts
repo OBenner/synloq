@@ -188,6 +188,33 @@ describe("KimiWorkAdapter state and registration", () => {
     );
   });
 
+  it("surfaces a heartbeat UNAUTHORIZED through onUnauthorized without crashing the loop", async () => {
+    const control = new FakeControl();
+    const relay = makeRelay();
+    const onUnauthorized = vi.fn();
+    const adapter = await runKimiWorkAdapter(config, relay, { control, onUnauthorized });
+    closers.push(() => adapter.close());
+
+    await vi.waitFor(() => expect(relay.heartbeat).toHaveBeenCalled(), {
+      timeout: 1_000,
+      interval: 1,
+    });
+    vi.mocked(relay.heartbeat).mockRejectedValue(
+      new SynloqError("UNAUTHORIZED", "session generation is stale"),
+    );
+
+    await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalled(), {
+      timeout: 1_000,
+      interval: 1,
+    });
+    expect(onUnauthorized.mock.calls[0]?.[0]).toMatchObject({ code: "UNAUTHORIZED" });
+    // Other failures stay swallowed: the loop keeps running.
+    vi.mocked(relay.heartbeat).mockRejectedValue(new Error("network down"));
+    const calls = onUnauthorized.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(onUnauthorized.mock.calls.length).toBe(calls);
+  });
+
   it("opens exactly one initial host connection through the factory", async () => {
     const control = new FakeControl();
     const close = vi.fn(async () => undefined);

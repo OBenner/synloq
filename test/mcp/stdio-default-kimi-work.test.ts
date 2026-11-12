@@ -65,6 +65,7 @@ describe("default Kimi Work MCP bridge", () => {
     expect(runKimiWorkAdapterMock).toHaveBeenCalledWith(
       expect.objectContaining({ project: "synloq", agentId: "arch" }),
       expect.anything(),
+      expect.objectContaining({ onUnauthorized: expect.any(Function) }),
     );
     await server.close();
   });
