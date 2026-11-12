@@ -70,9 +70,12 @@ node dist/cli/main.js revoke-token \
   --agent-id reviewer
 ```
 
-Removes the role's hashes without issuing a new token: the role is locked out until
-the next rotation or init. Use this when a leak is suspected and the replacement
-channel is not ready yet.
+Removes the role's hashes without issuing a new token: the role is locked out
+until the next `init` (`ensureCredential` re-issues a token for a hash-less
+role). Note that `rotate-token` refuses a role with no stored hashes ("no
+existing credential to rotate"), so rotation alone cannot recover a revoked
+role. Use `revoke-token` when a leak is suspected and the replacement channel
+is not ready yet.
 
 ## Diagnosing 401 / UNAUTHORIZED after init or rotation
 
