@@ -86,6 +86,19 @@ describe("Kimi Work local-control status", () => {
     ).resolves.toEqual({ url: "ws://127.0.0.1:59262/control", token });
   });
 
+  it("tolerates host log lines preceding the JSON document on stdout", async () => {
+    const noisyStdout = `2026-11-12T16:08:42.837Z INFO standalone-runtime startup observation startup_id=7090e3e9\n${status}\n`;
+    const exec = vi.fn<KimiWorkStatusExec>().mockResolvedValue({ stdout: noisyStdout });
+
+    await expect(
+      loadKimiWorkControlEndpoint({
+        environment: windowsEnvironment(),
+        platform: "win32",
+        exec,
+      }),
+    ).resolves.toEqual({ url: "ws://127.0.0.1:59262/control", token });
+  });
+
   it("honors executable, CLI, and config environment overrides", async () => {
     const exec = vi.fn<KimiWorkStatusExec>().mockResolvedValue({ stdout: status });
     const environment = {

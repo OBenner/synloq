@@ -171,8 +171,18 @@ function createKimiWorkLifecycle(
           bridge = created;
           created.runner.start();
           return;
-        } catch {
+        } catch (error) {
           if (controller.signal.aborted || closed) return;
+          const raw =
+            error instanceof SynloqError
+              ? `${error.code}: ${error.message}`
+              : error instanceof Error
+                ? error.message
+                : String(error);
+          const detail = token === "" ? raw : raw.split(token).join("[redacted]");
+          diagnostics.write(
+            `Synloq Kimi Work startup attempt ${attempt}/${attempts} failed for ${binding.conversationKey}: ${detail}\n`,
+          );
           if (attempt === attempts) {
             diagnostics.write(
               `Synloq Kimi Work visible delivery unavailable for ${binding.conversationKey}\n`,

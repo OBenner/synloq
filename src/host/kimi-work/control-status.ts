@@ -138,7 +138,7 @@ export async function loadKimiWorkControlEndpoint(
     delete env.ELECTRON_RUN_AS_NODE;
     if (windows) env.ELECTRON_RUN_AS_NODE = "1";
     const { stdout } = await exec(file, args, { env, timeout: 5_000, maxBuffer: 1_048_576 });
-    const parsed = statusSchema.parse(JSON.parse(stdout));
+    const parsed = statusSchema.parse(JSON.parse(jsonDocument(stdout)));
     return {
       url: loopbackWebSocket(parsed.control.endpoint.url),
       token: parsed.control.endpoint.auth.token,
@@ -151,4 +151,13 @@ export async function loadKimiWorkControlEndpoint(
 
 function unavailableThrow(): never {
   throw unavailable();
+}
+
+function jsonDocument(stdout: string): string {
+  // The host CLI may prepend log lines (e.g. startup observations) to stdout
+  // before the JSON document; the status payload always starts at the first
+  // opening brace and runs to the end of the output.
+  const start = stdout.indexOf("{");
+  if (start < 0) throw unavailable();
+  return stdout.slice(start);
 }
