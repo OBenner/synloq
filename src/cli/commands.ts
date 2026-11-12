@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
+import { FileSecurityAuditLog } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
@@ -55,6 +57,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
   const messages = new SQLiteMessageStore(paths.database, clock);
+  const audit = new FileSecurityAuditLog(join(paths.home, "data", `${paths.key}-audit.jsonl`));
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
   try {
@@ -68,11 +71,15 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
         messages,
         sessions,
         new ProtectionPolicy(messages, undefined, undefined, clock),
+        undefined,
+        undefined,
+        audit,
       ),
       credentials: new CredentialStore(options.projectRoot, options.synloqHome),
       sessions,
       dispatcher,
       messages,
+      audit,
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
     const openSessions = sessions;

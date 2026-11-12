@@ -5,6 +5,7 @@ import type { CredentialStore, Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Message } from "../domain/message.js";
 import { PROTOCOL_VERSION, type SessionBinding } from "../domain/session.js";
+import { NullSecurityAuditLog, type SecurityAuditLog } from "../relay/audit-log.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { RelayService } from "../relay/relay-service.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
@@ -112,6 +113,7 @@ export interface RelayHttpServerOptions {
   sessions: SessionStore;
   dispatcher: Dispatcher;
   messages: SQLiteMessageStore;
+  audit?: SecurityAuditLog;
 }
 
 interface ErrorResponse {
@@ -122,10 +124,12 @@ interface ErrorResponse {
 export class RelayHttpServer {
   private readonly http: Server;
   private readonly events = new EventEmitter();
+  private readonly audit: SecurityAuditLog;
   private closing = false;
 
   constructor(private readonly options: RelayHttpServerOptions) {
     this.events.setMaxListeners(0);
+    this.audit = options.audit ?? new NullSecurityAuditLog();
     this.http = createServer((request, response) => {
       void this.handle(request, response);
     });
@@ -180,6 +184,17 @@ export class RelayHttpServer {
     try {
       identity = await this.authenticate(request.headers.authorization);
     } catch (error) {
+      if (error instanceof SynloqError) {
+        this.audit.record({
+          at: new Date().toISOString(),
+          project: this.options.project,
+          agentId: "unknown",
+          action: "authenticate",
+          decision: "deny",
+          reasonCode: error.code,
+          detail: error.message,
+        });
+      }
       this.sendError(response, error, true);
       return;
     }
