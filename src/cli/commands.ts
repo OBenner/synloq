@@ -18,17 +18,6 @@ import {
 import { RelayHttpServer } from "../transport/http-server.js";
 import { createDoctorReport, type DoctorReport } from "./doctor.js";
 
-export interface InitOptions {
-  projectRoot: string;
-}
-
-export interface InitResult {
-  project: string;
-  credentialPath: string;
-  databasePath: string;
-  credentials: Array<{ agentId: string; token: string }>;
-}
-
 export interface ServeOptions {
   projectRoot: string;
   synloqHome?: string;
@@ -57,27 +46,6 @@ function manifestProject(participants: Participant[]): string {
     throw new SynloqError("INVALID_INPUT", "manifest must declare at least one agent");
   }
   return project;
-}
-
-export async function initCommand(options: InitOptions): Promise<InitResult> {
-  const participants = await loadManifest(options.projectRoot);
-  const project = manifestProject(participants);
-  const paths = await projectPaths(options.projectRoot);
-  const store = new CredentialStore(options.projectRoot);
-  const credentials: Array<{ agentId: string; token: string }> = [];
-  credentials.push({ agentId: "operator", token: await store.issue(project, "operator") });
-  for (const participant of participants) {
-    credentials.push({
-      agentId: participant.agentId,
-      token: await store.issue(project, participant.agentId),
-    });
-  }
-  return {
-    project,
-    credentialPath: paths.credentials,
-    databasePath: paths.database,
-    credentials,
-  };
 }
 
 export async function serveCommand(options: ServeOptions): Promise<ServeHandle> {

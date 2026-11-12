@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Clock } from "../../src/adapters/types.js";
 import { doctorCommand } from "../../src/cli/commands.js";
 import { createDoctorReport, formatDoctorReport, type DoctorReport } from "../../src/cli/doctor.js";
-import { initCommand } from "../../src/cli/commands.js";
+import { CredentialStore } from "../../src/config/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
 import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
@@ -321,11 +321,7 @@ describe("DoctorReport", () => {
   });
 
   it("never prints credentials or message bodies", async () => {
-    const initialized = await initCommand({ projectRoot: fixture.root });
-    initialized.credentials.push({
-      agentId: "test-secret",
-      token: secretToken,
-    });
+    const issuedToken = await new CredentialStore(fixture.root).issue(PROJECT, "operator");
     const capabilities = {
       activeDelivery: false,
       stateReporting: true,
@@ -359,6 +355,6 @@ describe("DoctorReport", () => {
     expect(output).toContain("active-delivery-unsupported");
     expect(output).not.toContain(secretToken);
     expect(output).not.toContain(secretMessageBody);
-    expect(output).not.toContain(initialized.credentials[0]?.token ?? "missing-token");
+    expect(output).not.toContain(issuedToken);
   });
 });

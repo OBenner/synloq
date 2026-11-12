@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadAdapterConfiguration } from "../../src/config/adapter.js";
-import { initCommand } from "../../src/cli/commands.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 
 const manifest = `project: verdicta
@@ -27,10 +27,10 @@ beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "synloq-adapter-config-home-"));
   vi.stubEnv("SYNLOQ_HOME", home);
   await writeFile(join(root, "synloq.yaml"), manifest);
-  const initialized = await initCommand({ projectRoot: root });
-  const cto = initialized.credentials.find((credential) => credential.agentId === "cto");
-  if (!cto) throw new Error("missing test credential");
-  token = cto.token;
+  const tokens = await issueTestCredentials(root);
+  const ctoToken = tokens.get("cto");
+  if (!ctoToken) throw new Error("missing test credential");
+  token = ctoToken;
   credentialPath = join(home, "cto.token");
   configPath = join(home, "claude-adapter.json");
   await writeFile(credentialPath, `${token}\n`, { mode: 0o600 });

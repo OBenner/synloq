@@ -6,7 +6,6 @@ import { ReferenceAdapter } from "../../src/adapters/reference.js";
 import type { Clock } from "../../src/adapters/types.js";
 import {
   inboxCommand,
-  initCommand,
   listCommand,
   pauseCommand,
   replaceSessionCommand,
@@ -16,6 +15,7 @@ import {
 } from "../../src/cli/commands.js";
 import { runMain } from "../../src/cli/main.js";
 import { CredentialStore } from "../../src/config/credentials.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
 import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
@@ -76,16 +76,10 @@ beforeEach(async () => {
   const home = await temporaryDirectory("synloq-cli-home-");
   await writeFile(join(root, "synloq.yaml"), manifest, "utf8");
   vi.stubEnv("SYNLOQ_HOME", home);
-  const initialized = await initCommand({ projectRoot: root });
-  const operatorToken = initialized.credentials.find(
-    (credential) => credential.agentId === "operator",
-  )?.token;
-  const ctoToken = initialized.credentials.find(
-    (credential) => credential.agentId === "cto",
-  )?.token;
-  const archToken = initialized.credentials.find(
-    (credential) => credential.agentId === "arch",
-  )?.token;
+  const tokens = await issueTestCredentials(root);
+  const operatorToken = tokens.get("operator");
+  const ctoToken = tokens.get("cto");
+  const archToken = tokens.get("arch");
   if (!operatorToken || !ctoToken || !archToken)
     throw new Error("test credentials were not issued");
 
@@ -125,43 +119,6 @@ afterEach(async () => {
   for (const directory of temporaryDirectories.splice(0)) {
     await rm(directory, { recursive: true, force: true });
   }
-});
-
-describe("initCommand", () => {
-  it("issues operator and per-agent credentials only outside the repository", async () => {
-    const paths = await projectPaths(fixture.root);
-    const stored = JSON.parse(await readFile(paths.credentials, "utf8")) as {
-      entries: Array<{ agentId: string }>;
-    };
-
-    expect(stored.entries.map((entry) => entry.agentId).sort()).toEqual([
-      "arch",
-      "cto",
-      "operator",
-    ]);
-    expect(paths.credentials.startsWith(fixture.home)).toBe(true);
-    expect(paths.database.startsWith(fixture.home)).toBe(true);
-    await expect(readFile(join(fixture.root, "synloq.yaml"), "utf8")).resolves.toBe(manifest);
-    await expect(readFile(join(fixture.root, "credentials.json"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    await expect(readFile(join(fixture.root, "synloq.sqlite"), "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-  });
-
-  it("rejects an invalid manifest before issuing credentials", async () => {
-    const root = await temporaryDirectory("synloq-cli-invalid-");
-    const home = await temporaryDirectory("synloq-cli-invalid-home-");
-    vi.stubEnv("SYNLOQ_HOME", home);
-    await writeFile(join(root, "synloq.yaml"), "project: verdicta\nagents: {}\nextra: true\n");
-
-    await expect(initCommand({ projectRoot: root })).rejects.toMatchObject({
-      code: "INVALID_INPUT",
-    });
-    const paths = await projectPaths(root);
-    await expect(readFile(paths.credentials, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-  });
 });
 
 describe("relay command handlers", () => {

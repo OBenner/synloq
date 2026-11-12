@@ -14,7 +14,8 @@ import {
   startStandaloneAdapter,
   type StandaloneAdapterHandle,
 } from "../../src/cli/adapter.js";
-import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import { runMain, type CliIo } from "../../src/cli/main.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
@@ -54,10 +55,7 @@ async function fixture() {
   const home = await temporaryDirectory("synloq-standalone-home-");
   vi.stubEnv("SYNLOQ_HOME", home);
   await writeFile(join(root, "synloq.yaml"), manifest);
-  const initialized = await initCommand({ projectRoot: root });
-  const tokens = new Map(
-    initialized.credentials.map((credential) => [credential.agentId, credential.token]),
-  );
+  const tokens = await issueTestCredentials(root);
   const ctoToken = tokens.get("cto");
   const archToken = tokens.get("arch");
   if (!ctoToken || !archToken) throw new Error("missing test credentials");

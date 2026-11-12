@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpAdapterRunner } from "../../src/adapters/http-runner.js";
 import { ReferenceAdapter } from "../../src/adapters/reference.js";
 import type { DeliveryAdapter, DeliveryReceipt } from "../../src/adapters/types.js";
-import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import { PROTOCOL_VERSION, type AdapterCapabilities } from "../../src/domain/session.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
 
@@ -60,10 +61,7 @@ async function fixture(): Promise<Fixture> {
   const home = await mkdtemp(join(tmpdir(), "synloq-review-generation-home-"));
   vi.stubEnv("SYNLOQ_HOME", home);
   await writeFile(join(root, "synloq.yaml"), manifest);
-  const initialized = await initCommand({ projectRoot: root });
-  const tokens = new Map(
-    initialized.credentials.map((credential) => [credential.agentId, credential.token]),
-  );
+  const tokens = await issueTestCredentials(root);
   const ctoToken = tokens.get("cto");
   const archToken = tokens.get("arch");
   const operatorToken = tokens.get("operator");

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
 import { CredentialStore } from "../../src/config/credentials.js";
 import { writeManifest } from "../../src/config/manifest.js";
 import type { Participant } from "../../src/domain/message.js";

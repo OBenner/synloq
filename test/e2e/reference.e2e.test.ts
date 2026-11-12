@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { HttpAdapterRunner } from "../../src/adapters/http-runner.js";
 import { frameMessage, ReferenceAdapter } from "../../src/adapters/reference.js";
-import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import type { Message } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION, type SessionBinding } from "../../src/domain/session.js";
 import { registerSynloqTools } from "../../src/mcp/tools.js";
@@ -79,13 +80,9 @@ describe("reference end-to-end acceptance", () => {
     let connections: McpConnection[] = [];
     try {
       await writeFile(join(root, "synloq.yaml"), manifest);
-      const initialized = await initCommand({ projectRoot: root });
-      const ctoToken = initialized.credentials.find(
-        (credential) => credential.agentId === "cto",
-      )?.token;
-      const archToken = initialized.credentials.find(
-        (credential) => credential.agentId === "arch",
-      )?.token;
+      const tokens = await issueTestCredentials(root);
+      const ctoToken = tokens.get("cto");
+      const archToken = tokens.get("arch");
       if (!ctoToken || !archToken) throw new Error("missing reference credentials");
 
       relay = await serveCommand({ projectRoot: root });

@@ -13,7 +13,8 @@ import {
   runStandaloneClaudeHook,
   type StandaloneAdapterHandle,
 } from "../../src/cli/adapter.js";
-import { initCommand, serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
+import { issueTestCredentials } from "../helpers/credentials.js";
 import type { Message } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
@@ -74,10 +75,7 @@ async function fixture(): Promise<Fixture> {
   const home = await mkdtemp(join(tmpdir(), "synloq-review-claude-home-"));
   vi.stubEnv("SYNLOQ_HOME", home);
   await writeFile(join(root, "synloq.yaml"), manifest);
-  const initialized = await initCommand({ projectRoot: root });
-  const tokens = new Map(
-    initialized.credentials.map((credential) => [credential.agentId, credential.token]),
-  );
+  const tokens = await issueTestCredentials(root);
   const ctoToken = tokens.get("cto");
   const archToken = tokens.get("arch");
   if (!ctoToken || !archToken) throw new Error("missing review Claude credentials");
