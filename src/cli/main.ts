@@ -24,6 +24,8 @@ import {
   pauseCommand,
   replaceSessionCommand,
   resumeCommand,
+  revokeTokenCommand,
+  rotateTokenCommand,
   sendCommand,
   serveCommand,
 } from "./commands.js";
@@ -60,6 +62,8 @@ const commandNames = [
   "pause",
   "resume",
   "replace-session",
+  "rotate-token",
+  "revoke-token",
   "doctor",
 ] as const;
 
@@ -91,6 +95,10 @@ const helpText: Record<CommandName, string> = {
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
   doctor: "Usage: synloq doctor --project-root <path>\n",
+  "rotate-token":
+    "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file>\n",
+  "revoke-token":
+    "Usage: synloq revoke-token --project-root <path> --agent-id <id> --credential <operator-token-file>\n",
 };
 
 function invalid(message: string): never {
@@ -205,6 +213,26 @@ async function execute(
     io.stdout.write(
       `${formatDoctorReport(await doctorCommand({ projectRoot: requiredString(values, "project-root") }))}\n`,
     );
+    return;
+  }
+
+  if (command === "rotate-token" || command === "revoke-token") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      "agent-id": { type: "string" },
+      credential: { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    const options = {
+      projectRoot: requiredString(values, "project-root"),
+      agentId: requiredString(values, "agent-id"),
+      operatorCredentialPath: requiredString(values, "credential"),
+    };
+    const operation = command === "rotate-token" ? rotateTokenCommand : revokeTokenCommand;
+    writeJson(io, await operation(options));
     return;
   }
 

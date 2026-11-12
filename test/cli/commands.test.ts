@@ -309,6 +309,125 @@ describe("relay command handlers", () => {
   });
 });
 
+describe("token lifecycle CLI", () => {
+  function capture(): {
+    io: { stdout: { write(c: string): boolean }; stderr: { write(c: string): boolean } };
+    out(): { stdout: string; stderr: string };
+  } {
+    let stdout = "";
+    let stderr = "";
+    return {
+      io: {
+        stdout: {
+          write: (chunk) => {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write: (chunk) => {
+            stderr += String(chunk);
+            return true;
+          },
+        },
+      },
+      out: () => ({ stdout, stderr }),
+    };
+  }
+
+  async function operatorCredentialFile(): Promise<string> {
+    const path = join(fixture.home, "operator.token");
+    await writeFile(path, `${fixture.operatorToken}\n`, { mode: 0o600 });
+    return path;
+  }
+
+  it("rotates a role token without printing it, invalidating the old one", async () => {
+    const credential = await operatorCredentialFile();
+    const io = capture();
+
+    const exitCode = await runMain(
+      [
+        "rotate-token",
+        "--project-root",
+        fixture.root,
+        "--agent-id",
+        "cto",
+        "--credential",
+        credential,
+      ],
+      io.io,
+    );
+
+    const { stdout, stderr } = io.out();
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout) as { agentId: string; tokenPath: string };
+    expect(result.agentId).toBe("cto");
+    expect(stdout).not.toContain(fixture.ctoToken);
+    const store = new CredentialStore(fixture.root);
+    await expect(store.authenticate(PROJECT, fixture.ctoToken)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    const rotated = (await readFile(result.tokenPath, "utf8")).trim();
+    expect(rotated).not.toBe(fixture.ctoToken);
+    await expect(store.authenticate(PROJECT, rotated)).resolves.toMatchObject({
+      agentId: "cto",
+    });
+  });
+
+  it("rejects rotation with a non-operator credential before any change", async () => {
+    const credential = join(fixture.home, "cto.token");
+    await writeFile(credential, `${fixture.ctoToken}\n`, { mode: 0o600 });
+    const io = capture();
+
+    const exitCode = await runMain(
+      [
+        "rotate-token",
+        "--project-root",
+        fixture.root,
+        "--agent-id",
+        "arch",
+        "--credential",
+        credential,
+      ],
+      io.io,
+    );
+
+    const { stdout, stderr } = io.out();
+    expect(exitCode).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("operator");
+    expect(stderr).not.toContain(fixture.ctoToken);
+    await expect(
+      new CredentialStore(fixture.root).authenticate(PROJECT, fixture.archToken),
+    ).resolves.toMatchObject({ agentId: "arch" });
+  });
+
+  it("revokes a role token idempotently", async () => {
+    const credential = await operatorCredentialFile();
+    const args = [
+      "revoke-token",
+      "--project-root",
+      fixture.root,
+      "--agent-id",
+      "arch",
+      "--credential",
+      credential,
+    ];
+
+    const first = capture();
+    expect(await runMain(args, first.io)).toBe(0);
+    expect(JSON.parse(first.out().stdout)).toMatchObject({ agentId: "arch", removedHashes: 1 });
+    await expect(
+      new CredentialStore(fixture.root).authenticate(PROJECT, fixture.archToken),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    const second = capture();
+    expect(await runMain(args, second.io)).toBe(0);
+    expect(JSON.parse(second.out().stdout)).toMatchObject({ agentId: "arch", removedHashes: 0 });
+  });
+});
+
 describe("serveCommand", () => {
   it("restores persisted state, reaps expired submissions, and closes cleanly", async () => {
     const paths = await projectPaths(fixture.root);

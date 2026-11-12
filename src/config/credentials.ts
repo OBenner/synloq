@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SynloqError } from "../domain/errors.js";
 import { agentId as agentIdSchema } from "../domain/message.js";
@@ -49,6 +49,59 @@ export class CredentialStore {
     credentials.entries.push({ agentId, tokenHash: tokenDigest(token).toString("hex") });
     await writeJsonAtomic(paths.credentials, credentials);
     return token;
+  }
+
+  /**
+   * Replaces every stored hash of the agent with a fresh token: previously
+   * issued tokens stop authenticating immediately. The new token is written
+   * to the agent's token file; the caller never receives it in plain output.
+   */
+  async rotate(
+    project: string,
+    agentId: string,
+  ): Promise<{ token: string; tokenPath: string; replacedHashes: number }> {
+    agentIdSchema.parse(agentId);
+    const paths = await projectPaths(this.projectRoot, this.synloqHome);
+    const credentials = await this.read(paths.credentials, project);
+    if (credentials.project !== project) {
+      throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
+    }
+    const replacedHashes = credentials.entries.filter((entry) => entry.agentId === agentId).length;
+    if (replacedHashes === 0) {
+      throw new SynloqError("INVALID_INPUT", "no existing credential to rotate for this agent");
+    }
+    const token = randomBytes(32).toString("base64url");
+    credentials.entries = [
+      ...credentials.entries.filter((entry) => entry.agentId !== agentId),
+      { agentId, tokenHash: tokenDigest(token).toString("hex") },
+    ];
+    await writeJsonAtomic(paths.credentials, credentials);
+    const tokenPath = join(paths.tokens, `${agentId}.token`);
+    await writeTextAtomic(tokenPath, `${token}\n`);
+    return { token, tokenPath, replacedHashes };
+  }
+
+  /**
+   * Removes every stored hash of the agent without issuing a new token.
+   * Idempotent: revoking an agent with no stored credentials succeeds with
+   * zero removed hashes.
+   */
+  async revoke(
+    project: string,
+    agentId: string,
+  ): Promise<{ removedHashes: number; tokenPath: string }> {
+    agentIdSchema.parse(agentId);
+    const paths = await projectPaths(this.projectRoot, this.synloqHome);
+    const credentials = await this.read(paths.credentials, project);
+    if (credentials.project !== project) {
+      throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
+    }
+    const removedHashes = credentials.entries.filter((entry) => entry.agentId === agentId).length;
+    credentials.entries = credentials.entries.filter((entry) => entry.agentId !== agentId);
+    await writeJsonAtomic(paths.credentials, credentials);
+    const tokenPath = join(paths.tokens, `${agentId}.token`);
+    await rm(tokenPath, { force: true });
+    return { removedHashes, tokenPath };
   }
 
   async ensureCredential(project: string, agentId: string): Promise<EnsuredCredential> {

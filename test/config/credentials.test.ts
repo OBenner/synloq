@@ -117,3 +117,91 @@ describe("CredentialStore", () => {
     });
   });
 });
+
+describe("CredentialStore rotation and revocation", () => {
+  it("rotates by replacing every stored hash and rewriting the token file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-rotate-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-rotate-home-"));
+    vi.stubEnv("SYNLOQ_HOME", home);
+    const store = new CredentialStore(root);
+    const firstToken = await store.issue("verdicta", "cto");
+    const secondToken = await store.issue("verdicta", "cto");
+    const archToken = await store.issue("verdicta", "arch");
+
+    const rotated = await store.rotate("verdicta", "cto");
+
+    expect(rotated.replacedHashes).toBe(2);
+    await expect(readFile(rotated.tokenPath, "utf8")).resolves.toBe(`${rotated.token}\n`);
+    for (const stale of [firstToken, secondToken]) {
+      await expect(store.authenticate("verdicta", stale)).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+    }
+    await expect(store.authenticate("verdicta", rotated.token)).resolves.toEqual({
+      project: "verdicta",
+      agentId: "cto",
+      operator: false,
+    });
+    await expect(store.authenticate("verdicta", archToken)).resolves.toMatchObject({
+      agentId: "arch",
+    });
+
+    const paths = await projectPaths(root);
+    const persisted = JSON.parse(await readFile(paths.credentials, "utf8")) as {
+      entries: Array<{ agentId: string }>;
+    };
+    expect(persisted.entries.map((entry) => entry.agentId).sort()).toEqual(["arch", "cto"]);
+  });
+
+  it("rotates the operator credential and preserves the operator flag", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-rotate-operator-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-rotate-operator-home-"));
+    vi.stubEnv("SYNLOQ_HOME", home);
+    const store = new CredentialStore(root);
+    const original = await store.issue("verdicta", "operator");
+
+    const rotated = await store.rotate("verdicta", "operator");
+
+    await expect(store.authenticate("verdicta", original)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await expect(store.authenticate("verdicta", rotated.token)).resolves.toEqual({
+      project: "verdicta",
+      agentId: "operator",
+      operator: true,
+    });
+  });
+
+  it("rejects rotation for an agent without an existing credential", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-rotate-missing-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-rotate-missing-home-"));
+    vi.stubEnv("SYNLOQ_HOME", home);
+    const store = new CredentialStore(root);
+    await store.issue("verdicta", "cto");
+
+    await expect(store.rotate("verdicta", "arch")).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+  });
+
+  it("revokes all hashes, removes the token file, and stays idempotent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-revoke-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-revoke-home-"));
+    vi.stubEnv("SYNLOQ_HOME", home);
+    const store = new CredentialStore(root);
+    const ctoToken = await store.issue("verdicta", "cto");
+    const rotated = await store.rotate("verdicta", "cto");
+
+    const first = await store.revoke("verdicta", "cto");
+    expect(first.removedHashes).toBe(1);
+    await expect(readFile(first.tokenPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    for (const stale of [ctoToken, rotated.token]) {
+      await expect(store.authenticate("verdicta", stale)).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const second = await store.revoke("verdicta", "cto");
+    expect(second.removedHashes).toBe(0);
+  });
+});

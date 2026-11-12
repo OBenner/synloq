@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
@@ -139,6 +140,60 @@ export function replaceSessionCommand(
   input: ReplaceSessionRequest,
 ): ReturnType<RelayHttpClient["replaceSession"]> {
   return client.replaceSession(input);
+}
+
+export interface TokenLifecycleOptions {
+  projectRoot: string;
+  agentId: string;
+  operatorCredentialPath: string;
+  synloqHome?: string;
+}
+
+async function requireLocalOperator(
+  options: TokenLifecycleOptions,
+): Promise<{ project: string; store: CredentialStore }> {
+  const participants = await loadManifest(options.projectRoot);
+  const project = manifestProject(participants);
+  const store = new CredentialStore(options.projectRoot, options.synloqHome);
+  const operatorToken = (await readFile(options.operatorCredentialPath, "utf8")).trim();
+  if (!operatorToken) {
+    throw new SynloqError("INVALID_INPUT", "operator credential file is empty");
+  }
+  const identity = await store.authenticate(project, operatorToken);
+  if (!identity.operator) {
+    throw new SynloqError("UNAUTHORIZED", "operator credential required");
+  }
+  return { project, store };
+}
+
+export async function rotateTokenCommand(options: TokenLifecycleOptions): Promise<{
+  agentId: string;
+  tokenPath: string;
+  replacedHashes: number;
+}> {
+  const { project, store } = await requireLocalOperator(options);
+  const rotated = await store.rotate(project, options.agentId);
+  // The new token exists only in the token file; command output must not
+  // contain it.
+  return {
+    agentId: options.agentId,
+    tokenPath: rotated.tokenPath,
+    replacedHashes: rotated.replacedHashes,
+  };
+}
+
+export async function revokeTokenCommand(options: TokenLifecycleOptions): Promise<{
+  agentId: string;
+  removedHashes: number;
+  tokenPath: string;
+}> {
+  const { project, store } = await requireLocalOperator(options);
+  const revoked = await store.revoke(project, options.agentId);
+  return {
+    agentId: options.agentId,
+    removedHashes: revoked.removedHashes,
+    tokenPath: revoked.tokenPath,
+  };
 }
 
 function storageError(error: unknown): string {

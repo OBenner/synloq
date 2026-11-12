@@ -417,6 +417,20 @@ node dist/cli/main.js resume \
 
 Scopes are `project`, `participant`, and `thread`; named scopes require `--scope-id`. Pause gates are durable and do not delete messages.
 
+Rotate or revoke a role credential with the operator token file. Rotation replaces every stored hash of the role and rewrites its token file, so previously issued tokens stop working immediately; revocation removes the hashes without issuing a new token. Running channels keep their old token in memory, so restart the role's channel after a rotation. Command output never contains the token itself. See `docs/security/token-rotation.md` for the incident runbook.
+
+```bash
+node dist/cli/main.js rotate-token \
+  --project-root /absolute/path/to/project \
+  --agent-id arch \
+  --credential /secure/operator.token
+
+node dist/cli/main.js revoke-token \
+  --project-root /absolute/path/to/project \
+  --agent-id arch \
+  --credential /secure/operator.token
+```
+
 Inspect local storage and registered sessions:
 
 ```bash
