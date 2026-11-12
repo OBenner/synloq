@@ -37,7 +37,9 @@ const configurationSchema = z
   });
 
 export interface KimiWorkMcpBridge {
-  runner: Pick<HttpAdapterRunner, "start" | "close">;
+  runner: Pick<HttpAdapterRunner, "start" | "close"> & {
+    onUnauthorized?: HttpAdapterRunner["onUnauthorized"];
+  };
   adapter: Pick<KimiWorkAdapter, "close">;
 }
 
@@ -169,6 +171,18 @@ function createKimiWorkLifecycle(
             return;
           }
           bridge = created;
+          created.runner.onUnauthorized = (unauthorized) => {
+            if (closed) return;
+            const raw = `${unauthorized.code}: ${unauthorized.message}`;
+            const detail = token === "" ? raw : raw.split(token).join("[redacted]");
+            diagnostics.write(
+              `Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}\n`,
+            );
+            void (async () => {
+              await stop();
+              start();
+            })();
+          };
           created.runner.start();
           return;
         } catch (error) {

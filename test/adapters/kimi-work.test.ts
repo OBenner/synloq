@@ -173,6 +173,21 @@ describe("KimiWorkAdapter state and registration", () => {
     expect(adapter.sessionBinding).toEqual({ sessionId: binding.conversationKey, generation: 3 });
   });
 
+  it("carries the registered generation in heartbeats", async () => {
+    const control = new FakeControl();
+    const relay = makeRelay();
+    const adapter = await runKimiWorkAdapter(config, relay, { control });
+    closers.push(() => adapter.close());
+
+    await vi.waitFor(() => expect(relay.heartbeat).toHaveBeenCalled(), {
+      timeout: 1_000,
+      interval: 1,
+    });
+    expect(relay.heartbeat).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: binding.conversationKey, generation: 3 }),
+    );
+  });
+
   it("opens exactly one initial host connection through the factory", async () => {
     const control = new FakeControl();
     const close = vi.fn(async () => undefined);

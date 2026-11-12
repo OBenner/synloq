@@ -274,6 +274,27 @@ describe("RelayHttpServer sessions and active delivery", () => {
     expect(fixture.sessions.list(PROJECT)[0]?.state).toBe("closed");
   });
 
+  it("rejects a heartbeat carrying a stale generation after re-registration", async () => {
+    const first = await fixture.arch.registerSession({
+      sessionId: "session-arch-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+    await fixture.arch.registerSession({
+      sessionId: "session-arch-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+
+    await expect(
+      fixture.arch.heartbeat({
+        sessionId: "session-arch-a",
+        state: "busy",
+        generation: first.session.generation,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
   it("pulls one FIFO delivery and records its receipt", async () => {
     const binding = await registerArch();
     const { message } = await fixture.cto.send({

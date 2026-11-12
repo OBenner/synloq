@@ -26,6 +26,8 @@ function abortableSleep(milliseconds: number, signal: AbortSignal): Promise<void
 }
 
 export class HttpAdapterRunner {
+  onUnauthorized: ((error: SynloqError) => void) | undefined;
+
   private readonly abortController = new AbortController();
   private task: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
@@ -155,8 +157,13 @@ export class HttpAdapterRunner {
           );
           await abortableSleep(delay, signal);
         }
-      } catch {
+      } catch (error) {
         if (signal.aborted) break;
+        if (error instanceof SynloqError && error.code === "UNAUTHORIZED") {
+          this.abortController.abort();
+          this.onUnauthorized?.(error);
+          break;
+        }
         failures += 1;
         const delay = Math.min(MAX_BACKOFF_MS, INITIAL_BACKOFF_MS * 2 ** Math.max(0, failures - 1));
         await abortableSleep(delay, signal);

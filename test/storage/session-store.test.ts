@@ -268,6 +268,27 @@ describe("SessionStore", () => {
     expect(store.list("verdicta")[0]?.state).toBe("idle");
   });
 
+  it("rejects a heartbeat carrying a stale generation without changing state", () => {
+    const { store } = makeStore();
+    const registered = store.register(ctoSession("session-a"), false);
+    store.heartbeat("verdicta", "cto", "session-a", "idle", registered.generation);
+    store.register(ctoSession("session-a"), false);
+
+    expect(() =>
+      store.heartbeat("verdicta", "cto", "session-a", "busy", registered.generation),
+    ).toThrow(expect.objectContaining({ code: "UNAUTHORIZED" }));
+    // Re-registration reset the state; the stale heartbeat must not have changed it.
+    expect(store.list("verdicta")[0]?.state).toBe("unknown");
+  });
+
+  it("accepts a heartbeat without a generation for rolling-upgrade compatibility", () => {
+    const { store } = makeStore();
+    store.register(ctoSession("session-a"), false);
+
+    const heartbeat = store.heartbeat("verdicta", "cto", "session-a", "idle");
+    expect(heartbeat.state).toBe("idle");
+  });
+
   it("persists sessions in user_version 4 and restores them after reopening", () => {
     const directory = mkdtempSync(join(tmpdir(), "synloq-sessions-"));
     temporaryDirectories.push(directory);

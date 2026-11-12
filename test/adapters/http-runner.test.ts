@@ -145,4 +145,32 @@ describe("HTTP adapter runner", () => {
       clientIdempotency: true,
     });
   });
+
+  it("stops polling and reports once when the relay rejects the binding as stale", async () => {
+    const relay = {
+      nextDelivery: vi
+        .fn()
+        .mockRejectedValue(
+          new SynloqError("UNAUTHORIZED", "delivery session registration is stale"),
+        ),
+      authorizeDelivery: vi.fn(),
+      receipt: vi.fn(),
+      deliveryFailure: vi.fn(),
+    } as unknown as RelayHttpClient;
+    const runner = new HttpAdapterRunner(relay, adapterWith(vi.fn()), binding, 100, 5_000);
+    closers.push(() => runner.close());
+    const onUnauthorized = vi.fn();
+    runner.onUnauthorized = onUnauthorized;
+
+    runner.start();
+    await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1), {
+      timeout: 1_000,
+      interval: 1,
+    });
+    expect(onUnauthorized.mock.calls[0]?.[0]).toMatchObject({ code: "UNAUTHORIZED" });
+
+    const callsAfterStop = vi.mocked(relay.nextDelivery).mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(vi.mocked(relay.nextDelivery).mock.calls.length).toBe(callsAfterStop);
+  });
 });

@@ -54,6 +54,7 @@ export interface DeliveryFailureRequest extends SessionBinding {
 export interface HeartbeatRequest {
   sessionId: string;
   state: SessionState;
+  generation?: number;
 }
 
 export interface CloseSessionRequest {

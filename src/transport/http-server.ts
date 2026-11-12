@@ -68,6 +68,7 @@ const heartbeatSchema = z
   .object({
     sessionId: sessionFields.sessionId,
     state: z.enum(["idle", "busy", "closed", "unknown"]),
+    generation: z.coerce.number().int().positive().optional(),
   })
   .strict();
 const closeSchema = z.object({ sessionId: sessionFields.sessionId }).strict();
@@ -282,6 +283,7 @@ export class RelayHttpServer {
         identity.agentId,
         input.sessionId,
         input.state,
+        input.generation,
       );
       this.changed(project, identity.agentId);
       this.sendJson(response, 200, { session });

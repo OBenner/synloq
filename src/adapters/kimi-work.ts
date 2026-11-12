@@ -107,6 +107,7 @@ export class KimiWorkAdapter implements DeliveryAdapter {
   private heartbeatTask: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private reportQueue: Promise<void> = Promise.resolve();
+  private generation: number | undefined;
   private started = false;
   private disconnected = false;
   private closed = false;
@@ -134,6 +135,10 @@ export class KimiWorkAdapter implements DeliveryAdapter {
     this.started = true;
     this.abortController = new AbortController();
     this.heartbeatTask = this.heartbeatLoop(this.abortController.signal);
+  }
+
+  setGeneration(generation: number): void {
+    this.generation = generation;
   }
 
   async state(sessionId: string): Promise<SessionState> {
@@ -321,7 +326,11 @@ export class KimiWorkAdapter implements DeliveryAdapter {
   private report(state: SessionState): Promise<void> {
     if (!this.started || this.closed) return Promise.resolve();
     const request = this.reportQueue.then(async () => {
-      await this.relay.heartbeat({ sessionId: this.config.conversationKey, state });
+      await this.relay.heartbeat({
+        sessionId: this.config.conversationKey,
+        state,
+        ...(this.generation === undefined ? {} : { generation: this.generation }),
+      });
     });
     this.reportQueue = request.catch(() => undefined);
     return request;
@@ -428,6 +437,7 @@ export async function runKimiWorkAdapter(
     ) {
       throw new SynloqError("UNAUTHORIZED", "relay registration does not match the Kimi Work role");
     }
+    adapter.setGeneration(session.generation);
     adapter.start();
     return Object.assign(adapter, {
       sessionBinding: { sessionId: session.sessionId, generation: session.generation },

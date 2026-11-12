@@ -229,12 +229,16 @@ export class SessionStore {
     agentId: string,
     sessionId: string,
     state: SessionState,
+    generation?: number,
   ): AdapterSession {
     return this.write(() => {
       const existing = this.find(project, agentId);
       if (!existing) throw new SynloqError("NOT_FOUND", "session not registered");
       if (existing.session_id !== sessionId) {
         throw new SynloqError("UNAUTHORIZED", "session ID does not match the visible binding");
+      }
+      if (generation !== undefined && existing.generation !== generation) {
+        throw new SynloqError("UNAUTHORIZED", "session generation is stale");
       }
 
       const now = this.clock.now();
@@ -258,8 +262,9 @@ export class SessionStore {
     agentId: string,
     sessionId: string,
     state: SessionState,
+    generation?: number,
   ): AdapterSession {
-    return this.observe(project, agentId, sessionId, state);
+    return this.observe(project, agentId, sessionId, state, generation);
   }
 
   close(): void;
