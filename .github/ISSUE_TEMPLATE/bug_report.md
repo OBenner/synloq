@@ -25,6 +25,10 @@ labels: bug
 - Host (Kimi Work / Claude Code / OpenCode / Codex) and version:
 - OS:
 
+**Diagnostics**
+
+- Output of `synloq doctor --project-root <path>` (redact tokens and message bodies):
+
 **Evidence hygiene**
 
 Do not paste tokens, credential files, message bodies, or full `conversationKey` values.

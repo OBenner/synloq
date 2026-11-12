@@ -9,6 +9,8 @@
 - [ ] If the change touches the protocol (envelope, types, reason codes, constants):
       the corresponding spec in `docs/protocol/` is updated and the PR is marked
       `protocol-change` for double review
+- [ ] If the change touches credentials, authentication, or the trust boundary:
+      the affected documents in `docs/security/` are updated
 
 ## What and why
 
