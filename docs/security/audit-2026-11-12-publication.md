@@ -2,50 +2,50 @@
 
 - Status: accepted
 - Author: Security
-- Scope: S1/S2 из production-plan M1 — скан всей git-истории на секреты + ручной просмотр evidence-документов перед открытием репозитория.
-- Метод: gitleaks на машине отсутствует; выполнен эквивалентный скан полного дампа `git log -p --all` (36 610 строк, 46 коммитов, обе ветки) набором регулярных выражений + ручной просмотр совпадений. CI-gate на gitleaks (G3/S4) остаётся обязательным — этот отчёт разовый.
+- Scope: S1/S2 from production-plan M1 — a scan of the entire git history for secrets + a manual review of evidence documents before opening the repository.
+- Method: gitleaks is not installed on the machine; an equivalent scan of the full `git log -p --all` dump (36,610 lines, 46 commits, both branches) was performed with a set of regular expressions + manual review of matches. The gitleaks CI gate (G3/S4) remains mandatory — this report is a one-off.
 
-## S1. Скан истории
+## S1. History scan
 
-| Паттерн                                             | Совпадения | Вердикт                                                                                                            |
-| --------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| base64url 43–44 символа (форма токена Synloq)       | 21         | Все ложные: имена md-файлов и integrity-хэши `pnpm-lock.yaml`. Токенов нет.                                        |
-| PEM private key                                     | 0          | Чисто.                                                                                                             |
-| Bearer-заголовок со значением                       | 1          | Тестовая константа `Bearer test-only-token` в тесте. Чисто.                                                        |
-| password/secret/api_key присваивания                | 3          | Тестовые фикстуры (`stdio-secret-token`, `nested-secret`). Чисто.                                                  |
-| token-присваивания длиной ≥ 20                      | 4          | Тестовые фикстуры (`never-print-this-token`, `secret-operator-token-do-not-print`, `must-not-be-accepted`). Чисто. |
-| 64-символьный hex (sha256 token hash)               | 0          | Чисто.                                                                                                             |
-| Домашние пути (`C:\Users\…`, `/home/…`, `/Users/…`) | 0          | Чисто.                                                                                                             |
+| Pattern                                          | Matches | Verdict                                                                                                        |
+| ------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------- |
+| base64url 43–44 chars (Synloq token shape)       | 21      | All false positives: md file names and `pnpm-lock.yaml` integrity hashes. No tokens.                           |
+| PEM private key                                  | 0       | Clean.                                                                                                         |
+| Bearer header with a value                       | 1       | Test constant `Bearer test-only-token` in a test. Clean.                                                       |
+| password/secret/api_key assignments              | 3       | Test fixtures (`stdio-secret-token`, `nested-secret`). Clean.                                                  |
+| token assignments of length ≥ 20                 | 4       | Test fixtures (`never-print-this-token`, `secret-operator-token-do-not-print`, `must-not-be-accepted`). Clean. |
+| 64-char hex (sha256 token hash)                  | 0       | Clean.                                                                                                         |
+| Home paths (`C:\Users\…`, `/home/…`, `/Users/…`) | 0       | Clean.                                                                                                         |
 
-Дополнительно: в метаданных коммитов присутствует авторский email оператора — не секрет, но оператору решить, приемлемо ли это для публичной истории (см. production-plan §5).
+Additionally: the operator's author email is present in the commit metadata — not a secret, but it is for the operator to decide whether this is acceptable for a public history (see production-plan §5).
 
-**Итог S1: история чистая, переписывание не требуется.** Реальных токенов, ключей, credentials-файлов, SQLite и домашних путей в истории нет.
+**S1 summary: the history is clean, no rewriting required.** There are no real tokens, keys, credential files, SQLite databases, or home paths in the history.
 
-## S2. Evidence-документы (conversationKey / sessionId / UUID / тела сообщений)
+## S2. Evidence documents (conversationKey / sessionId / UUID / message bodies)
 
-Проверены все файлы `docs/superpowers/specs/*`, `test/e2e/*`, `docs/superpowers/plans/*`, `docs/client-compatibility.md`.
+All files in `docs/superpowers/specs/*`, `test/e2e/*`, `docs/superpowers/plans/*`, and `docs/client-compatibility.md` were reviewed.
 
-| Файл                                                       | Найдено                   | Вердикт                                                                          |
-| ---------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------- |
-| specs/2026-11-09-synloq-design.md                          | ничего                    | чисто                                                                            |
-| specs/2026-11-11-codex-adapter-design.md                   | ничего                    | чисто                                                                            |
-| specs/2026-11-11-deepseek-web-host-adapter-design.md       | ничего                    | чисто                                                                            |
-| specs/2026-11-11-kimi-work-visible-team-design.md          | 1 UUID (пример)           | чисто — иллюстративный идентификатор                                             |
-| specs/2026-11-11-kimi-work-live-acceptance.md              | 8 UUID, 2 conversationKey | sanitized: только идентификаторы локального клиента, тел сообщений и токенов нет |
-| specs/2026-11-11-synloq-generic-init-acceptance.md         | 5 UUID, 2 conversationKey | sanitized                                                                        |
-| specs/2026-11-11-synloq-relay-lifecycle-acceptance.md      | 4 UUID                    | sanitized                                                                        |
-| test/e2e/real-clients.md                                   | ничего                    | чисто                                                                            |
-| test/e2e/reference.e2e.test.ts                             | ничего                    | чисто                                                                            |
-| test/e2e/relay-lifecycle.test.ts                           | ничего                    | чисто                                                                            |
-| docs/client-compatibility.md                               | ничего                    | чисто                                                                            |
-| plans/2026-11-12-synloq-p1-1-relay-security-enforcement.md | ничего                    | чисто                                                                            |
+| File                                                       | Found                       | Verdict                                                               |
+| ---------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------- |
+| specs/2026-11-09-synloq-design.md                          | nothing                     | clean                                                                 |
+| specs/2026-11-11-codex-adapter-design.md                   | nothing                     | clean                                                                 |
+| specs/2026-11-11-deepseek-web-host-adapter-design.md       | nothing                     | clean                                                                 |
+| specs/2026-11-11-kimi-work-visible-team-design.md          | 1 UUID (example)            | clean — illustrative identifier                                       |
+| specs/2026-11-11-kimi-work-live-acceptance.md              | 8 UUIDs, 2 conversationKeys | sanitized: only local client identifiers, no message bodies or tokens |
+| specs/2026-11-11-synloq-generic-init-acceptance.md         | 5 UUIDs, 2 conversationKeys | sanitized                                                             |
+| specs/2026-11-11-synloq-relay-lifecycle-acceptance.md      | 4 UUIDs                     | sanitized                                                             |
+| test/e2e/real-clients.md                                   | nothing                     | clean                                                                 |
+| test/e2e/reference.e2e.test.ts                             | nothing                     | clean                                                                 |
+| test/e2e/relay-lifecycle.test.ts                           | nothing                     | clean                                                                 |
+| docs/client-compatibility.md                               | nothing                     | clean                                                                 |
+| plans/2026-11-12-synloq-p1-1-relay-security-enforcement.md | nothing                     | clean                                                                 |
 
-**Оценка UUID/conversationKey:** это локальные идентификаторы клиентского инстанса оператора (ID чатов и сообщений), не секреты: без доступа к машине оператора они ничего не открывают. Публикация безопасна. Замечание по гигиене: они связывают публичный репозиторий с конкретным инстансом Kimi Work — уровень privacy, не security; оператору на заметку.
+**Assessment of UUIDs/conversationKeys:** these are local identifiers of the operator's client instance (chat and message IDs), not secrets: without access to the operator's machine they reveal nothing. Publication is safe. A hygiene note: they tie the public repository to a specific Kimi Work instance — a privacy-level concern, not security; for the operator's awareness.
 
-**Итог S2:** тела сообщений, токены и секреты в evidence отсутствуют; все файлы пригодны к публикации. Если оператор примет правило §4 плана (исключить `docs/superpowers/` из публичного контура), эти файлы всё равно требуют только опциональной чистки UUID, не обязательной.
+**S2 summary:** no message bodies, tokens, or secrets in the evidence; all files are fit for publication. If the operator adopts rule §4 of the plan (excluding `docs/superpowers/` from the public contour), these files still require only optional UUID cleanup, not mandatory.
 
-## Остаточные действия (не закрываются этим отчётом)
+## Residual actions (not closed by this report)
 
-1. CI job gitleaks на PR + GitHub secret scanning/push protection — gates G3/S4, владелец dev.
-2. Расширение `.gitignore` (`.synloq/` целиком, `*.token`, `.env*`, `*.log`) — gate G6, владелец dev.
-3. Правило в CONTRIBUTING/PR-шаблоне: evidence индексирует только ID участников и сообщений, без тел и токенов.
+1. A gitleaks CI job on PRs + GitHub secret scanning/push protection — gates G3/S4, owner: dev.
+2. Extending `.gitignore` (all of `.synloq/`, `*.token`, `.env*`, `*.log`) — gate G6, owner: dev.
+3. A rule in CONTRIBUTING/PR template: evidence indexes only participant and message IDs, without bodies or tokens.
