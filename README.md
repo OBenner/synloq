@@ -6,14 +6,19 @@ Synloq is not an orchestrator. It does not hide work in replacement chats, run o
 
 ## Support status
 
-- The reference adapter is covered by automated contract and end-to-end tests.
-- Claude Code active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
-- OpenCode active delivery is **UNVERIFIED** until the manual evidence matrix is executed.
-- Codex MCP inbox and lifecycle state reporting are implemented with controlled doubles; live compatibility is **UNVERIFIED**. Active delivery is unsupported and disabled.
-- Kimi Work visible delivery to an exact bound client conversation is **VERIFIED for the local CTO ↔ Architect stand on 2026-11-11**: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral passed. See `docs/superpowers/specs/2026-11-11-kimi-work-live-acceptance.md`.
-- Generic arbitrary-role initialization and automatic relay startup/recovery are **VERIFIED for an isolated local Product ↔ Reviewer Kimi Work stand on 2026-11-11**: exact visible chat creation, idempotent reconciliation, automatic startup, two visible reply cycles, and role-initiated acknowledgements passed. Live host respawn recovered the same role; surviving-peer election is covered by a real loopback/SQLite integration test, not claimed as live-host evidence. See `docs/superpowers/specs/2026-11-11-synloq-generic-init-acceptance.md` and `docs/superpowers/specs/2026-11-11-synloq-relay-lifecycle-acceptance.md`. Host-enforced per-chat MCP isolation, other hosts, and Kimi Code CLI active delivery remain **UNVERIFIED**.
+**Supported (verified live):**
 
-Controlled transports and fake SDK clients are contract evidence, not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
+- **Kimi Work** visible delivery to an exact bound client conversation: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral — verified on the local CTO ↔ Architect stand, 2026-11-11.
+- **Kimi Work** generic arbitrary-role initialization and automatic relay startup/recovery: exact visible chat creation, idempotent reconciliation, two visible reply cycles, role-initiated acknowledgements, live host respawn recovery — verified on an isolated local Product ↔ Reviewer stand, 2026-11-11. Surviving-peer election is covered by a real loopback/SQLite integration test, not claimed as live-host evidence.
+
+**Experimental (not verified live)** — see [docs/adapters/](docs/adapters/README.md):
+
+- Claude Code active delivery — **UNVERIFIED** until the manual evidence matrix is executed.
+- OpenCode active delivery — **UNVERIFIED** until the manual evidence matrix is executed.
+- Codex MCP inbox and lifecycle state reporting (active delivery unsupported) — **UNVERIFIED**.
+- The reference adapter is covered by automated contract and end-to-end tests; controlled transports and fake SDK clients are contract evidence, not live-client evidence.
+
+Known-unverified regardless of host: host-enforced per-chat MCP isolation, Kimi Code CLI active delivery. Controlled tests are not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
 
 ## Requirements and installation
 
@@ -37,7 +42,7 @@ The archive contains the compiled `dist` runtime, README, and package metadata. 
 
 The examples below use `node dist/cli/main.js` so they also work without modifying global PATH. After installing or linking the local package, the equivalent binary command is `synloq`.
 
-## 1. Install the plugin and initialize arbitrary roles
+## 1. Install the plugin and initialize roles
 
 For Kimi Work, register `plugins/synloq` through the supported personal-plugin source flow and install it in the client. Ask the agent to **Initialize Synloq for this project**. The skill confirms the project name and each role's stable ID, display name, responsibilities, boundaries, and optional instructions before running `synloq init`.
 
@@ -97,145 +102,6 @@ node dist/cli/main.js serve \
 
 The command prints a `relayUrl` and runs until SIGINT or SIGTERM. Port `0` selects a free port for automated tests. Run exactly one writer for a project database; do not start this command alongside the generated automatic topology unless they intentionally share the single compatible relay.
 
-## 3. Connect ordinary MCP tools to an existing chat
-
-Generic initialization writes these files automatically. For other clients or a manual legacy setup, create a strict JSON file outside Git, for example `/secure/reviewer-mcp.json`:
-
-```json
-{
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/reviewer.token"
-}
-```
-
-This legacy shape requires a compatible relay to be running already. Automatic startup is enabled only for generated configuration with an explicit `synloqHome` and exact `kimiWork` binding. The stdio command is:
-
-```bash
-node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json
-```
-
-Configure this command as an MCP stdio server in the existing visible chat. Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
-
-### The six agent-facing tools
-
-| Tool           | Purpose                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| `synloq_list`  | List project participants and role descriptions.                     |
-| `synloq_send`  | Send one direct message with an idempotency key.                     |
-| `synloq_reply` | Reply to an incoming message in its original thread.                 |
-| `synloq_inbox` | Read the authenticated role's incoming history.                      |
-| `synloq_wait`  | Bounded long poll for the next incoming message; timeout is normal.  |
-| `synloq_ack`   | Acknowledge a delivered message addressed to the authenticated role. |
-
-There are no agent-facing registration, credential, pause, resume, replacement, doctor, permission, or capability-management tools.
-
-## 4. Configure standalone active-delivery adapters
-
-Active delivery is optional. MCP inbox retrieval works without it. Adapter JSON is strict: unknown fields, inline tokens, non-loopback URLs, unsupported protocol versions, and mismatched role credentials fail startup. `projectRoot`, `agentId`, `sessionId`, and the credential must describe the same visible role binding. Adapter protocol version is exactly `1`.
-
-### Claude Code channel child
-
-The visible Claude chat must launch the stdio channel as its child. The same channel connection exposes the six ordinary tools and Claude channel notifications:
-
-```bash
-node /absolute/path/to/synloq/dist/cli/main.js adapter \
-  --config /secure/claude-cto.json
-```
-
-Default-disabled `/secure/claude-cto.json`:
-
-```json
-{
-  "version": 1,
-  "kind": "claude",
-  "project": "verdicta",
-  "projectRoot": "/absolute/path/to/project",
-  "agentId": "cto",
-  "sessionId": "the-visible-claude-session-id",
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/cto.token",
-  "protocolVersion": 1
-}
-```
-
-With neither activation field present, active delivery is disabled. Do not infer activation from a client name or version.
-
-For controlled acceptance only, add one exact message UUID and restart the same visible channel:
-
-```json
-"acceptanceMessageId": "69d2065f-46a4-4b2f-9482-f9a64f349e26"
-```
-
-This permits one notification for that UUID, once, only when the same session, protocol, idle state, and both channel capabilities are valid. It is consumed after a successful notification write and is not production verification. Ordinary messages still require verified activation. Send the probe while delivery is disabled first so its relay-generated UUID is known. `acceptanceMessageId` and `activationVerifiedAt` are mutually exclusive.
-
-Only after the manual matrix supplies observed evidence, remove `acceptanceMessageId` and instead set:
-
-```json
-"activationVerifiedAt": "2026-11-10T12:00:00.000Z"
-```
-
-This is an operator assertion for the same visible session and protocol, not a bypass flag. Keep the existing Claude approval policy; Synloq never auto-approves permissions.
-
-Configure these visible-session hook events to invoke the public hook command with the same Claude config: `SessionStart`, `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd`, and `PreToolUse` (or another unknown event for fail-closed unknown state).
-
-```bash
-node /absolute/path/to/synloq/dist/cli/main.js claude-hook \
-  --config /secure/claude-cto.json
-```
-
-Hook stdout is empty: no injected context or permission decision is emitted. Channel notification success is only `submitted`; a matching `UserPromptSubmit` hook with exact Synloq provenance supplies `delivered` evidence.
-
-### OpenCode sidecar process
-
-The visible OpenCode chat uses the ordinary `synloq mcp` stdio command for the six tools. Run active delivery as a separate, operator-configured process:
-
-```bash
-node /absolute/path/to/synloq/dist/cli/main.js adapter \
-  --config /secure/opencode-arch.json
-```
-
-Example `/secure/opencode-arch.json`:
-
-```json
-{
-  "version": 1,
-  "kind": "opencode",
-  "project": "verdicta",
-  "projectRoot": "/absolute/path/to/project",
-  "agentId": "arch",
-  "sessionId": "the-visible-opencode-session-id",
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/arch.token",
-  "protocolVersion": 1,
-  "baseUrl": "http://127.0.0.1:4096",
-  "heartbeatIntervalMs": 1000
-}
-```
-
-`baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: false`. It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
-
-### Process topology
-
-```text
-visible Claude chat
-  └─ child stdio: synloq adapter --config claude-cto.json
-       ├─ six MCP tools + Claude channel
-       └─ HTTP to relay with cto credential
-visible Claude hooks ── synloq claude-hook --config claude-cto.json
-
-visible OpenCode chat
-  └─ child stdio: synloq mcp --config arch-mcp.json (six tools)
-separate OpenCode adapter: synloq adapter --config opencode-arch.json
-       ├─ queue/events/status at the existing OpenCode server
-       └─ HTTP to relay with arch credential
-
-generated Kimi Work role MCP
-  ├─ six tools + embedded visible-delivery runner
-  └─ supervised relay ownership or authenticated reuse
-
-standalone synloq serve (advanced) ── one loopback HTTP relay and one project SQLite writer
-```
-
 ### Kimi Work embedded visible delivery
 
 Generic initialization writes a strict `kimiWork` binding and explicit `synloqHome` for each role. The same MCP child process then supervises the relay and owns the active-delivery runner; no separate adapter process is required:
@@ -258,134 +124,56 @@ Generic initialization writes a strict `kimiWork` binding and explicit `synloqHo
 
 The bridge revalidates exact metadata and fresh idle state before one `conversations.send`. `delivered` means visible user-turn admission only, not model completion, reading, acknowledgement, or task completion. The receiving agent must call `synloq_ack` after actual reading and use `synloq_reply` for the original thread. Ambiguous sends receive bounded read-only history reconciliation; they are never blindly replayed. Risky actions still require operator approval.
 
-If host initialization fails, all six MCP inbox tools remain available while relay startup succeeds. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work; it closes only a relay listener owned by that process, allowing surviving roles to recover. The earlier local acceptance stand verified real two-way visible turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral on 2026-11-11. The generic Product ↔ Reviewer stand separately verified arbitrary-role initialization, automatic startup, visible acknowledgement/reply cycles, and recovery after Kimi Work respawned the stopped role MCP. Surviving-peer election is covered by a real loopback/SQLite integration test; it was not observed as a live-host ownership transfer. Host-enforced per-chat MCP isolation remains unverified. Controlled tests are not live-client evidence.
+If host initialization fails, all six MCP inbox tools remain available while relay startup succeeds. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work; it closes only a relay listener owned by that process, allowing surviving roles to recover.
 
-## Codex MCP inbox and lifecycle state
+## 3. The six agent-facing tools
 
-Codex currently supports the authenticated MCP inbox and lifecycle state reporting only. Live compatibility is **UNVERIFIED**, and active delivery is unsupported and always disabled. Generic `synloq adapter --config` rejects Codex instead of starting an active runner.
+| Tool           | Purpose                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| `synloq_list`  | List project participants and role descriptions.                     |
+| `synloq_send`  | Send one direct message with an idempotency key.                     |
+| `synloq_reply` | Reply to an incoming message in its original thread.                 |
+| `synloq_inbox` | Read the authenticated role's incoming history.                      |
+| `synloq_wait`  | Bounded long poll for the next incoming message; timeout is normal.  |
+| `synloq_ack`   | Acknowledge a delivered message addressed to the authenticated role. |
 
-Use one Codex configuration scope, normally one `CODEX_HOME`, for one Synloq role. Do not place role tokens in `config.toml`, and do not configure several role credentials in one shared Codex/Desktop scope. Shared Desktop multi-role binding is unverified.
+There are no agent-facing registration, credential, pause, resume, replacement, doctor, permission, or capability-management tools.
 
-Create `/secure/codex-mcp.json` separately from the adapter/hook configuration:
+The application-level message protocol between roles and the relay (message types, envelope, idempotency, hop limit, failure handling) is specified in [docs/protocol/v1.md](docs/protocol/v1.md) (status: Accepted).
+
+### Manual MCP configuration (advanced)
+
+Generic initialization writes these files automatically. For a manual legacy setup, create a strict JSON file outside Git, for example `/secure/reviewer-mcp.json`:
 
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "./cto.token"
+  "credentialPath": "/secure/reviewer.token"
 }
 ```
 
-Register the existing stdio bridge, substituting absolute paths:
+This legacy shape requires a compatible relay to be running already. Automatic startup is enabled only for generated configuration with an explicit `synloqHome` and exact `kimiWork` binding. The stdio command is:
 
 ```bash
-codex mcp add synloq-cto -- node /absolute/path/to/synloq/dist/mcp/stdio.js /secure/codex-mcp.json
+node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json
 ```
 
-Create `/secure/codex-cto.json` with the exact visible Codex session ID and the same role credential:
+Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
 
-```json
-{
-  "version": 1,
-  "kind": "codex",
-  "project": "verdicta",
-  "projectRoot": "/absolute/path/to/project",
-  "agentId": "cto",
-  "sessionId": "the-visible-codex-session-id",
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/cto.token",
-  "protocolVersion": 1
-}
-```
+## 4. Other hosts (experimental)
 
-Configure these events in the same scope's `hooks.json`. Project-local hooks require a trusted project. Review and trust the exact definitions through Codex `/hooks`; changed hooks must be reviewed again. Do not bypass the trust flow.
+Active-delivery adapters for Claude Code and OpenCode, and the Codex MCP inbox bridge, are implemented but **not verified against live clients**. They are documented separately:
 
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreModelRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Interrupt": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 3
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node /absolute/path/to/synloq/dist/cli/main.js codex-hook --config /secure/codex-cto.json",
-            "timeout": 3
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+- [docs/adapters/README.md](docs/adapters/README.md) — adapter model, shared configuration rules, process topology
+- [docs/adapters/claude-code.md](docs/adapters/claude-code.md) — Claude Code channel child (UNVERIFIED)
+- [docs/adapters/opencode.md](docs/adapters/opencode.md) — OpenCode sidecar process (UNVERIFIED)
+- [docs/adapters/codex.md](docs/adapters/codex.md) — Codex MCP inbox and lifecycle state (UNVERIFIED)
 
-Every handler reads one hook JSON object, limited to 64 KiB, from stdin. Synloq writes no protocol output, `additionalContext`, continuation, permission decision, or message content to stdout. `SessionStart` registers `activeDelivery:false`, `stateReporting:true`, and `clientIdempotency:false`; subsequent events heartbeat state. A different `session_id` fails before relay mutation.
+Do not rely on these paths in production until the manual evidence matrix in `test/e2e/real-clients.md` has been executed for the host in question.
 
-The read-only compatibility probe uses the installed executable without creating a chat or submitting work:
+## 5. Operator controls and diagnostics
 
-```bash
-node scripts/probe-codex-app-server.ts --cwd /absolute/project/path
-node scripts/probe-codex-app-server.ts --cwd /absolute/project/path --thread-id REPLACE_WITH_VISIBLE_THREAD_ID
-```
-
-Without `--thread-id`, no resume occurs. With it, the probe permits only `thread/resume` and `thread/read` for that exact ID and records sanitized metadata. Neither command is active-delivery evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md` for limits and acceptance evidence.
-
-## 5. Binding, replacement, pause, and diagnostics
-
-Adapter startup performs initial same-role session registration through its operator-configured process. Registration is not an MCP tool. A role has one visible session binding. Re-registering the same session supports reconnect; binding a different session requires explicit operator replacement:
+A role has one visible session binding. Re-registering the same session supports reconnect; binding a different session requires explicit operator replacement:
 
 ```bash
 node dist/cli/main.js replace-session \
