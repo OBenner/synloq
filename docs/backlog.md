@@ -4,16 +4,17 @@ Open work after the 2026-11-12 acceptance. Sources: `docs/security/review-2026-1
 
 ## Security and hardening
 
-| #   | Item                                                                                  | Priority | Status                          |
-| --- | ------------------------------------------------------------------------------------- | -------- | ------------------------------- |
-| H1  | Unauthenticated `/v1/health` before sending the token                                 | P0       | DONE (56bfeae)                  |
-| H2  | Fail-closed loopback validation of `relayUrl` in the MCP config and `RelayHttpClient` | P0       | DONE (56bfeae)                  |
-| R1  | Mutual relay authentication (per-project challenge) — closing the R1 residual         | P1       | open                            |
-| M1  | `rotate-token` + runbook: reissuing does not isolate old tokens (append-only)         | P1       | DONE (b716489, runbook 3454840) |
-| M2  | Concurrent long-poll limit (per-identity, `RATE_LIMITED` rejection)                   | P1       | open                            |
-| M4  | Audit log: auth failures, operator actions, token issuance (append-only, doctor)      | P1       | open                            |
-| M3  | Message retention/GC in sync with the 7-day dedup TTL from spec v1                    | P2       | open                            |
-| —   | Reserving sender ids `relay`/`operator` in the protocol                               | P2       | open                            |
+| #   | Item                                                                                            | Priority | Status                          |
+| --- | ----------------------------------------------------------------------------------------------- | -------- | ------------------------------- |
+| H1  | Unauthenticated `/v1/health` before sending the token                                           | P0       | DONE (56bfeae)                  |
+| H2  | Fail-closed loopback validation of `relayUrl` in the MCP config and `RelayHttpClient`           | P0       | DONE (56bfeae)                  |
+| R1  | Mutual relay authentication (per-project challenge) — closing the R1 residual                   | P1       | open                            |
+| M1  | `rotate-token` + runbook: reissuing does not isolate old tokens (append-only)                   | P1       | DONE (b716489, runbook 3454840) |
+| M2  | Concurrent long-poll limit (per-identity, `RATE_LIMITED` rejection)                             | P1       | open                            |
+| M4  | Audit log: auth failures, operator actions, token issuance (append-only, doctor)                | P1       | open                            |
+| M3  | Message retention/GC in sync with the 7-day dedup TTL from spec v1                              | P2       | open                            |
+| —   | Reserving sender ids `relay`/`operator` in the protocol                                         | P2       | open                            |
+| —   | npm Trusted Publishing (OIDC from GitHub Actions) — granular publish tokens deprecated Jan 2027 | P3       | open                            |
 
 ## UX and upgradability
 
