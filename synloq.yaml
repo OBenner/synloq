@@ -7,3 +7,9 @@ agents:
   arch:
     title: Architect
     role: Architecture review, risks, and verification
+  security:
+    title: Security
+    role: Security review, threat modeling, risk assessment, and hardening
+  dev:
+    title: Developer
+    role: Implementation, testing, and day-to-day development
