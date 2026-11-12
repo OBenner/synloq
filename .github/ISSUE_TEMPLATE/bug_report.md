@@ -1,31 +1,31 @@
 ---
 name: Bug report
-about: Report a reproducible problem
-title: ""
+about: Something is broken in the relay, CLI, MCP tools, or a host adapter
 labels: bug
 ---
 
 **What happened**
 
+<!-- Observed behavior, including exact error codes (e.g. UNAUTHORIZED, UNKNOWN_RECIPIENT) -->
+
 **What you expected**
 
-**Steps to reproduce**
+<!-- Expected behavior -->
 
-1.
-2.
-3.
+**Reproduction**
+
+```bash
+# exact commands, e.g. node dist/cli/main.js doctor --project-root ...
+```
 
 **Environment**
 
-- Synloq version/commit:
-- Node.js version:
-- Host client (Kimi Work / Claude Code / OpenCode / Codex) and version:
+- Synloq version / commit:
+- Node.js version (`node --version`, must be >= 24):
+- Host (Kimi Work / Claude Code / OpenCode / Codex) and version:
 - OS:
 
-**Diagnostics**
+**Evidence hygiene**
 
-- Output of `synloq doctor --project-root <path>` (redact tokens and message bodies):
-
-**Logs or messages**
-
-Never paste tokens, credentials, or message bodies. Message IDs and role names are fine.
+Do not paste tokens, credential files, message bodies, or full `conversationKey` values.
+Reference messages by ID and participants by role id only.

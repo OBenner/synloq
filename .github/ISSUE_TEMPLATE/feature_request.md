@@ -1,18 +1,23 @@
 ---
 name: Feature request
-about: Suggest an improvement or new capability
-title: ""
+about: Propose a capability for Synloq
 labels: enhancement
 ---
 
-**Problem to solve**
+**Problem**
 
-**Proposed behavior**
+<!-- What coordination problem does this solve? -->
 
-**Alternatives considered**
+**Proposal**
 
-**Scope notes**
+<!-- What should change, at the level of user-visible behavior -->
 
-- Does this change the wire protocol (`docs/protocol`)? Yes / No
-- Does this touch credentials, tokens, or authentication? Yes / No
-- Does this add a new user-facing step or concept? Yes / No — if yes, why is the added step worth it?
+**Protocol impact**
+
+- [ ] This changes the message envelope, message types, reason codes, or protocol constants
+      (requires a protocol spec change in `docs/protocol/` — see CONTRIBUTING.md governance)
+- [ ] No protocol impact
+
+**Host scope**
+
+<!-- Which hosts does this affect: Kimi Work / Claude Code / OpenCode / Codex / relay core -->
