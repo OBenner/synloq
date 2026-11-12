@@ -1,13 +1,13 @@
 # Token Rotation Runbook
 
-- Status: draft (interface pending dev confirmation — thread `20674686`, M1)
+- Status: accepted (interface confirmed by dev, 2026-11-12, thread `20674686`)
 - Date: 2026-11-12
 - Author: Security
 
 This runbook covers role/operator credential lifecycle for a Synloq project:
-rotation, revocation, and diagnosing authentication failures. It is written against
-the `rotate-token` / `revoke-token` CLI contract agreed for M1; if the shipped
-interface differs, this document is updated in the same release.
+rotation, revocation, and diagnosing authentication failures. It follows the
+`synloq rotate-token` / `synloq revoke-token` CLI contract confirmed by the
+implementer; the audit-log steps assume the M4-min audit scope (see notes below).
 
 ## Concepts
 
@@ -21,7 +21,12 @@ interface differs, this document is updated in the same release.
   credential store.
 - Running MCP channel processes hold their token in memory. After rotation the
   affected role's channels must be restarted (close/reopen the chat's MCP server or
-  the client conversation); the relay itself does not need a restart.
+  the client conversation); the relay itself does not need a restart — it
+  authenticates against the credential store on every request, so a rotated token
+  works as soon as the channel reloads it. A `401` after rotation almost always
+  means the channel was not restarted.
+- Both commands are idempotent in their own sense: repeating `revoke-token` succeeds
+  with an "already absent" note; repeating `rotate-token` performs a new rotation.
 
 ## When to rotate
 
@@ -45,7 +50,9 @@ Behavior:
    are invalid from this moment).
 3. Atomically rewrites the role's token file.
 4. Prints the token **file path** only — never the token itself.
-5. Records the event in the audit log (credential rotation, actor, timestamp).
+5. Calls the audit hook (credential rotation, actor, timestamp). The persistent
+   `audit_log` table ships with the M4-min audit scope; until then the call is a
+   no-op behind the interface.
 
 Afterwards: restart the role's MCP channels. Generated Kimi Work channels re-read
 the token file on process start, so restarting the channel (or letting the host
@@ -69,15 +76,18 @@ channel is not ready yet.
 
 ## Diagnosing 401 / UNAUTHORIZED after init or rotation
 
-1. Confirm which token file the channel's MCP configuration points to
+1. If this follows a rotation: restart the role's MCP channels first — running
+   channels hold the old token in memory, and the relay already rejects it.
+2. Confirm which token file the channel's MCP configuration points to
    (`credentialPath` in the role's MCP JSON under
    `<synloqHome>/runtime/mcp/<agentId>.json`).
-2. Confirm the file content matches the credential store: rotate the role once —
+3. Confirm the file content matches the credential store: rotate the role once —
    this rewrites both sides consistently.
-3. If all roles fail at once, check that `--synloq-home` (or `SYNLOQ_HOME`) resolves
+4. If all roles fail at once, check that `--synloq-home` (or `SYNLOQ_HOME`) resolves
    to the same home the credentials were issued into; a moved project root also
    changes the project key and orphans the old state.
-4. Check the audit log for rotation/revocation events affecting the role.
+5. Check the audit log for rotation/revocation events affecting the role (available
+   once M4-min lands).
 
 ## If tokens reached the git history
 
@@ -86,7 +96,8 @@ channel is not ready yet.
 2. Purge the history (force-push is a publication-time decision of the operator —
    see the production plan), but treat rotation, not history rewriting, as the
    actual containment.
-3. Review the audit log and message traffic of the affected window for misuse.
+3. Review the audit log (once M4-min lands) and the message traffic of the
+   affected window for misuse.
 
 ## What rotation does not protect against
 
