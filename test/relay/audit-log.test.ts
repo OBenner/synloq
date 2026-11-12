@@ -35,8 +35,8 @@ describe("FileSecurityAuditLog", () => {
       .trim()
       .split("\n");
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0])).toEqual(event);
-    expect(JSON.parse(lines[1]).action).toBe("acknowledge");
+    expect(JSON.parse(lines[0]!)).toEqual(event);
+    expect(JSON.parse(lines[1]!).action).toBe("acknowledge");
   });
 });
 

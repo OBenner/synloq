@@ -19,7 +19,7 @@ export interface SecurityAuditLog {
 }
 
 export class NullSecurityAuditLog implements SecurityAuditLog {
-  record(): void {
+  record(_event: SecurityEvent): void {
     // intentional no-op: default when no audit sink is configured
   }
 }
