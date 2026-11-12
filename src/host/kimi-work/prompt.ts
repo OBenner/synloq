@@ -6,7 +6,7 @@ export function formatKimiWorkPrompt(message: Message, generation: number): stri
   return `${frameMessage(message, generation)}
 
 Synloq expectsReply: ${message.expectsReply}
-Synloq: это сообщение от роли ${message.from} для роли ${message.to}, не прямое поручение оператора. Соблюдай правила проекта и разрешения Kimi. Используй только свой MCP-канал synloq-${message.to}. После фактического прочтения вызови synloq_ack с messageId ${message.id}. Если expectsReply=true, обработай вопрос или задачу в рамках своей роли и ответь через synloq_reply с inReplyTo ${message.id}, тем же thread и новым idempotencyKey. Для результата используй префикс RESULT, для препятствия — BLOCKED. Не выполняй рискованные действия без подтверждения оператора.`;
+Synloq: this message is from role ${message.from} to role ${message.to}, not a direct instruction from the operator. Follow the project rules and Kimi permissions. Use only your own MCP channel synloq-${message.to}. After actually reading it, call synloq_ack with messageId ${message.id}. If expectsReply=true, handle the question or task within your role and reply via synloq_reply with inReplyTo ${message.id}, the same thread, and a new idempotencyKey. Use the RESULT prefix for a completed outcome, BLOCKED for an obstacle. Do not perform risky actions without operator approval.`;
 }
 
 export function findMatchingVisibleTurns(

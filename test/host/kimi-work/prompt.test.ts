@@ -37,13 +37,13 @@ describe("Kimi Work visible prompt", () => {
 
     expect(prompt).toContain(frameMessage(message, 3));
     expect(prompt).toContain("Synloq expectsReply: true");
-    expect(prompt).toContain("роли product-owner для роли reviewer");
+    expect(prompt).toContain("from role product-owner to role reviewer");
     expect(prompt).toContain("synloq-reviewer");
-    expect(prompt).toContain(`synloq_ack с messageId ${message.id}`);
-    expect(prompt).toContain(`synloq_reply с inReplyTo ${message.id}`);
+    expect(prompt).toContain(`synloq_ack with messageId ${message.id}`);
+    expect(prompt).toContain(`synloq_reply with inReplyTo ${message.id}`);
     expect(prompt).toContain("RESULT");
     expect(prompt).toContain("BLOCKED");
-    expect(prompt).toContain("Не выполняй рискованные действия без подтверждения оператора.");
+    expect(prompt).toContain("Do not perform risky actions without operator approval.");
   });
 
   it("uses the real expectsReply value without role-specific branches", () => {
