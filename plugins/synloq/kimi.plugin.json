@@ -5,7 +5,7 @@
   "description": "Local coordination between visible project role chats.",
   "keywords": ["multi-agent", "mcp", "local-first", "agent-communication"],
   "author": "Synloq contributors",
-  "license": "UNKNOWN",
+  "license": "Apache-2.0",
   "skillInstructions": "Initialize and coordinate arbitrary visible project role chats. Use only the MCP channel assigned to the current role. Acknowledge only after actual reading, reply in the original thread, and request operator approval for risky actions.",
   "interface": {
     "displayName": "Synloq",
