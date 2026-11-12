@@ -23,6 +23,7 @@ Every role messages any other role directly — the CTO is a coordinator, not a 
 - Address the role that owns the domain: implementation → Developer, architecture/protocol → Architect, threats/hygiene → Security, priorities/decomposition/acceptance → CTO.
 - Cross-domain decisions get a NOTICE copy to the CTO, not a request to relay.
 - Never ask the operator to relay a message between roles. The relay exists; use it.
+- Escalation NOTICE to the protocol-level `operator` (spec §2.3) is a protocol mechanism, not asking the human operator to relay; the human operator reads the digest (§6).
 
 ## 3. Decision rights
 
@@ -45,6 +46,9 @@ A TASK always carries: scope, definition of done (commit + green `pnpm verify` u
 
 - `synloq_ack` after actually reading; replies go to the original thread (`inReplyTo`, same thread, new idempotencyKey) with RESULT/BLOCKED/NOTICE/QUERY prefixes.
 - Pull fallback: if you expect a message and see no visible delivery for >15 minutes, pull `synloq_inbox` yourself. Do not ask others to check for you.
+- RESULT/BLOCKED always carry `expectsReply=false` (spec §2.1) — the only protection against acknowledgement loops.
+- Receiver-side dedup (spec §5, at-least-once delivery): the same (from, idempotencyKey) twice → do not act twice.
+- Roles never send as `relay`/`operator` (spec §2.2) — those sender ids are reserved.
 - Use only your own MCP channel; never call another role's channel.
 
 ## 6. Operator gets a digest, not a drip
