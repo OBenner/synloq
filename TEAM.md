@@ -44,7 +44,9 @@ The CTO batches operator-level questions and status into milestone summaries. On
 
 Allowed without asking (inside task scope): local commits, editing own-scope documents, writing tests, running verify, reading anything.
 
-Requires explicit operator approval: pushes to the public remote, deleting files outside task scope, changing generated role instructions, dependency upgrades, anything destructive or externally visible.
+Requires explicit operator approval: deleting files outside task scope, changing generated role instructions, dependency upgrades, anything destructive or externally visible beyond routine pushes.
+
+Pushes to the public remote are delegated to the CTO at milestone granularity (operator decision, 2026-11-12): the CTO pushes when a work stage completes and is verified. Releases, tags, and destructive history operations remain operator-gated.
 
 ## 7. Amendments
 
