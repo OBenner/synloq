@@ -1,11 +1,18 @@
 {
   "name": "synloq",
   "version": "0.0.1",
-  "private": true,
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OBenner/synloq.git"
+  },
   "files": [
-    "dist"
+    "dist",
+    "plugins"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "packageManager": "pnpm@12.18.0",
   "engines": {
@@ -19,6 +26,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "format:check": "prettier --check .",
+    "prepublishOnly": "pnpm verify",
     "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
