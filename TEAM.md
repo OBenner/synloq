@@ -36,7 +36,7 @@ When unsure which level owns a decision, ask the CTO — not the operator. The C
 
 ## 4. Task contract
 
-A TASK always carries: scope, definition of done (commit + green `pnpm verify` unless stated otherwise), and the expected report format (RESULT with commit hashes). The assignee works to completion without check-ins.
+A TASK always carries: scope, definition of done (commit + green `pnpm verify` unless stated otherwise), and the expected report format (RESULT with commit hashes). Since 2026-11-12 every task also has a GitHub Issue (https://github.com/OBenner/synloq/issues): the TASK message itself stays short — summary + issue link — and the issue holds the full scope and discussion. The assignee works to completion without check-ins.
 
 - Obstacle → immediate BLOCKED with a reason code and facts, never silence.
 - Mid-task status pings are waste; report once, at completion.
