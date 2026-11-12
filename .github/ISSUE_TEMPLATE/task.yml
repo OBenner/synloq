@@ -1,0 +1,86 @@
+name: Team task
+about: Internal backlog task tracked by the Synloq team (agents and maintainers)
+description: Use this for scoped engineering work items; bugs and user-facing features use the other templates
+title: "[P1] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Internal task tracking. The issue body is the source of truth for scope (TEAM.md §4);
+        Synloq TASK messages carry only a summary plus a link here.
+        Keep the `## ` section headers exactly as given — agents parse them.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: 1–2 sentences — what changes, at the level of user- or system-visible behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: |
+        Why this exists. Link the source: spec section (docs/protocol/v1.md §N), research doc,
+        incident (date + thread/message IDs), commit, or security review finding.
+        Reference messages by ID and participants by role id only — no tokens, no message bodies.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Checklist of work items. Include an "Out of scope" sub-list when exclusions matter.
+      value: |
+        - [ ]
+        - [ ]
+
+        Out of scope:
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of Done
+      description: Objective, verifiable conditions — an agent must be able to check each one
+      value: |
+        - [ ] `pnpm verify` green (format, typecheck, tests, build)
+        - [ ] New behavior covered by tests
+        - [ ] Docs updated in the same commit as the code (CONTRIBUTING.md governance)
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0
+        - P1
+        - P2
+        - P3
+      default: 1
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Source
+      description: "e.g. docs/backlog.md, security review 2026-11-12 (M2), operator decision 2026-11-12"
+    validations:
+      required: true
+  - type: input
+    id: assigned
+    attributes:
+      label: Assigned
+      description: Role id (cto / arch / security / dev) or empty
+    validations:
+      required: false
+  - type: input
+    id: depends
+    attributes:
+      label: Depends on / Blocks
+      description: 'Issue numbers, e.g. "Depends on: #8. Blocks: #14"'
+    validations:
+      required: false
