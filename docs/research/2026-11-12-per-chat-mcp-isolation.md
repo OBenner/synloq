@@ -1,129 +1,130 @@
 # P1 Research: Per-chat MCP isolation
 
-Дата: 2026-11-12. Автор: Architect. По TASK Developer `b1da52af-7e67-4878-9b70-f11154cf5620` (thread `9437ac41-5995-46b4-b290-68d6825d3a4a`).
-Статус: исследование, без реализации. Команда: 4 роли (cto, arch, security, dev), relay на :4100, протокол v1 принят (`docs/protocol/v1.md`).
+Date: 2026-11-12. Author: Architect. Per Developer TASK `b1da52af-7e67-4878-9b70-f11154cf5620` (thread `9437ac41-5995-46b4-b290-68d6825d3a4a`).
+Status: research only, no implementation. Team: 4 roles (cto, arch, security, dev), relay on :4100, protocol v1 accepted (`docs/protocol/v1.md`).
 
 ---
 
-## 1. Статус-кво (проверено по коду и живой сессии)
+## 1. Status quo (verified against code and a live session)
 
-**Каналы ролей.** На каждую роль генерируется отдельный MCP stdio-сервер `synloq-<role>`
-(`src/init/plugin-renderer.ts:95-107`): свой конфиг `~/.synloq/runtime/<hash>/mcp/<role>.json`
-(relayUrl + credentialPath + kimiWork binding) и свой токен `~/.synloq/credentials/<hash>/<role>`.
-Фактическая раскладка на машине оператора подтверждена: `mcp/{arch,cto,dev,security}.json`.
+**Role channels.** Each role gets a dedicated MCP stdio server `synloq-<role>`
+(`src/init/plugin-renderer.ts:95-107`): its own config `~/.synloq/runtime/<hash>/mcp/<role>.json`
+(relayUrl + credentialPath + kimiWork binding) and its own token `~/.synloq/credentials/<hash>/<role>`.
+The actual layout on the operator's machine was confirmed: `mcp/{arch,cto,dev,security}.json`.
 
-**Видимость каналов.** Все серверы ролей регистрируются в ОДНОМ плагине (`kimi.plugin.json`,
-`mcpServers`). Следствие, подтверждённое эмпирически: в чате Architect хост анонсирует
-инструменты всех четырёх каналов (`synloq-arch`, `synloq-cto`, `synloq-dev`, `synloq-security`).
-Изоляции на уровне хоста сегодня НЕТ — любой чат проекта технически видит чужие каналы.
+**Channel visibility.** All role servers are registered in ONE plugin (`kimi.plugin.json`,
+`mcpServers`). Empirically confirmed consequence: in the Architect chat the host announces
+the tools of all four channels (`synloq-arch`, `synloq-cto`, `synloq-dev`, `synloq-security`).
+There is NO host-level isolation today — any project chat can technically see other channels.
 
-**Где реально стоит барьер.** Адаптер Kimi Work fail-closed по привязке чата
+**Where the real barrier stands.** The Kimi Work adapter is fail-closed on chat binding
 (`src/adapters/kimi-work.ts`):
 
-- `state()` возвращает `unknown` для чужого sessionId (строка 140);
-- `submitDelivery()` бросает `UNAUTHORIZED` при несовпадении conversationKey (191–192);
-- `assertMetadata()` сверяет conversationKey/sessionKey/origin/workspacePath/kernelSessionId (273–280);
-- `assertAdmission()` сверяет conversationKey/kernelSessionId результата отправки (289–296).
+- `state()` returns `unknown` for a foreign sessionId (line 140);
+- `submitDelivery()` throws `UNAUTHORIZED` on conversationKey mismatch (191–192);
+- `assertMetadata()` checks conversationKey/sessionKey/origin/workspacePath/kernelSessionId (273–280);
+- `assertAdmission()` checks conversationKey/kernelSessionId of the send result (289–296).
 
-Плюс per-role токены (relay не выдаст чужой inbox по чужому токену) и инструкция роли
-«use only the Synloq MCP channel assigned to this role» (`plugin-renderer.ts:35`).
+Plus per-role tokens (the relay will not serve another role's inbox to a foreign token) and the role
+instruction "use only the Synloq MCP channel assigned to this role" (`plugin-renderer.ts:35`).
 
-**Вывод по статус-кво:** изоляция — application-layer (binding + токен + промпт), а не host-layer.
-Это рабочая защита от случайного перепутывания и от модели-«нарушителя» (чужой канал просто не
-примет вызов), но не от компрометации самого токена роли.
+**Status-quo conclusion:** isolation is application-layer (binding + token + prompt), not host-layer.
+This is a working defense against accidental cross-ups and against a "misbehaving" model (a foreign
+channel simply rejects the call), but not against compromise of the role token itself.
 
-## 2. Варианты изоляции
+## 2. Isolation options
 
-### A. Application-layer, статус-кво (усиленный)
+### A. Application-layer, status quo (hardened)
 
-Один плагин, все каналы видны всем чатам; авторизация на адаптере и relay.
+One plugin, all channels visible in every chat; authorization at the adapter and relay.
 
-- ✅ Уже реализовано, ноль изменений в хосте; покрыто тестами (446 PASS).
-- Риск: видимость чужих инструментов провоцирует ошибки модели (вызов не своего канала) —
-  гасится fail-closed, но засоряет контекст и логи.
-- Риск: токен роли лежит в `~/.synloq/credentials/<hash>/` и читается любым процессом
-  пользователя — компрометация токена = компрометация роли. Ограничение любой локальной схемы.
+- ✅ Already implemented, zero host changes; covered by tests (446 PASS).
+- Risk: visibility of foreign tools provokes model mistakes (calling the wrong channel) —
+  absorbed by fail-closed, but pollutes context and logs.
+- Risk: the role token sits in `~/.synloq/credentials/<hash>/` and is readable by any process
+  of the user — token compromise = role compromise. A limitation of any local scheme.
 
-### B. Отдельный plugin instance на роль
+### B. Separate plugin instance per role
 
-Генерировать N плагинов (`synloq-arch`, `synloq-cto`, …) вместо одного, в каждом — один
-`mcpServers`-сервер своей роли.
+Generate N plugins (`synloq-arch`, `synloq-cto`, …) instead of one, each carrying only its
+own role's `mcpServers` server.
 
-- ✅ Технически реализуемо поверх текущего `renderKimiWorkPlugin` (параметризовать по роли).
-- ❌ Блокер: в текущем Kimi Work включение плагинов — на уровне агента/клиента, а не
-  conversation. Если хост не умеет «в этом чате активен только плагин X», вариант не даёт
-  изоляции, только умножает сущности (N плагинов × обновления).
-- Вердикт: отложить до появления per-conversation plugin resolution в хосте. Требует
-  подтверждения возможности у разработчиков Kimi Work.
+- ✅ Technically feasible on top of the current `renderKimiWorkPlugin` (parameterize per role).
+- ❌ Blocker: in current Kimi Work, plugin enablement is at the agent/client level, not per
+  conversation. If the host cannot express "only plugin X is active in this chat", the option
+  provides no isolation — it only multiplies entities (N plugins × updates).
+- Verdict: postpone until per-conversation plugin resolution exists in the host. Requires
+  capability confirmation from the Kimi Work developers.
 
-### C. Per-conversation MCP-конфиги (scoping по conversationKey)
+### C. Per-conversation MCP configs (scoping by conversationKey)
 
-Хост резолвит `mcpServers` отдельно для каждого чата: чату роли arch подключается только
-`synloq-arch`. Это «правильная» host-layer изоляция.
+The host resolves `mcpServers` separately per chat: the arch role's chat gets only
+`synloq-arch` attached. This is the "proper" host-layer isolation.
 
-- ❌ В наблюдаемой версии Kimi Work не поддерживается: манифест плагина статичен, список
-  серверов общий. Эмпирическое подтверждение — смешанная видимость каналов (§1).
-- Требование к хосту: шаблон конфигурации с переменной conversation/role, либо API
-  «enable plugin for conversation». Зафиксировать как feature request upstream.
-- Перспективно в других хостах: Claude Code поддерживает per-project `.mcp.json` и
-  `--mcp-config` на сессию — там вариант C реализуем уже сейчас (отдельный конфиг на
-  запуск роли). Для адаптеров P2 это аргумент проектировать конфиг роли как
-  самодостаточный артефакт, который хост может подключить точечно.
+- ❌ Not supported in the observed Kimi Work version: the plugin manifest is static, the server
+  list is shared. Empirical confirmation: mixed channel visibility (§1).
+- Host requirement: a configuration template with a conversation/role variable, or an
+  "enable plugin for conversation" API. To be filed as an upstream feature request.
+- Promising in other hosts: Claude Code supports per-project `.mcp.json` and per-session
+  `--mcp-config` — option C is feasible there today (a separate config per role launch). For P2
+  adapters this is an argument to design the role config as a self-contained artifact that a
+  host can attach selectively.
 
-### D. Relay-side enforcement (усиление внутри нашего кода)
+### D. Relay-side enforcement (hardening inside our own code)
 
-Независимо от хоста: relay связывает (role token ↔ bound conversationKey) и отклоняет
-доставку/ack, если сессия вызова не совпадает с привязкой роли.
+Independent of the host: the relay binds (role token ↔ bound conversationKey) and rejects
+delivery/ack when the calling session does not match the role's binding.
 
-- ✅ Частично уже есть (assertMetadata/assertAdmission). Усиление: единый deny-лог,
-  метрики попыток cross-channel вызовов, тест «чужой канал = BLOCKED/UNAUTHORIZED».
-- ✅ Не зависит от хоста, переносимо на будущие адаптеры.
-- ❌ Не убирает шум видимости чужих инструментов.
+- ✅ Partially present already (assertMetadata/assertAdmission). Hardening: a single deny log,
+  metrics for cross-channel call attempts, a test "foreign channel = BLOCKED/UNAUTHORIZED".
+- ✅ Host-independent, portable to future adapters.
+- ❌ Does not remove the visibility noise of foreign tools.
 
-## 3. Рекомендация (позиция Architect)
+## 3. Recommendation (Architect position)
 
-1. **v1: A + D.** Принять, что в Kimi Work host-layer изоляции сейчас нет; закрыть риски
-   на своей стороне: fail-closed уже стоит, добавить deny-логирование и conformance-тесты
-   на cross-channel вызовы. Это дёшево и не блокируется на хосте.
-2. **Feature request в Kimi Work:** per-conversation scoping плагинов/MCP-серверов
-   (вариант C). До его появления вариант B не заводить — он умножает артефакты без выигрыша.
-3. **Для адаптеров P2** (Claude Code и др.) проектировать запуск роли как отдельный процесс
-   с отдельным `.mcp.json` — там вариант C достижим сразу, и архитектура Synloq это уже
-   допускает (конфиг роли самодостаточен: relayUrl + token + binding).
+1. **v1: A + D.** Accept that Kimi Work currently has no host-layer isolation; close the risks
+   on our side: fail-closed is already in place, add deny logging and conformance tests for
+   cross-channel calls. This is cheap and not blocked on the host.
+2. **Feature request to Kimi Work:** per-conversation scoping of plugins/MCP servers
+   (option C). Until it arrives, do not build option B — it multiplies artifacts without gain.
+3. **For P2 adapters** (Claude Code etc.), design role launch as a separate process with its
+   own `.mcp.json` — option C is achievable there immediately, and the Synloq architecture
+   already allows it (the role config is self-contained: relayUrl + token + binding).
 
-## 4. Позиция для общего ревью: простота и поддерживаемость
+## 4. Position for the joint review: simplicity and maintainability
 
-**Простота для массового пользователя (install → init → роли).**
+**Simplicity for the mass user (install → init → roles).**
 
-- Сейчас: init-wizard создаёт команду, рендерит плагин, прописывает runtime-конфиги — один
-  проход, state в `~/.synloq` изолирован по projectKey (sha256 пути). Это хорошая база.
-- Главный риск простоты — ручная сборка чатов ролей в клиенте. Держать правило: всё, что
-  можно сгенерировать (манифест, инструкции ролей, конфиги), генерируется; пользователь
-  делает только необратимые/доверенные шаги (установка плагина, подтверждение ролей).
-- Не размножать сущности без необходимости: вариант B удвоил бы плагины ради изоляции,
-  которую хост всё равно не даёт — антипример для массового UX.
+- Today: the init wizard creates the team, renders the plugin, writes runtime configs — one
+  pass, state in `~/.synloq` isolated per projectKey (path sha256). A good foundation.
+- The main simplicity risk is manual assembly of role chats in the client. Keep the rule:
+  everything that can be generated (manifest, role instructions, configs) IS generated; the
+  user performs only irreversible/trusted steps (plugin installation, role confirmation).
+- Do not multiply entities unnecessarily: option B would double the plugins for isolation the
+  host does not provide anyway — an anti-example for mass UX.
 
-**Лёгкость поддержки при обновлениях.**
+**Ease of maintenance across updates.**
 
-- State/credentials: уже есть версионированный маркер владения `.synloq-owner.json`
-  (`version: 1`, `plugin-renderer.ts:20-22`) — использовать тот же приём для миграций:
-  поле `version` в `state/<key>.json` и `credentials/<key>.json`, миграции forward-only,
-  fail-loud при неизвестной версии (та же семантика, что `unsupported_version` в протоколе).
-- Совместимость плагин ↔ протокол: в протоколе v1 уже заложено обязательное `version`
-  и отказ вместо silent drop — регенерация плагина при обновлении обязана сохранять
-  projectKey (иначе digest манифеста изменится и хост увидит «новый» плагин);
-  путь `plugin-renderer.ts:117-121` это учитывает.
-- Правило для будущих изменений: любое поле, от которого зависит on-disk формат,
-  снабжается миграцией и тестом «старый state → новый бинарь».
+- State/credentials: the versioned ownership marker `.synloq-owner.json` already exists
+  (`version: 1`, `plugin-renderer.ts:20-22`) — use the same approach for migrations:
+  a `version` field in `state/<key>.json` and `credentials/<key>.json`, forward-only
+  migrations, fail-loud on an unknown version (same semantics as `unsupported_version` in
+  the protocol).
+- Plugin ↔ protocol compatibility: protocol v1 already carries a mandatory `version` and
+  rejection instead of a silent drop — plugin regeneration on update MUST preserve the
+  projectKey (otherwise the manifest digest changes and the host sees a "new" plugin);
+  `plugin-renderer.ts:117-121` already accounts for this.
+- Rule for future changes: any field the on-disk format depends on ships with a migration
+  and an "old state → new binary" test.
 
-## 5. Открытые вопросы
+## 5. Open questions
 
-- Подтвердить у разработчиков Kimi Work: планируется ли per-conversation plugin/MCP scoping?
-  (блокер для вариантов B и C на этом хосте)
-- Нужна ли ротация per-role токенов (сейчас токен бессрочный, живёт в файле)?
-- Резервирование sender-id `relay`/`operator` — согласовано фиксировать при реализации P1/P2
-  (реестр участников в конфиге).
+- Confirm with the Kimi Work developers: is per-conversation plugin/MCP scoping planned?
+  (blocker for options B and C on this host)
+- Is per-role token rotation needed (today the token is perpetual and file-resident)?
+- Reserving the sender ids `relay`/`operator` — agreed to be fixed during P1/P2
+  implementation (participant registry in config).
 
 ---
 
-_Исследование без изменения кода. Файл не закоммичен — коммит по указанию CTO/оператора._
+_Research without code changes. Committed as `cef7c7c`; translated to English for the public contour._
