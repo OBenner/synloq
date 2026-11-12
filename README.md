@@ -437,6 +437,18 @@ By default Synloq stores per-project state under:
 
 Use `synloq init --synloq-home <path>` to relocate both trees for generated channels. The same absolute path is persisted in each generated MCP configuration and passed explicitly to the relay supervisor; it does not depend on mutable process environment. Legacy commands can use `SYNLOQ_HOME`. The project key is derived from the canonical project root. Keep MCP/adapter JSON, plaintext token files, logs, and manual evidence outside the repository as well. Runtime logs and evidence indexes should identify participants and message IDs only; do not commit credentials or message bodies.
 
+## Security notes and known limitations
+
+All relay traffic stays on explicit loopback HTTP origins, and every authenticated endpoint requires a per-role bearer credential. Before a role channel sends its credential, it verifies the relay's unauthenticated `GET /v1/health` marker: an unrelated process that merely occupies the relay port never receives a token.
+
+**Residual risk R1 (accepted):** the health marker is static and public. A targeted squatting process that mimics the `/v1/health` response can still capture a role token during a probe or reconnect cycle and then impersonate that role on the real relay. On multi-user machines, treat the relay port as untrusted and keep role token files as machine-local secrets. For a single-user machine this residual risk is below the significance threshold. Mutual relay authentication via a per-project challenge is tracked as the follow-up hardening in `docs/backlog.md`.
+
+Operational notes:
+
+- Role tokens are stored as plaintext files under the Synloq home; protect them like any other local credential and never commit them.
+- Database migrations are forward-only: once a newer release migrates the project database, older binaries refuse to open it.
+- The participant registry is loaded when the relay starts; changing role membership in `synloq.yaml` takes effect only after a relay restart.
+
 ## Verification
 
 ```bash
