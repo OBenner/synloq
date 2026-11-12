@@ -29,6 +29,7 @@
 | P1.1 per-chat isolation: relay-side связка role-token ↔ bound conversationKey, deny-лог, conformance                       | P1        | open   |
 | P1.2 feature request upstream в Kimi Work: per-conversation plugin/MCP scoping                                             | P1        | open   |
 | Спека v1.1: отправитель обязан быть participant (асимметрия `requireParticipant`, инцидент 2026-11-12)                     | P1        | open   |
+| Watchdog доставки: алерт/конформанс «stored без visible-доставки > N минут» после рестарта relay (инцидент 2026-11-12)     | P1        | open   |
 | P1.3 / P2: адаптеры других хостов (per-role процессы там, где поддерживается)                                              | P2        | open   |
 | L-находки: dead-code `initCommand`, lock на credentials.json, fsync, сводка spec↔impl (hops, NOTICE оператору, strict zod) | P2        | open   |
 
