@@ -88,8 +88,8 @@ knowledge graph) as an additional per-role server with its own data file.
 ### D. Deliberate docs memory (already live)
 
 GitHub Issues (#1–#20), `docs/protocol/`, `docs/security/`, ADRs and the
-backlog already function as long-term memory for *decisions*. What they do
-not cover is *working context* (open loops, incident detail, "where was I").
+backlog already function as long-term memory for _decisions_. What they do
+not cover is _working context_ (open loops, incident detail, "where was I").
 
 - Effort: zero incremental; formalize the ADR habit (~0.5 day of docs).
 - This option complements rather than replaces A/B.
@@ -102,12 +102,12 @@ relevant hits). Re-check before choosing C.
 
 ## Comparison
 
-| Option | Effort | Enforced isolation | Survives relocation | Protocol impact | Blocked by |
-|---|---|---|---|---|---|
-| A repo-file | 0.5 d | no (instruction) | yes | none | — |
-| B relay notes | 1.5–2 d | yes (role token) | needs rekey on move | none | — |
-| C MCP server | ~1 d/host | host-dependent | host-dependent | none | #9 (Kimi Work) |
-| D docs/ADR | ~0.5 d | n/a (shared) | yes | none | — |
+| Option        | Effort    | Enforced isolation | Survives relocation | Protocol impact | Blocked by     |
+| ------------- | --------- | ------------------ | ------------------- | --------------- | -------------- |
+| A repo-file   | 0.5 d     | no (instruction)   | yes                 | none            | —              |
+| B relay notes | 1.5–2 d   | yes (role token)   | needs rekey on move | none            | —              |
+| C MCP server  | ~1 d/host | host-dependent     | host-dependent      | none            | #9 (Kimi Work) |
+| D docs/ADR    | ~0.5 d    | n/a (shared)       | yes                 | none            | —              |
 
 ## Recommendation
 

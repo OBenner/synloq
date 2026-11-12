@@ -11,7 +11,7 @@
 
 1. **Relay side.** The dispatcher skips a recipient whose effective session
    state is not `idle` (`src/relay/dispatcher.ts:90`), and the message store
-   only offers a delivery when the session is *freshly* idle — state observed
+   only offers a delivery when the session is _freshly_ idle — state observed
    within the last 5 s, lease valid, nothing paused
    (`src/storage/message-store.ts:301-312`).
 2. **Adapter side.** Before sending, the Kimi Work adapter re-checks idleness
@@ -102,7 +102,7 @@ benefit is small.
 
 **Zero — confirmed.** Spec v1 governs the envelope, message types, state
 machine (`stored → delivered → acked`), ack semantics and reason codes
-(§1–§5). Delivery *timing* — when the relay offers a stored message and when
+(§1–§5). Delivery _timing_ — when the relay offers a stored message and when
 the host admits it — is implementation. All three options leave the message
 state machine and envelope untouched. Option (a) changes only when `stored →
 delivered` happens, not what the states mean.
@@ -125,7 +125,7 @@ per-host divergence is the wrong direction for a conformance-driven protocol.
 
 ## Risk list
 
-- (b) only: users may still *want* faster admission into busy chats; the
+- (b) only: users may still _want_ faster admission into busy chats; the
   status command makes waits explained, not shorter. Accepted — the evidence
   shows waits are short once the chat idles.
 - Upstream (a) may be declined or delayed indefinitely; (b) must stand alone.
