@@ -101,6 +101,7 @@ All resolved (2026-11-12):
 2. **Publishing `docs/superpowers/` — decided: publish with full history** (content audited, no secrets).
 3. **Repository — created: github.com/OBenner/synloq**, default branch `main`.
 4. **G2 privacy residuals — decided: accept as-is** — real conversationKey UUIDs in `test/adapters/kimi-work*.test.ts` stay (assessed sanitized by Security and Architect), author email in commit metadata stays.
+5. **Branching flow — decided: direct pushes to main, PR-based flow deferred.** Branch protection on main stays on (G4). Switch to PRs when any trigger fires: (a) first external contributor; (b) approach to v1.0 (M2 feature freeze); (c) two red main CI runs for a real (non-flaky, cf. issue #13) reason within a week.
 
 ## 6. Risks and estimate limitations
 
