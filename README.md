@@ -34,22 +34,30 @@ Known-unverified regardless of host: host-enforced per-chat MCP isolation, Kimi 
 - Node.js 24 or newer (SQLite support is provided by `node:sqlite`).
 - pnpm 12.18.0 for a repository checkout.
 
-From a clean checkout:
+One-command install without a checkout:
+
+```bash
+npx synloq@latest init --project-root /absolute/path/to/project
+```
+
+`npx` downloads the published package, which ships the compiled `dist` runtime and the Kimi Work plugin template; `init` renders the role channels from that template directly.
+
+From a clean checkout instead:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm build
 ```
 
-The package is private and has no publish workflow. To create a local installable archive without publishing:
+To create a local installable archive without publishing:
 
 ```bash
 pnpm pack --pack-destination .tmp-pack
 ```
 
-The archive contains the compiled `dist` runtime, README, and package metadata. It excludes sources, tests, runtime databases, credentials, logs, IDE state, and message bodies.
+The archive contains the compiled `dist` runtime, the `plugins` template, README, and package metadata. It excludes sources, tests, runtime databases, credentials, logs, IDE state, and message bodies.
 
-The examples below use `node dist/cli/main.js` so they also work without modifying global PATH. After installing or linking the local package, the equivalent binary command is `synloq`.
+The examples below use `node dist/cli/main.js` so they also work from a checkout without modifying global PATH. From the published package the equivalent command is `npx synloq@latest`, or `synloq` after a global install.
 
 ## 1. Install the plugin and initialize roles
 
