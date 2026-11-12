@@ -57,7 +57,7 @@ pnpm pack --pack-destination .tmp-pack
 
 The archive contains the compiled `dist` runtime, the `plugins` template, README, and package metadata. It excludes sources, tests, runtime databases, credentials, logs, IDE state, and message bodies.
 
-The examples below use `node dist/cli/main.js` so they also work from a checkout without modifying global PATH. From the published package the equivalent command is `npx synloq@latest`, or `synloq` after a global install.
+The examples below use the installed `synloq` command (`npm i -g synloq` once, or prefix any command with `npx synloq@latest`). From a repo checkout the equivalent is `node dist/cli/main.js`.
 
 ## 1. Install the plugin and initialize roles
 
@@ -66,13 +66,13 @@ For Kimi Work, register `plugins/synloq` through the supported personal-plugin s
 With no role arguments, `synloq init` starts the same confirmation wizard directly:
 
 ```bash
-node dist/cli/main.js init --project-root /absolute/path/to/project
+synloq init --project-root /absolute/path/to/project
 ```
 
 A non-interactive example with two arbitrary roles:
 
 ```bash
-node dist/cli/main.js init \
+synloq init \
   --project-root /absolute/path/to/project \
   --project example \
   --role "product:Product:Own scope and priorities" \
@@ -111,7 +111,7 @@ Only explicit loopback HTTP origins with nonzero ports are accepted. An unrelate
 For advanced diagnostics or a custom standalone topology, `serve` remains available:
 
 ```bash
-node dist/cli/main.js serve \
+synloq serve \
   --project-root /absolute/path/to/project \
   --host 127.0.0.1 \
   --port 4100
@@ -193,7 +193,7 @@ Do not rely on these paths in production until the manual evidence matrix in `te
 A role has one visible session binding. Re-registering the same session supports reconnect; binding a different session requires explicit operator replacement:
 
 ```bash
-node dist/cli/main.js replace-session \
+synloq replace-session \
   --relay-url http://127.0.0.1:4100 \
   --credential /secure/operator.token \
   --agent-id arch \
@@ -209,12 +209,12 @@ Use capabilities observed from the replacement adapter, never values inferred fr
 Pause or resume delivery with the operator credential:
 
 ```bash
-node dist/cli/main.js pause \
+synloq pause \
   --relay-url http://127.0.0.1:4100 \
   --credential /secure/operator.token \
   --scope participant --scope-id arch
 
-node dist/cli/main.js resume \
+synloq resume \
   --relay-url http://127.0.0.1:4100 \
   --credential /secure/operator.token \
   --scope participant --scope-id arch
@@ -225,12 +225,12 @@ Scopes are `project`, `participant`, and `thread`; named scopes require `--scope
 Rotate or revoke a role credential with the operator token file. Rotation replaces every stored hash of the role and rewrites its token file, so previously issued tokens stop working immediately; revocation removes the hashes without issuing a new token. Running channels keep their old token in memory, so restart the role's channel after a rotation. Command output never contains the token itself. See `docs/security/token-rotation.md` for the incident runbook.
 
 ```bash
-node dist/cli/main.js rotate-token \
+synloq rotate-token \
   --project-root /absolute/path/to/project \
   --agent-id arch \
   --credential /secure/operator.token
 
-node dist/cli/main.js revoke-token \
+synloq revoke-token \
   --project-root /absolute/path/to/project \
   --agent-id arch \
   --credential /secure/operator.token
@@ -239,8 +239,8 @@ node dist/cli/main.js revoke-token \
 Inspect local storage and registered sessions:
 
 ```bash
-node dist/cli/main.js doctor --project-root /absolute/path/to/project
-node dist/cli/main.js doctor --help
+synloq doctor --project-root /absolute/path/to/project
+synloq doctor --help
 ```
 
 `unknown`, stale, busy, closed, unsupported, paused, or mismatched sessions fail closed. Message text cannot grant tools, permissions, registration, or capabilities.
@@ -274,10 +274,10 @@ Operational notes:
 pnpm verify
 pnpm vitest run test/e2e/reference.e2e.test.ts
 pnpm pack --pack-destination .tmp-pack
-node dist/cli/main.js doctor --help
-node dist/cli/main.js adapter --help
-node dist/cli/main.js claude-hook --help
-node dist/cli/main.js codex-hook --help
+synloq doctor --help
+synloq adapter --help
+synloq claude-hook --help
+synloq codex-hook --help
 ```
 
 The automated reference scenario uses real relay/SQLite, real MCP in-memory transport, and the HTTP adapter path. It does not establish live Claude, OpenCode, Codex, or Kimi support. Complete `test/e2e/real-clients.md` with an operator before changing any live support status.
