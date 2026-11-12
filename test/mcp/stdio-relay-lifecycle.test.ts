@@ -14,6 +14,31 @@ import { RelayHttpClient } from "../../src/transport/http-client.js";
 const conversationKey = "agent:main:main:conversation:d7be2b2c-edfc-4fc7-a010-1e7af6465138";
 
 describe("MCP automatic relay lifecycle", () => {
+  it("rejects a non-loopback relayUrl before any relay or host startup", async () => {
+    const home = await mkdtemp(join(tmpdir(), "synloq-mcp-config-home-"));
+    const credentialPath = join(home, "reviewer.token");
+    const configPath = join(home, "mcp.json");
+    await writeFile(credentialPath, "test-token\n", { mode: 0o600 });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://example.com:4100",
+        credentialPath,
+      }),
+    );
+
+    const relayFactory = vi.fn();
+    await expect(
+      startMcpStdio(configPath, {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new Writable({ write: (_chunk, _encoding, callback) => callback() }),
+        relayFactory: relayFactory as never,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(relayFactory).not.toHaveBeenCalled();
+  });
+
   it("starts relay before host, recovers registration, and closes in reverse order", async () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-mcp-relay-project-"));
     const home = await mkdtemp(join(tmpdir(), "synloq-mcp-relay-home-"));

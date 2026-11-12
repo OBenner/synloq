@@ -72,7 +72,9 @@ class Supervisor implements RelaySupervisorLoop {
       await sleep(this.options.monitorIntervalMs ?? 1_000, this.abort.signal);
       if (this.abort.signal.aborted || this.unavailable) return;
       try {
-        await this.client.listParticipants(this.options.probeTimeoutMs ?? 750);
+        const probeTimeoutMs = this.options.probeTimeoutMs ?? 750;
+        await this.client.health(probeTimeoutMs);
+        await this.client.listParticipants(probeTimeoutMs);
       } catch {
         await this.recover();
       }

@@ -131,6 +131,20 @@ function receiptArch(messageId: string, receipt: DeliveryReceipt) {
 }
 
 describe("RelayHttpServer authentication and participant routes", () => {
+  it("serves an unauthenticated health marker before any credential check", async () => {
+    const anonymous = await fetch(`${fixture.baseUrl}/v1/health`);
+    expect(anonymous.status).toBe(200);
+    await expect(anonymous.json()).resolves.toEqual({
+      service: "synloq-relay",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+
+    await expect(fixture.cto.health()).resolves.toEqual({
+      service: "synloq-relay",
+      protocolVersion: PROTOCOL_VERSION,
+    });
+  });
+
   it("requires authentication and derives identity from the token", async () => {
     await expect(fetch(`${fixture.baseUrl}/v1/participants`)).resolves.toMatchObject({
       status: 401,
@@ -530,6 +544,25 @@ describe("RelayHttpServer operator routes and errors", () => {
 });
 
 describe("RelayHttpClient resource behavior", () => {
+  it("rejects non-loopback base URLs before any request is made", () => {
+    for (const baseUrl of [
+      "http://example.com:4100",
+      "https://127.0.0.1:4100",
+      "http://user@127.0.0.1:4100",
+      "http://127.0.0.1:4100/path",
+      "http://localhost:4100",
+    ]) {
+      expect(() => new RelayHttpClient(baseUrl, () => "token")).toThrowError(
+        expect.objectContaining({
+          name: "SynloqError",
+          code: "INVALID_INPUT",
+        }),
+      );
+    }
+    expect(() => new RelayHttpClient("http://127.0.0.1:4100", () => "token")).not.toThrow();
+    expect(() => new RelayHttpClient("http://[::1]:4100/", () => "token")).not.toThrow();
+  });
+
   it("uses the required timeouts only for long polls", async () => {
     await registerArch();
     const timeout = vi.spyOn(AbortSignal, "timeout");

@@ -9,7 +9,9 @@ import type {
   SessionState,
 } from "../domain/session.js";
 import type { InboxResult, ReplyRequest, SendRequest } from "../relay/relay-service.js";
+import { PROTOCOL_VERSION } from "../domain/session.js";
 import type { ClaimedDelivery, PauseScope } from "../storage/message-store.js";
+import { parseLoopbackHttpUrl } from "./loopback.js";
 
 const errorCodes = [
   "INVALID_INPUT",
@@ -63,6 +65,15 @@ export interface PauseRequest {
   scopeId: string;
 }
 
+const healthResponseSchema = z.object({
+  service: z.literal("synloq-relay"),
+  protocolVersion: z.literal(PROTOCOL_VERSION),
+});
+
+function unavailable(): SynloqError {
+  return new SynloqError("STORAGE_FAILURE", "Synloq relay endpoint is unavailable or incompatible");
+}
+
 export class RelayHttpClient {
   private readonly baseUrl: string;
 
@@ -70,7 +81,33 @@ export class RelayHttpClient {
     baseUrl: string,
     private readonly tokenProvider: TokenProvider,
   ) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    // Fail closed: credentials must never leave an explicit loopback origin.
+    this.baseUrl = parseLoopbackHttpUrl(baseUrl).baseUrl;
+  }
+
+  async health(timeoutMs = 5_000): Promise<{ service: string; protocolVersion: number }> {
+    // Unauthenticated compatibility probe: the bearer token is only sent after
+    // this endpoint confirms a Synloq relay is listening.
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/v1/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") throw unavailable();
+      throw error;
+    }
+    if (!response.ok) throw unavailable();
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw unavailable();
+    }
+    const parsed = healthResponseSchema.safeParse(payload);
+    if (!parsed.success) throw unavailable();
+    return parsed.data;
   }
 
   listParticipants(timeoutMs = 5_000): Promise<{ participants: Participant[] }> {

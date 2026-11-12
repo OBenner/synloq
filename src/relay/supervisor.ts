@@ -2,6 +2,7 @@ import { serveCommand, type ServeHandle } from "../cli/commands.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
 import { RelayHttpClient } from "../transport/http-client.js";
+import { parseLoopbackHttpUrl } from "../transport/loopback.js";
 
 export type RelayProbe = (
   relayUrl: string,
@@ -27,39 +28,6 @@ export interface RelaySupervisorHandle {
   close(): Promise<void>;
 }
 
-interface LoopbackEndpoint {
-  host: "127.0.0.1" | "::1";
-  port: number;
-  baseUrl: string;
-}
-
-function endpoint(value: string): LoopbackEndpoint {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new SynloqError("INVALID_INPUT", "Synloq relay URL is invalid");
-  }
-  const host = url.hostname === "[::1]" ? "::1" : url.hostname;
-  if (
-    url.protocol !== "http:" ||
-    (host !== "127.0.0.1" && host !== "::1") ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.pathname !== "/" && url.pathname !== "") ||
-    !/^\d+$/.test(url.port)
-  ) {
-    throw new SynloqError("INVALID_INPUT", "Synloq relay URL must be an explicit loopback origin");
-  }
-  const port = Number(url.port);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new SynloqError("INVALID_INPUT", "Synloq relay port is invalid");
-  }
-  return { host, port, baseUrl: `http://${host === "::1" ? "[::1]" : host}:${port}` };
-}
-
 function hasErrorCode(error: unknown, code: string, depth = 0): boolean {
   if (depth > 4 || typeof error !== "object" || error === null) return false;
   if ("code" in error && error.code === code) return true;
@@ -76,11 +44,14 @@ function unavailable(): SynloqError {
 
 const defaultProbe: RelayProbe = async (relayUrl, token, timeoutMs) => {
   const client = new RelayHttpClient(relayUrl, () => token);
+  // Verify the unauthenticated health marker before any credential is sent:
+  // a port-squatting listener must never receive the bearer token.
+  await client.health(timeoutMs);
   return (await client.listParticipants(timeoutMs)).participants;
 };
 
 export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySupervisorHandle> {
-  const target = endpoint(options.relayUrl);
+  const target = parseLoopbackHttpUrl(options.relayUrl);
   const probe = options.probe ?? defaultProbe;
   const timeoutMs = options.probeTimeoutMs ?? 750;
   const client = new RelayHttpClient(target.baseUrl, () => options.token);

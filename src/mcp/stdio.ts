@@ -16,11 +16,15 @@ import {
 } from "../host/kimi-work/binding.js";
 import { startRelaySupervisor, type RelaySupervisorLoop } from "../relay/supervisor-loop.js";
 import { RelayHttpClient } from "../transport/http-client.js";
+import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { registerSynloqTools } from "./tools.js";
 
 const configurationSchema = z
   .object({
-    relayUrl: z.string().url(),
+    relayUrl: z
+      .string()
+      .url()
+      .refine(isLoopbackHttpUrl, "relayUrl must be an explicit HTTP loopback origin"),
     credentialPath: z.string().min(1),
     synloqHome: z.string().min(1).optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),

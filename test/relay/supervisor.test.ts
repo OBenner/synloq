@@ -120,6 +120,66 @@ describe("ensureRelay", () => {
     expect(server.listening).toBe(true);
   });
 
+  it("never sends the credential to a listener without the health marker", async () => {
+    const { root, home, token } = await fixture();
+    const requests: { path: string | undefined; authorization: string | undefined }[] = [];
+    const server = createServer((request, response) => {
+      requests.push({ path: request.url, authorization: request.headers.authorization });
+      response.setHeader("content-type", "application/json");
+      response.end("{}");
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test port");
+
+    await expect(
+      ensureRelay({
+        projectRoot: root,
+        project: "example",
+        relayUrl: `http://127.0.0.1:${address.port}`,
+        token,
+        synloqHome: home,
+      }),
+    ).rejects.toMatchObject({ code: "STORAGE_FAILURE" });
+
+    expect(requests).toEqual([{ path: "/v1/health", authorization: undefined }]);
+  });
+
+  it("sends the credential only after the health marker matches", async () => {
+    const { root, home, token } = await fixture();
+    const requests: { path: string | undefined; authorization: string | undefined }[] = [];
+    const server = createServer((request, response) => {
+      requests.push({ path: request.url, authorization: request.headers.authorization });
+      response.setHeader("content-type", "application/json");
+      if (request.url === "/v1/health") {
+        response.end(JSON.stringify({ service: "synloq-relay", protocolVersion: 1 }));
+        return;
+      }
+      response.statusCode = 401;
+      response.end(JSON.stringify({ error: { code: "UNAUTHORIZED", message: "no credential" } }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("missing test port");
+
+    await expect(
+      ensureRelay({
+        projectRoot: root,
+        project: "example",
+        relayUrl: `http://127.0.0.1:${address.port}`,
+        token,
+        synloqHome: home,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+
+    expect(requests).toEqual([
+      { path: "/v1/health", authorization: undefined },
+      { path: "/v1/participants", authorization: `Bearer ${token}` },
+    ]);
+  });
+
   it("rejects the wrong project and wrong credential without starting another relay", async () => {
     const first = await fixture("other");
     const existing = await serveCommand({

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { CredentialStore, Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Message } from "../domain/message.js";
-import type { SessionBinding } from "../domain/session.js";
+import { PROTOCOL_VERSION, type SessionBinding } from "../domain/session.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { RelayService } from "../relay/relay-service.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
@@ -167,6 +167,14 @@ export class RelayHttpServer {
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const url = new URL(request.url ?? "/", "http://loopback");
+    if (request.method === "GET" && url.pathname === "/v1/health") {
+      // Unauthenticated compatibility marker: lets probes verify the service
+      // before any credential is sent. Carries no project or session data.
+      this.sendJson(response, 200, { service: "synloq-relay", protocolVersion: PROTOCOL_VERSION });
+      return;
+    }
+
     let identity: Identity;
     try {
       identity = await this.authenticate(request.headers.authorization);
@@ -176,7 +184,6 @@ export class RelayHttpServer {
     }
 
     try {
-      const url = new URL(request.url ?? "/", "http://loopback");
       await this.route(request, response, url, identity);
     } catch (error) {
       this.sendError(response, error, false);
