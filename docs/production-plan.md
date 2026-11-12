@@ -95,9 +95,12 @@ Strategy: go public as a public alpha right after the M1 gates, without waiting 
 
 ## 5. Open decisions (operator)
 
-1. **License — decided: Apache-2.0** (2026-11-12).
-2. **Publishing `docs/superpowers/` — decided: publish with full history** (content audited, no secrets; 2026-11-12).
-3. Repository name/organization on GitHub (working default: `synloq`).
+All resolved (2026-11-12):
+
+1. **License — decided: Apache-2.0** (canonical text + NOTICE, 61c04b3).
+2. **Publishing `docs/superpowers/` — decided: publish with full history** (content audited, no secrets).
+3. **Repository — created: github.com/OBenner/synloq**, default branch `main`.
+4. **G2 privacy residuals — decided: accept as-is** — real conversationKey UUIDs in `test/adapters/kimi-work*.test.ts` stay (assessed sanitized by Security and Architect), author email in commit metadata stays.
 
 ## 6. Risks and estimate limitations
 
