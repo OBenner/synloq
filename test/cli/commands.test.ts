@@ -10,6 +10,8 @@ import {
   pauseCommand,
   replaceSessionCommand,
   resumeCommand,
+  revokeTokenCommand,
+  rotateTokenCommand,
   sendCommand,
   serveCommand,
 } from "../../src/cli/commands.js";
@@ -425,6 +427,55 @@ describe("token lifecycle CLI", () => {
     const second = capture();
     expect(await runMain(args, second.io)).toBe(0);
     expect(JSON.parse(second.out().stdout)).toMatchObject({ agentId: "arch", removedHashes: 0 });
+  });
+
+  it("reports rotation and revocation through the audit hook", async () => {
+    const credential = await operatorCredentialFile();
+    const auditHook = vi.fn();
+
+    await rotateTokenCommand({
+      projectRoot: fixture.root,
+      agentId: "cto",
+      operatorCredentialPath: credential,
+      auditHook,
+    });
+    expect(auditHook).toHaveBeenCalledTimes(1);
+    expect(auditHook).toHaveBeenLastCalledWith({
+      action: "rotate",
+      agentId: "cto",
+      project: PROJECT,
+      at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    });
+
+    await revokeTokenCommand({
+      projectRoot: fixture.root,
+      agentId: "arch",
+      operatorCredentialPath: credential,
+      auditHook,
+    });
+    expect(auditHook).toHaveBeenCalledTimes(2);
+    expect(auditHook).toHaveBeenLastCalledWith({
+      action: "revoke",
+      agentId: "arch",
+      project: PROJECT,
+      at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    });
+  });
+
+  it("does not call the audit hook when the operator gate rejects", async () => {
+    const credential = join(fixture.home, "cto.token");
+    await writeFile(credential, `${fixture.ctoToken}\n`, { mode: 0o600 });
+    const auditHook = vi.fn();
+
+    await expect(
+      rotateTokenCommand({
+        projectRoot: fixture.root,
+        agentId: "arch",
+        operatorCredentialPath: credential,
+        auditHook,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(auditHook).not.toHaveBeenCalled();
   });
 });
 

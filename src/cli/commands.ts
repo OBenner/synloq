@@ -142,11 +142,19 @@ export function replaceSessionCommand(
   return client.replaceSession(input);
 }
 
+export interface TokenLifecycleAuditEvent {
+  action: "rotate" | "revoke";
+  agentId: string;
+  project: string;
+  at: string;
+}
+
 export interface TokenLifecycleOptions {
   projectRoot: string;
   agentId: string;
   operatorCredentialPath: string;
   synloqHome?: string;
+  auditHook?: (event: TokenLifecycleAuditEvent) => void;
 }
 
 async function requireLocalOperator(
@@ -173,6 +181,12 @@ export async function rotateTokenCommand(options: TokenLifecycleOptions): Promis
 }> {
   const { project, store } = await requireLocalOperator(options);
   const rotated = await store.rotate(project, options.agentId);
+  options.auditHook?.({
+    action: "rotate",
+    agentId: options.agentId,
+    project,
+    at: new Date().toISOString(),
+  });
   // The new token exists only in the token file; command output must not
   // contain it.
   return {
@@ -189,6 +203,12 @@ export async function revokeTokenCommand(options: TokenLifecycleOptions): Promis
 }> {
   const { project, store } = await requireLocalOperator(options);
   const revoked = await store.revoke(project, options.agentId);
+  options.auditHook?.({
+    action: "revoke",
+    agentId: options.agentId,
+    project,
+    at: new Date().toISOString(),
+  });
   return {
     agentId: options.agentId,
     removedHashes: revoked.removedHashes,
