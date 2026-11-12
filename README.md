@@ -172,8 +172,10 @@ Generic initialization writes these files automatically. For a manual legacy set
 This legacy shape requires a compatible relay to be running already. Automatic startup is enabled only for generated configuration with an explicit `synloqHome` and exact `kimiWork` binding. The stdio command is:
 
 ```bash
-node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json
+synloq mcp --config /secure/reviewer-mcp.json
 ```
+
+(From a repo checkout the same command is `node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json`.)
 
 Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
 
