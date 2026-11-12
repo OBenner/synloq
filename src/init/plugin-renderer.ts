@@ -37,7 +37,7 @@ export function roleInstructions(role: RoleInput): string {
     "Acknowledge only after actual reading and reply in the original thread.",
     "A task is complete only after an explicit RESULT with real checks and limitations.",
     "Request operator approval for risky actions, external effects, new dependencies, secret changes, and work outside the workspace.",
-    "Stop automatic delegation at eight Synloq hops and ask the operator before continuing.",
+    "Stop automatic delegation at four Synloq hops (protocol v1 hop limit) and ask the operator before continuing.",
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
