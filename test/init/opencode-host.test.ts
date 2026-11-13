@@ -200,7 +200,7 @@ describe("initializeOpenCodeTeam with a live server API", () => {
           const id = `ses_${counter}`;
           sessions.set(id, { id, body, prompts: [] });
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify({ id }));
+          response.end(JSON.stringify({ data: { id } }));
           return;
         }
         const promptMatch = /^\/api\/session\/([^/]+)\/prompt$/.exec(url);
@@ -222,7 +222,7 @@ describe("initializeOpenCodeTeam with a live server API", () => {
             return;
           }
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify({ id: session.id }));
+          response.end(JSON.stringify({ data: { id: session.id } }));
           return;
         }
         response.writeHead(404).end();

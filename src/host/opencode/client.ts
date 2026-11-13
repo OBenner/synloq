@@ -79,6 +79,15 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
     return { status: response.status, json };
   }
 
+  // The desktop API wraps payloads in an envelope: {"data": ...}. Tolerate a
+  // bare payload too, for forwards compatibility.
+  private static unwrap(json: unknown): unknown {
+    if (typeof json === "object" && json !== null && "data" in json) {
+      return (json as { data: unknown }).data;
+    }
+    return json;
+  }
+
   // Permissions grammar (action/resource/effect with wildcards) is verified on
   // the live stand (#31); until then a rejected ruleset falls back to a
   // session without host-level tool denies (fail-soft, R2).
@@ -128,7 +137,7 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
         `OpenCode session creation failed with status ${result.status}`,
       );
     }
-    const parsed = sessionSchema.safeParse(result.json);
+    const parsed = sessionSchema.safeParse(OpencodeApiClient.unwrap(result.json));
     if (!parsed.success) {
       throw new SynloqError("INVALID_INPUT", "OpenCode session response is invalid");
     }
@@ -145,7 +154,7 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
         `OpenCode session lookup failed with status ${result.status}`,
       );
     }
-    const parsed = sessionSchema.safeParse(result.json);
+    const parsed = sessionSchema.safeParse(OpencodeApiClient.unwrap(result.json));
     return parsed.success && parsed.data.id === id;
   }
 
