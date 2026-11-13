@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
-import { writeManifest } from "../config/manifest.js";
+import { loadManifestLanguage, writeManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import {
   TeamStateStore,
@@ -12,6 +12,7 @@ import {
 } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Participant } from "../domain/message.js";
+import { DEFAULT_LANGUAGE, type Language } from "../i18n/index.js";
 import type {
   KimiWorkConversationSummary,
   KimiWorkListResult,
@@ -125,11 +126,24 @@ function exactConversation(
   return matches[0]!;
 }
 
+export async function resolveLanguage(projectRoot: string, explicit?: Language): Promise<Language> {
+  if (explicit !== undefined) return explicit;
+  try {
+    // Preserve the language of an existing manifest on re-init; a fresh
+    // project defaults to English.
+    return await loadManifestLanguage(projectRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return DEFAULT_LANGUAGE;
+    throw error;
+  }
+}
+
 export async function initializeTeam(
   options: InitializeTeamOptions,
 ): Promise<InitializeTeamResult> {
   const { project, roles } = parseRoleInputs(options.project, options.roles);
   const projectRoot = await realpath(options.projectRoot);
+  const language = await resolveLanguage(projectRoot, options.language);
 
   const paths = await projectPaths(projectRoot, options.synloqHome);
   const stateStore = new TeamStateStore(paths.bindings);
@@ -145,7 +159,7 @@ export async function initializeTeam(
     title: role.title,
     role: role.role,
   }));
-  await writeManifest(projectRoot, participants);
+  await writeManifest(projectRoot, participants, language);
   const credentials = new CredentialStore(projectRoot, paths.home);
   await credentials.ensureCredential(project, "operator");
 
@@ -162,7 +176,7 @@ export async function initializeTeam(
   };
 
   for (const role of roles) {
-    const instructions = roleInstructions(role);
+    const instructions = roleInstructions(role, language);
     const existing = state?.conversations[role.agentId];
     let conversation: KimiWorkConversationSummary;
     if (existing) {
@@ -241,6 +255,7 @@ export async function initializeTeam(
       relayUrl: "http://127.0.0.1:4100",
       credentialPath: credential.tokenPath,
       synloqHome: paths.home,
+      language,
       kimiWork: {
         projectRoot,
         agentId: role.agentId,
@@ -266,6 +281,7 @@ export async function initializeTeam(
     projectKey: paths.key,
     runtimeEntrypoint: options.runtimeEntrypoint,
     roles: renderedRoles,
+    language,
   });
   return {
     project,

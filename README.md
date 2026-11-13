@@ -98,6 +98,7 @@ An existing `synloq.yaml` can supply the same role declarations without `--role`
 ```yaml
 version: 1
 project: example
+language: en # en | ru — agent-facing wrapper and role instructions (default en)
 agents:
   product:
     title: Product
@@ -106,6 +107,8 @@ agents:
     title: Reviewer
     role: Review evidence and risks
 ```
+
+The optional top-level `language` field (`en` or `ru`, fail-loud on any other value) selects the language of the delivered-message wrapper and the generated role instructions. Protocol frames, reason codes, and relay notices stay English. Init also accepts `--language en|ru`; re-running init without the flag preserves the language already in `synloq.yaml`. A language change takes effect after re-init and a channel restart, like any other manifest change. A missing locale key falls back to English with a warning.
 
 ## 2. Automatic relay lifecycle
 

@@ -74,6 +74,18 @@ describe("Kimi Work visible prompt", () => {
     expect(prompt).toContain("synloq_inbox");
   });
 
+  it("renders the Russian wrapper while the frame stays structural English", () => {
+    const prompt = formatKimiWorkPrompt(message, 3, 2, "ru");
+
+    expect(prompt).toContain(frameMessage(message, 3));
+    expect(prompt).toContain("Synloq expectsReply: true");
+    expect(prompt).toContain("это сообщение от роли product-owner для роли reviewer");
+    expect(prompt).toContain("synloq-reviewer");
+    expect(prompt).toContain(`synloq_ack с messageId ${message.id}`);
+    expect(prompt).toContain("+2 pending");
+    expect(prompt).not.toContain("this message is from role");
+  });
+
   it("rejects assistant, incomplete, unrelated, and duplicate matches", () => {
     const framedText = formatKimiWorkPrompt(message, 3);
     const history = [

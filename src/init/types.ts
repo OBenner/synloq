@@ -1,4 +1,5 @@
 import type { KimiWorkTeamConversation } from "../config/team-state.js";
+import type { Language } from "../i18n/index.js";
 import type {
   KimiWorkConversationSummary,
   KimiWorkCreateInput,
@@ -29,6 +30,7 @@ export interface InitializeTeamOptions {
   runtimeEntrypoint: string;
   host: KimiWorkInitHost;
   templatePath?: string;
+  language?: Language;
 }
 
 export interface InitializedRole {
@@ -61,4 +63,5 @@ export interface RenderPluginOptions {
   projectKey: string;
   runtimeEntrypoint: string;
   roles: RenderPluginRole[];
+  language?: Language;
 }

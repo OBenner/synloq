@@ -9,6 +9,7 @@ import { runKimiWorkAdapter, type KimiWorkAdapter } from "../adapters/kimi-work.
 import { HttpAdapterRunner, OutstandingTracker } from "../adapters/http-runner.js";
 import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
+import { languageSchema, type Language } from "../i18n/index.js";
 import {
   kimiWorkConfigurationSchema,
   resolveKimiWorkBinding,
@@ -32,6 +33,7 @@ const configurationSchema = z
       .refine(isLoopbackHttpUrl, "relayUrl must be an explicit HTTP loopback origin"),
     credentialPath: z.string().min(1),
     synloqHome: z.string().min(1).optional(),
+    language: languageSchema.optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),
     opencode: openCodeConfigurationSchema.optional(),
   })
@@ -65,6 +67,7 @@ export interface KimiWorkFactoryOptions {
   signal: AbortSignal;
   onUnauthorized: (error: SynloqError) => void;
   outstanding: OutstandingTracker;
+  language?: Language;
 }
 
 export type KimiWorkFactory = (options: KimiWorkFactoryOptions) => Promise<KimiWorkMcpBridge>;
@@ -86,6 +89,7 @@ interface McpConfiguration {
   relayUrl: string;
   token: string;
   synloqHome?: string;
+  language?: Language;
   kimiWork?: ResolvedKimiWorkBinding;
   opencode?: ResolvedOpenCodeBinding;
 }
@@ -123,6 +127,7 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
     ...(configuration.data.synloqHome
       ? { synloqHome: resolve(dirname(configPath), configuration.data.synloqHome) }
       : {}),
+    ...(configuration.data.language ? { language: configuration.data.language } : {}),
     ...(kimiWork ? { kimiWork } : {}),
     ...(opencode ? { opencode } : {}),
   };
@@ -132,9 +137,17 @@ async function defaultKimiWorkFactory(options: KimiWorkFactoryOptions): Promise<
   const participants = await loadManifest(options.binding.workspacePath);
   const project = participants[0]?.project;
   if (!project) throw new SynloqError("INVALID_INPUT", "Synloq manifest has no project");
-  const adapter = await runKimiWorkAdapter({ ...options.binding, project }, options.relay, {
-    onUnauthorized: options.onUnauthorized,
-  });
+  const adapter = await runKimiWorkAdapter(
+    {
+      ...options.binding,
+      project,
+      ...(options.language ? { language: options.language } : {}),
+    },
+    options.relay,
+    {
+      onUnauthorized: options.onUnauthorized,
+    },
+  );
   return {
     adapter,
     runner: new HttpAdapterRunner(
@@ -172,6 +185,7 @@ function createKimiWorkLifecycle(
   relay: RelayHttpClient,
   token: string,
   options: McpStdioOptions,
+  language?: Language,
 ): KimiWorkLifecycle {
   const factory = options.kimiWorkFactory ?? defaultKimiWorkFactory;
   const diagnostics = options.stderr ?? process.stderr;
@@ -246,6 +260,7 @@ function createKimiWorkLifecycle(
             signal: controller.signal,
             onUnauthorized: recover,
             outstanding,
+            ...(language ? { language } : {}),
           });
           if (controller.signal.aborted || closed) {
             await closeBridge(created);
@@ -352,6 +367,7 @@ export async function startMcpStdio(
       client,
       configuration.token,
       options,
+      configuration.language,
     );
     lifecycle.start();
   }

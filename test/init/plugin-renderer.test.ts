@@ -28,4 +28,13 @@ describe("roleInstructions", () => {
     const instructions = roleInstructions({ ...role, instructions: "Prefer small commits." });
     expect(instructions).toContain("Confirmed additions: Prefer small commits.");
   });
+
+  it("renders Russian instructions for language=ru", () => {
+    const instructions = roleInstructions(role, "ru");
+    expect(instructions).toContain("ID роли: dev");
+    expect(instructions).toContain("Отображаемое имя: Developer");
+    expect(instructions).toContain("Устав команды (TEAM.md)");
+    expect(instructions).not.toContain("Role ID:");
+    expect(instructions).not.toContain(TEAM_CHARTER_SUMMARY);
+  });
 });

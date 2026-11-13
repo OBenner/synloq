@@ -2,7 +2,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadManifest, writeManifest } from "../../src/config/manifest.js";
+import { loadManifest, loadManifestLanguage, writeManifest } from "../../src/config/manifest.js";
 
 async function manifestRoot(contents: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "synloq-manifest-"));
@@ -111,6 +111,48 @@ describe("loadManifest", () => {
     },
   ])("rejects $name with INVALID_INPUT", async ({ contents }) => {
     const root = await manifestRoot(contents);
+
+    await expect(loadManifest(root)).rejects.toMatchObject({
+      name: "SynloqError",
+      code: "INVALID_INPUT",
+    });
+  });
+});
+
+describe("manifest language", () => {
+  it("defaults to en when the field is absent", async () => {
+    const root = await manifestRoot(
+      ["project: verdicta", "agents:", "  cto:", "    title: CTO", "    role: Architecture"].join(
+        "\n",
+      ),
+    );
+
+    await expect(loadManifestLanguage(root)).resolves.toBe("en");
+  });
+
+  it("round-trips an explicit language through writeManifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-lang-"));
+    await writeManifest(
+      root,
+      [{ project: "example", agentId: "cto", title: "CTO", role: "Architecture" }],
+      "ru",
+    );
+
+    await expect(loadManifestLanguage(root)).resolves.toBe("ru");
+    await expect(readFile(join(root, "synloq.yaml"), "utf8")).resolves.toContain("language: ru");
+  });
+
+  it("rejects an unknown language fail-loud", async () => {
+    const root = await manifestRoot(
+      [
+        "project: verdicta",
+        "language: klingon",
+        "agents:",
+        "  cto:",
+        "    title: CTO",
+        "    role: Architecture",
+      ].join("\n"),
+    );
 
     await expect(loadManifest(root)).rejects.toMatchObject({
       name: "SynloqError",

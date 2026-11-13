@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
+import { languageSchema, SUPPORTED_LANGUAGES } from "../i18n/index.js";
 import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
 import { discoverOpenCodeHost } from "../host/opencode/discovery.js";
 import { initializeTeam } from "../init/initialize-team.js";
@@ -137,13 +138,14 @@ export async function runGenericInit(
       "synloq-home": { type: "string" },
       host: { type: "string" },
       "relay-url": { type: "string" },
+      language: { type: "string" },
       "non-interactive": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help) {
     io.stdout.write(
-      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--non-interactive]\n",
+      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--language en|ru] [--non-interactive]\n",
     );
     return;
   }
@@ -152,6 +154,11 @@ export async function runGenericInit(
   if (hostName !== "kimi-work" && hostName !== "opencode") {
     invalid("--host must be kimi-work or opencode");
   }
+  const languageResult = languageSchema.safeParse(values.language ?? "en");
+  if (!languageResult.success) {
+    invalid(`--language must be one of: ${SUPPORTED_LANGUAGES.join(", ")}`);
+  }
+  const language = values.language === undefined ? undefined : languageResult.data;
 
   const environment = dependencies.environment ?? process.env;
   const projectRoot = resolve(values["project-root"] ?? process.cwd());
@@ -199,6 +206,7 @@ export async function runGenericInit(
       roles,
       ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
       ...(values["relay-url"] ? { relayUrl: values["relay-url"] } : {}),
+      ...(language ? { language } : {}),
       runtimeEntrypoint,
       host: openCodeHost,
     });
@@ -217,6 +225,7 @@ export async function runGenericInit(
         ? resolve(values["plugin-source"])
         : defaultPluginSource(environment),
       ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
+      ...(language ? { language } : {}),
       runtimeEntrypoint,
       host,
     });

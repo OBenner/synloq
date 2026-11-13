@@ -1,5 +1,6 @@
 import { SynloqError } from "../domain/errors.js";
 import type { Message } from "../domain/message.js";
+import type { Language } from "../i18n/index.js";
 import {
   PROTOCOL_VERSION,
   type AdapterCapabilities,
@@ -49,6 +50,7 @@ export interface KimiWorkAdapterConfig extends KimiWorkBinding {
   agentId: string;
   heartbeatIntervalMs?: number;
   reconciliationDelayMs?: number;
+  language?: Language;
 }
 
 export interface KimiWorkAdapterOptions {
@@ -202,7 +204,12 @@ export class KimiWorkAdapter implements DeliveryAdapter {
       throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");
     }
 
-    const prompt = formatKimiWorkPrompt(message, context?.generation ?? 0, context?.pendingAfter);
+    const prompt = formatKimiWorkPrompt(
+      message,
+      context?.generation ?? 0,
+      context?.pendingAfter,
+      this.config.language,
+    );
     let existing: ReturnType<typeof findMatchingVisibleTurns>;
     try {
       existing = findMatchingVisibleTurns(await this.control.messages(this.binding, 50), prompt);

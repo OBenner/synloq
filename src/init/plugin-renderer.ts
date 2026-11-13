@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { writeJsonAtomic, writeTextAtomic } from "../config/atomic-file.js";
 import { SynloqError } from "../domain/errors.js";
+import { DEFAULT_LANGUAGE, translate, type Language } from "../i18n/index.js";
+import { en } from "../i18n/locales/en.js";
 import type { RoleInput, RenderPluginOptions } from "./types.js";
 
 const OWNER_FILE = ".synloq-owner.json";
@@ -25,23 +27,26 @@ function defaultTemplatePath(): string {
   return fileURLToPath(new URL("../../plugins/synloq", import.meta.url));
 }
 
-export const TEAM_CHARTER_SUMMARY =
-  "Team charter (TEAM.md): message the role that owns the domain directly — never ask the operator to relay between roles. Decide within your scope; escalate cross-level decisions to the CTO. Tasks run to completion without check-ins; obstacles are reported immediately as BLOCKED with a reason code. If expected delivery is silent for over 15 minutes, pull synloq_inbox yourself. Local commits, own-scope docs, tests, and verify need no approval; pushes to the public remote, deletions outside task scope, dependency upgrades, and role-instruction changes require the operator.";
+// English canonical charter, pinned by tests (#16). Localized variants come
+// from the dictionaries; this export stays as the single English source.
+export const TEAM_CHARTER_SUMMARY: string = en["role.charter"];
 
-export function roleInstructions(role: RoleInput): string {
+export function roleInstructions(role: RoleInput, language: Language = DEFAULT_LANGUAGE): string {
   return [
-    "You are one visible role in a Synloq project team.",
-    `Role ID: ${role.agentId}`,
-    `Display name: ${role.title}`,
-    `Responsibilities and boundaries: ${role.role}`,
-    role.instructions ? `Confirmed additions: ${role.instructions}` : undefined,
-    "Use only the Synloq MCP channel assigned to this role; never use another role's channel.",
-    "Use QUESTION, TASK, RESULT, BLOCKED, or NOTICE message prefixes.",
-    "Acknowledge only after actual reading and reply in the original thread.",
-    "A task is complete only after an explicit RESULT with real checks and limitations.",
-    "Request operator approval for risky actions, external effects, new dependencies, secret changes, and work outside the workspace.",
-    "Stop automatic delegation at four Synloq hops (protocol v1 hop limit) and ask the operator before continuing.",
-    TEAM_CHARTER_SUMMARY,
+    translate(language, "role.intro"),
+    translate(language, "role.id", { agentId: role.agentId }),
+    translate(language, "role.displayName", { title: role.title }),
+    translate(language, "role.responsibilities", { role: role.role }),
+    role.instructions
+      ? translate(language, "role.confirmedAdditions", { instructions: role.instructions })
+      : undefined,
+    translate(language, "role.ownChannel"),
+    translate(language, "role.prefixes"),
+    translate(language, "role.ackRule"),
+    translate(language, "role.resultRule"),
+    translate(language, "role.approvalRule"),
+    translate(language, "role.hopLimit"),
+    translate(language, "role.charter"),
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
@@ -77,6 +82,7 @@ export async function assertPluginOwnership(
 
 export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promise<void> {
   const projectRoot = resolve(options.projectRoot);
+  const language = options.language ?? DEFAULT_LANGUAGE;
   await assertPluginOwnership(options.pluginSourcePath, options.project, projectRoot);
   const templatePath = options.templatePath ?? defaultTemplatePath();
   await cp(templatePath, options.pluginSourcePath, {
@@ -113,8 +119,8 @@ export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promis
     options.roles.map(({ role }) => [
       `synloq-${role.agentId}`,
       {
-        displayName: `Synloq ${role.title}`,
-        description: `Authenticated channel for project role ${role.agentId}.`,
+        displayName: translate(language, "channel.displayName", { title: role.title }),
+        description: translate(language, "channel.description", { agentId: role.agentId }),
       },
     ]),
   );
@@ -146,7 +152,7 @@ export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promis
       "",
       `# ${role.title}`,
       "",
-      roleInstructions(role),
+      roleInstructions(role, language),
       "",
     ].join("\n");
     await writeTextAtomic(

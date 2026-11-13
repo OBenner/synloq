@@ -44,6 +44,7 @@ describe("initializeOpenCodeTeam", () => {
       relayUrl: "http://127.0.0.1:4100",
       credentialPath: result.roles[0]!.credentialPath,
       synloqHome: paths.home,
+      language: "en",
       opencode: {
         projectRoot: root,
         agentId: "cto",
@@ -388,5 +389,42 @@ describe("initializeOpenCodeTeam with a live server API", () => {
     } finally {
       await close();
     }
+  });
+});
+
+describe("initializeOpenCodeTeam language", () => {
+  it("writes the language into the manifest and MCP configs, defaulting to en", async () => {
+    const { root, home } = await setup();
+    await initializeOpenCodeTeam({
+      projectRoot: root,
+      project: "stand",
+      roles,
+      synloqHome: home,
+      runtimeEntrypoint: "dist/mcp/stdio.js",
+      language: "ru",
+    });
+
+    const paths = await projectPaths(root, home);
+    const manifest = await readFile(join(root, "synloq.yaml"), "utf8");
+    expect(manifest).toContain("language: ru");
+    const config = JSON.parse(
+      await readFile(join(paths.runtime, "mcp", "cto.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(config["language"]).toBe("ru");
+  });
+
+  it("preserves the existing manifest language on re-init without the option", async () => {
+    const { root, home } = await setup();
+    const options = {
+      projectRoot: root,
+      project: "stand",
+      roles,
+      synloqHome: home,
+      runtimeEntrypoint: "dist/mcp/stdio.js",
+    };
+    await initializeOpenCodeTeam({ ...options, language: "ru" });
+    await initializeOpenCodeTeam(options);
+
+    await expect(readFile(join(root, "synloq.yaml"), "utf8")).resolves.toContain("language: ru");
   });
 });

@@ -11,10 +11,11 @@ import {
 } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
+import type { Language } from "../i18n/index.js";
 import { mergeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
-import { parseRoleInputs } from "./initialize-team.js";
+import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
 import { roleInstructions } from "./plugin-renderer.js";
 import type { RoleInput } from "./types.js";
 
@@ -26,6 +27,7 @@ export interface InitializeOpenCodeTeamOptions {
   runtimeEntrypoint: string;
   relayUrl?: string;
   host?: OpenCodeSessionHost;
+  language?: Language;
 }
 
 export interface InitializedOpenCodeRole {
@@ -63,6 +65,7 @@ export async function initializeOpenCodeTeam(
     throw new SynloqError("INVALID_INPUT", "relayUrl must be an explicit HTTP loopback origin");
   }
   const projectRoot = await realpath(options.projectRoot);
+  const language = await resolveLanguage(projectRoot, options.language);
 
   const paths = await projectPaths(projectRoot, options.synloqHome);
   const stateStore = new TeamStateStore(paths.bindings);
@@ -77,7 +80,7 @@ export async function initializeOpenCodeTeam(
     title: role.title,
     role: role.role,
   }));
-  await writeManifest(projectRoot, participants);
+  await writeManifest(projectRoot, participants, language);
   const credentials = new CredentialStore(projectRoot, paths.home);
   await credentials.ensureCredential(project, "operator");
 
@@ -130,7 +133,7 @@ export async function initializeOpenCodeTeam(
         });
         sessionId = created.id;
         permissionsApplied = created.permissionsApplied;
-        await host.postPrompt(sessionId, roleInstructions(role));
+        await host.postPrompt(sessionId, roleInstructions(role, language));
       }
       const conversation: OpenCodeTeamConversation = {
         kind: "opencode",
@@ -163,6 +166,7 @@ export async function initializeOpenCodeTeam(
       relayUrl,
       credentialPath: credential.tokenPath,
       synloqHome: paths.home,
+      language,
       opencode: {
         projectRoot,
         agentId: role.agentId,
