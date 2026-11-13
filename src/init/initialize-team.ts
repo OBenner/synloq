@@ -36,6 +36,23 @@ const roleSchema = z
   })
   .strict();
 
+export function parseRoleInputs(
+  project: unknown,
+  roles: unknown,
+): { project: string; roles: RoleInput[] } {
+  const parsedProject = z.string().min(1).max(128).parse(project);
+  const parsedRoles = z.array(roleSchema).min(1).parse(roles) as RoleInput[];
+  const ids = new Set(parsedRoles.map((role) => role.agentId));
+  if (ids.size !== parsedRoles.length) {
+    throw new SynloqError("INVALID_INPUT", "Synloq role IDs must be unique");
+  }
+  const suppliedKeys = parsedRoles.flatMap((role) => role.conversationKey ?? []);
+  if (new Set(suppliedKeys).size !== suppliedKeys.length) {
+    throw new SynloqError("INVALID_INPUT", "one conversation cannot belong to multiple roles");
+  }
+  return { project: parsedProject, roles: parsedRoles };
+}
+
 async function listClientConversations(
   host: KimiWorkInitHost,
   projectRoot: string,
@@ -107,17 +124,8 @@ function exactConversation(
 export async function initializeTeam(
   options: InitializeTeamOptions,
 ): Promise<InitializeTeamResult> {
-  const project = z.string().min(1).max(128).parse(options.project);
-  const roles = z.array(roleSchema).min(1).parse(options.roles) as RoleInput[];
+  const { project, roles } = parseRoleInputs(options.project, options.roles);
   const projectRoot = await realpath(options.projectRoot);
-  const ids = new Set(roles.map((role) => role.agentId));
-  if (ids.size !== roles.length) {
-    throw new SynloqError("INVALID_INPUT", "Synloq role IDs must be unique");
-  }
-  const suppliedKeys = roles.flatMap((role) => role.conversationKey ?? []);
-  if (new Set(suppliedKeys).size !== suppliedKeys.length) {
-    throw new SynloqError("INVALID_INPUT", "one conversation cannot belong to multiple roles");
-  }
 
   const paths = await projectPaths(projectRoot, options.synloqHome);
   const stateStore = new TeamStateStore(paths.bindings);

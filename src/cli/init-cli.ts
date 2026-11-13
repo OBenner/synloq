@@ -8,11 +8,15 @@ import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
 import { initializeTeam } from "../init/initialize-team.js";
 import { createKimiWorkInitHost } from "../init/kimi-work-host.js";
+import { initializeOpenCodeTeam } from "../init/opencode-host.js";
 import type { InitializeTeamOptions, KimiWorkInitHost, RoleInput } from "../init/types.js";
 import { runInitWizard, type InitWizardResult } from "./init-wizard.js";
 
 export interface GenericInitDependencies {
   initialize?: (options: InitializeTeamOptions) => ReturnType<typeof initializeTeam>;
+  initializeOpenCode?: (
+    options: Parameters<typeof initializeOpenCodeTeam>[0],
+  ) => ReturnType<typeof initializeOpenCodeTeam>;
   initHost?: () => Promise<KimiWorkInitHost>;
   initWizard?: () => Promise<InitWizardResult>;
   runtimeEntrypoint?: string;
@@ -121,15 +125,22 @@ export async function runGenericInit(
       conversation: { type: "string", multiple: true },
       "plugin-source": { type: "string" },
       "synloq-home": { type: "string" },
+      host: { type: "string" },
+      "relay-url": { type: "string" },
       "non-interactive": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help) {
     io.stdout.write(
-      "Usage: synloq init [--project-root <path>] [--project <name>] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--non-interactive]\n",
+      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--non-interactive]\n",
     );
     return;
+  }
+
+  const hostName = values.host ?? "kimi-work";
+  if (hostName !== "kimi-work" && hostName !== "opencode") {
+    invalid("--host must be kimi-work or opencode");
   }
 
   const environment = dependencies.environment ?? process.env;
@@ -166,6 +177,23 @@ export async function runGenericInit(
     if (!roles.some((role) => role.agentId === id)) invalid(`unknown role assignment: ${id}`);
   }
 
+  const runtimeEntrypoint =
+    dependencies.runtimeEntrypoint ?? fileURLToPath(new URL("../mcp/stdio.js", import.meta.url));
+
+  if (hostName === "opencode") {
+    const initializeOpenCode = dependencies.initializeOpenCode ?? initializeOpenCodeTeam;
+    const result = await initializeOpenCode({
+      projectRoot,
+      project: project ?? basename(projectRoot),
+      roles,
+      ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
+      ...(values["relay-url"] ? { relayUrl: values["relay-url"] } : {}),
+      runtimeEntrypoint,
+    });
+    io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
   const host = await (dependencies.initHost ?? createKimiWorkInitHost)();
   try {
     const initialize = dependencies.initialize ?? initializeTeam;
@@ -177,9 +205,7 @@ export async function runGenericInit(
         ? resolve(values["plugin-source"])
         : defaultPluginSource(environment),
       ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
-      runtimeEntrypoint:
-        dependencies.runtimeEntrypoint ??
-        fileURLToPath(new URL("../mcp/stdio.js", import.meta.url)),
+      runtimeEntrypoint,
       host,
     });
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
