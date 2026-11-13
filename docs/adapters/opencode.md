@@ -36,3 +36,36 @@ Example `/secure/opencode-arch.json`:
 `baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: false`. It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
 
 See [README.md](README.md) for shared adapter configuration rules and the process topology.
+
+## Generic init (host: opencode)
+
+`synloq init --host opencode` automates the manual bootstrap verified in
+`docs/research/2026-11-13-opencode-manual-stand.md`:
+
+- writes the manifest and per-role credentials (reused on re-run),
+- writes legacy MCP configs (`{relayUrl, credentialPath}`) under the Synloq home,
+- merges `mcp.servers["synloq-<role>"]` into the project `opencode.json`
+  non-destructively (foreign keys preserved, broken JSON fails loud),
+- discovers the running OpenCode desktop/service (bundled versioned CLI, then
+  PATH, `OPENCODE_EXECUTABLE` override wins) and creates one visible session per
+  role via `POST /api/session`, with a permission ruleset denying the other
+  roles' tools, then posts the role prompt,
+- persists `conversations[role] = {kind: "opencode", sessionId, directory}` in
+  team state; Kimi Work entries keep parsing as before (no `kind` field).
+
+Re-running init is a no-op for live sessions (`GET /api/session/{id}` reconcile);
+a missing session is recreated. `--conversation <role>:<sessionId>` binds an
+existing session instead of creating one. `--relay-url` selects a non-default
+loopback relay port when several projects run side by side.
+
+Known limitations on this host:
+
+- **G7** — the first MCP tool use inside a newly created session may require an
+  interactive approval in the OpenCode UI.
+- The permissions ruleset grammar (`action`/`resource`/`effect` with wildcards)
+  is narrowly verified; when the service rejects it, init fails soft and creates
+  the session without host-level tool denies (the result reports
+  `permissionsApplied: false`). Role separation then rests on prompt discipline
+  only.
+- Relay auto-start for OpenCode MCP configs is not part of init yet; run
+  `synloq serve` separately (tracked as the W3 issue).

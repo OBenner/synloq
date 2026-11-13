@@ -4,8 +4,9 @@ import { SynloqError } from "../domain/errors.js";
 import { agentId } from "../domain/message.js";
 import { writeJsonAtomic } from "./atomic-file.js";
 
-const conversationSchema = z
+const kimiWorkConversationSchema = z
   .object({
+    kind: z.literal("kimi-work").optional(),
     agentId,
     workAgentId: z.string().min(1),
     sessionKey: z.string().min(1),
@@ -15,6 +16,20 @@ const conversationSchema = z
     workspacePath: z.string().min(1),
   })
   .strict();
+
+const opencodeConversationSchema = z
+  .object({
+    kind: z.literal("opencode"),
+    agentId,
+    sessionId: z.string().min(1).max(256),
+    directory: z.string().min(1),
+  })
+  .strict();
+
+// Backward compatibility: Kimi Work entries written before the union existed
+// carry no `kind`; they parse as kimi-work by default. OpenCode entries always
+// carry kind: "opencode".
+const conversationSchema = z.union([kimiWorkConversationSchema, opencodeConversationSchema]);
 
 const teamStateSchema = z
   .object({
@@ -26,6 +41,8 @@ const teamStateSchema = z
   })
   .strict();
 
+export type KimiWorkTeamConversation = z.infer<typeof kimiWorkConversationSchema>;
+export type OpenCodeTeamConversation = z.infer<typeof opencodeConversationSchema>;
 export type TeamConversation = z.infer<typeof conversationSchema>;
 export type TeamState = z.infer<typeof teamStateSchema>;
 

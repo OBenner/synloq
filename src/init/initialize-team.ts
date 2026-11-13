@@ -5,7 +5,11 @@ import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { writeManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
-import { TeamStateStore, type TeamConversation, type TeamState } from "../config/team-state.js";
+import {
+  TeamStateStore,
+  type KimiWorkTeamConversation,
+  type TeamState,
+} from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Participant } from "../domain/message.js";
 import type {
@@ -91,7 +95,7 @@ function binding(
   role: RoleInput,
   conversation: KimiWorkConversationSummary,
   projectRoot: string,
-): TeamConversation {
+): KimiWorkTeamConversation {
   if (!eligible(conversation, projectRoot)) {
     throw new SynloqError("INVALID_INPUT", "Kimi Work conversation is not eligible for this role");
   }
@@ -147,9 +151,10 @@ export async function initializeTeam(
 
   const used = new Map<string, string>();
   for (const [id, conversation] of Object.entries(state?.conversations ?? {})) {
+    if (conversation.kind === "opencode") continue;
     used.set(conversation.conversationKey, id);
   }
-  const bindings = new Map<string, TeamConversation>();
+  const bindings = new Map<string, KimiWorkTeamConversation>();
   let conversations: KimiWorkConversationSummary[] | undefined;
   const list = async (): Promise<KimiWorkConversationSummary[]> => {
     conversations = await listClientConversations(options.host, projectRoot);
@@ -161,6 +166,12 @@ export async function initializeTeam(
     const existing = state?.conversations[role.agentId];
     let conversation: KimiWorkConversationSummary;
     if (existing) {
+      if (existing.kind === "opencode") {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          "role is already bound to an OpenCode session; re-initialize with --host opencode",
+        );
+      }
       conversation = exactConversation(await list(), existing.conversationKey, projectRoot);
     } else if (role.conversationKey) {
       conversation = exactConversation(await list(), role.conversationKey, projectRoot);

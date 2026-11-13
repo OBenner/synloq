@@ -45,7 +45,11 @@ describe("TeamStateStore", () => {
     }));
 
     const persisted = await readFile(paths.bindings, "utf8");
-    expect((await store.read())?.conversations.reviewer?.conversationKey).toBe(conversationKey);
+    const reviewer = (await store.read())?.conversations.reviewer;
+    expect(reviewer?.kind).not.toBe("opencode");
+    expect(reviewer && "conversationKey" in reviewer ? reviewer.conversationKey : undefined).toBe(
+      conversationKey,
+    );
     expect(persisted).not.toContain("token");
     expect(persisted).not.toContain("clientInstructions");
   });
@@ -62,6 +66,69 @@ describe("TeamStateStore", () => {
       name: "SynloqError",
       code: "INVALID_INPUT",
     });
+  });
+
+  it("round-trips opencode sessions and legacy kimi entries in one union state", async () => {
+    const { root, home } = await fixture();
+    const paths = await projectPaths(root, home);
+    const store = new TeamStateStore(paths.bindings);
+
+    await store.update((current) => ({
+      ...(current ?? state(root)),
+      conversations: {
+        legacy: {
+          agentId: "legacy",
+          workAgentId: "main",
+          sessionKey: "agent:main:main",
+          conversationKey: "agent:main:main:conversation:legacy",
+          conversationId: "legacy",
+          workspacePath: root,
+        },
+        cto: {
+          kind: "opencode",
+          agentId: "cto",
+          sessionId: "ses_abc",
+          directory: root,
+        },
+      },
+    }));
+
+    const read = await store.read();
+    expect(read?.conversations.legacy).toMatchObject({ conversationId: "legacy" });
+    expect(read?.conversations.legacy?.kind).not.toBe("opencode");
+    expect(read?.conversations.cto).toEqual({
+      kind: "opencode",
+      agentId: "cto",
+      sessionId: "ses_abc",
+      directory: root,
+    });
+  });
+
+  it("rejects opencode entries with extra keys and unknown kinds", async () => {
+    const { root, home } = await fixture();
+    const paths = await projectPaths(root, home);
+    const store = new TeamStateStore(paths.bindings);
+    await mkdir(dirname(paths.bindings), { recursive: true });
+
+    await writeFile(
+      paths.bindings,
+      JSON.stringify({
+        ...state(root),
+        conversations: {
+          cto: { kind: "opencode", agentId: "cto", sessionId: "s", directory: root, extra: 1 },
+        },
+      }),
+    );
+    await expect(store.read()).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    await writeFile(
+      paths.bindings,
+      JSON.stringify({
+        ...state(root),
+        conversations: { cto: { kind: "other", agentId: "cto", sessionId: "s", directory: root } },
+      }),
+    );
+    await expect(store.read()).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });
 

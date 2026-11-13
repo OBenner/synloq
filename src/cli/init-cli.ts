@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
+import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
+import { discoverOpenCodeHost } from "../host/opencode/discovery.js";
 import { initializeTeam } from "../init/initialize-team.js";
 import { createKimiWorkInitHost } from "../init/kimi-work-host.js";
 import { initializeOpenCodeTeam } from "../init/opencode-host.js";
@@ -18,9 +20,15 @@ export interface GenericInitDependencies {
     options: Parameters<typeof initializeOpenCodeTeam>[0],
   ) => ReturnType<typeof initializeOpenCodeTeam>;
   initHost?: () => Promise<KimiWorkInitHost>;
+  openCodeHost?: () => Promise<OpenCodeSessionHost>;
   initWizard?: () => Promise<InitWizardResult>;
   runtimeEntrypoint?: string;
   environment?: NodeJS.ProcessEnv;
+}
+
+async function defaultOpenCodeHost(): Promise<OpenCodeSessionHost> {
+  const discovered = await discoverOpenCodeHost();
+  return new OpencodeApiClient(discovered.baseUrl);
 }
 
 interface InitIo {
@@ -181,6 +189,7 @@ export async function runGenericInit(
     dependencies.runtimeEntrypoint ?? fileURLToPath(new URL("../mcp/stdio.js", import.meta.url));
 
   if (hostName === "opencode") {
+    const openCodeHost = await (dependencies.openCodeHost ?? defaultOpenCodeHost)();
     const initializeOpenCode = dependencies.initializeOpenCode ?? initializeOpenCodeTeam;
     const result = await initializeOpenCode({
       projectRoot,
@@ -189,6 +198,7 @@ export async function runGenericInit(
       ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
       ...(values["relay-url"] ? { relayUrl: values["relay-url"] } : {}),
       runtimeEntrypoint,
+      host: openCodeHost,
     });
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;

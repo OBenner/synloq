@@ -1,4 +1,4 @@
-import type { TeamConversation } from "../config/team-state.js";
+import type { KimiWorkTeamConversation } from "../config/team-state.js";
 import type {
   KimiWorkConversationSummary,
   KimiWorkCreateInput,
@@ -49,7 +49,7 @@ export interface InitializeTeamResult {
 
 export interface RenderPluginRole {
   role: RoleInput;
-  binding: TeamConversation;
+  binding: KimiWorkTeamConversation;
   configPath: string;
 }
 

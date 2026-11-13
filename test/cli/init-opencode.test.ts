@@ -22,6 +22,11 @@ describe("synloq init --host opencode", () => {
       })),
     }));
     const initHost = vi.fn();
+    const fakeOpenCodeHost = {
+      createSession: vi.fn(),
+      getSession: vi.fn(),
+      postPrompt: vi.fn(),
+    };
     let stdout = "";
     let stderr = "";
 
@@ -46,7 +51,7 @@ describe("synloq init --host opencode", () => {
         stdout: { write: (chunk) => ((stdout += String(chunk)), true) },
         stderr: { write: (chunk) => ((stderr += String(chunk)), true) },
       },
-      { initializeOpenCode, initHost },
+      { initializeOpenCode, initHost, openCodeHost: async () => fakeOpenCodeHost },
     );
 
     expect(exitCode).toBe(0);

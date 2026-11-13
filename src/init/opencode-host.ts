@@ -4,12 +4,18 @@ import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { writeManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
-import { TeamStateStore, type TeamState } from "../config/team-state.js";
+import {
+  TeamStateStore,
+  type OpenCodeTeamConversation,
+  type TeamState,
+} from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
 import { mergeOpencodeMcpServers } from "../host/opencode/config-file.js";
+import type { OpenCodeSessionHost } from "../host/opencode/client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs } from "./initialize-team.js";
+import { roleInstructions } from "./plugin-renderer.js";
 import type { RoleInput } from "./types.js";
 
 export interface InitializeOpenCodeTeamOptions {
@@ -19,12 +25,15 @@ export interface InitializeOpenCodeTeamOptions {
   synloqHome?: string;
   runtimeEntrypoint: string;
   relayUrl?: string;
+  host?: OpenCodeSessionHost;
 }
 
 export interface InitializedOpenCodeRole {
   agentId: string;
   configPath: string;
   credentialPath: string;
+  sessionId?: string;
+  permissionsApplied?: boolean;
 }
 
 export interface InitializeOpenCodeTeamResult {
@@ -38,19 +47,16 @@ export interface InitializeOpenCodeTeamResult {
 
 const DEFAULT_RELAY_URL = "http://127.0.0.1:4100";
 
-// OpenCode init (W1a): manifest, credentials, legacy MCP configs and a
-// non-destructive opencode.json merge. Visible sessions (team-state
-// conversations) land with W1b; existing conversation entries are preserved
-// so re-running init after sessions exist stays a no-op for them.
+// OpenCode init (W1): manifest, credentials, legacy MCP configs, a
+// non-destructive opencode.json merge, and — when a session host is
+// supplied — one visible session per role via the OpenCode server API.
+// Re-running reconciles: live sessions are kept, missing ones recreated.
 export async function initializeOpenCodeTeam(
   options: InitializeOpenCodeTeamOptions,
 ): Promise<InitializeOpenCodeTeamResult> {
   const { project, roles } = parseRoleInputs(options.project, options.roles);
-  if (roles.some((role) => role.conversationKey !== undefined)) {
-    throw new SynloqError(
-      "INVALID_INPUT",
-      "--conversation is not supported for the opencode host yet",
-    );
+  if (!options.host && roles.some((role) => role.conversationKey !== undefined)) {
+    throw new SynloqError("INVALID_INPUT", "--conversation requires a reachable OpenCode service");
   }
   const relayUrl = options.relayUrl ?? DEFAULT_RELAY_URL;
   if (!isLoopbackHttpUrl(relayUrl)) {
@@ -60,7 +66,7 @@ export async function initializeOpenCodeTeam(
 
   const paths = await projectPaths(projectRoot, options.synloqHome);
   const stateStore = new TeamStateStore(paths.bindings);
-  const state = await stateStore.read();
+  let state = await stateStore.read();
   if (state && (state.project !== project || state.projectRoot !== projectRoot)) {
     throw new SynloqError("INVALID_INPUT", "Synloq project state ownership does not match");
   }
@@ -75,6 +81,7 @@ export async function initializeOpenCodeTeam(
   const credentials = new CredentialStore(projectRoot, paths.home);
   await credentials.ensureCredential(project, "operator");
 
+  const host = options.host;
   const initializedRoles: InitializedOpenCodeRole[] = [];
   const servers: Record<string, { type: "local"; command: string[]; enabled: boolean }> = {};
   for (const role of roles) {
@@ -89,24 +96,84 @@ export async function initializeOpenCodeTeam(
       command: ["node", options.runtimeEntrypoint, configPath],
       enabled: true,
     };
-    initializedRoles.push({
+    const initialized: InitializedOpenCodeRole = {
       agentId: role.agentId,
       configPath,
       credentialPath: credential.tokenPath,
-    });
+    };
+
+    if (host) {
+      const existing = state?.conversations[role.agentId];
+      if (existing && existing.kind !== "opencode") {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `role ${role.agentId} is already bound to a Kimi Work conversation`,
+        );
+      }
+      let sessionId: string | undefined;
+      let permissionsApplied: boolean | undefined;
+      if (existing && (await host.getSession(existing.sessionId))) {
+        sessionId = existing.sessionId;
+      } else if (role.conversationKey) {
+        if (!(await host.getSession(role.conversationKey))) {
+          throw new SynloqError(
+            "INVALID_INPUT",
+            `OpenCode session ${role.conversationKey} does not exist`,
+          );
+        }
+        sessionId = role.conversationKey;
+      } else {
+        const denyTools = roles
+          .filter((other) => other.agentId !== role.agentId)
+          .map((other) => `synloq-${other.agentId}*`);
+        const created = await host.createSession({
+          title: role.title,
+          directory: projectRoot,
+          denyTools,
+        });
+        sessionId = created.id;
+        permissionsApplied = created.permissionsApplied;
+        await host.postPrompt(sessionId, roleInstructions(role));
+      }
+      const conversation: OpenCodeTeamConversation = {
+        kind: "opencode",
+        agentId: role.agentId,
+        sessionId,
+        directory: projectRoot,
+      };
+      state = await stateStore.update((current): TeamState => {
+        const base: TeamState = current ?? {
+          version: 1,
+          project,
+          projectRoot,
+          conversations: {},
+        };
+        return {
+          ...base,
+          project,
+          projectRoot,
+          conversations: { ...base.conversations, [role.agentId]: conversation },
+        };
+      });
+      initialized.sessionId = sessionId;
+      if (permissionsApplied !== undefined) initialized.permissionsApplied = permissionsApplied;
+    }
+    initializedRoles.push(initialized);
   }
 
   const opencodeConfigPath = await mergeOpencodeMcpServers(projectRoot, servers);
 
-  await stateStore.update((current): TeamState => {
-    const base: TeamState = current ?? {
-      version: 1,
-      project,
-      projectRoot,
-      conversations: {},
-    };
-    return { ...base, project, projectRoot };
-  });
+  if (!host) {
+    await stateStore.update((current): TeamState => {
+      const base: TeamState = current ?? {
+        version: 1,
+        project,
+        projectRoot,
+        conversations: {},
+      };
+      return { ...base, project, projectRoot };
+    });
+  }
 
   return {
     project,
