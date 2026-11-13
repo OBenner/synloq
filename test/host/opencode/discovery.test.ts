@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SynloqError } from "../../../src/domain/errors.js";
 import {
   discoverOpenCodeHost,
+  resolveOpenCodeServiceAuth,
   type OpenCodeDiscoveryExec,
 } from "../../../src/host/opencode/discovery.js";
 
@@ -19,6 +20,11 @@ function execFail(): OpenCodeDiscoveryExec {
 
 const infoStdout = 'log line\n{"urls":["http://127.0.0.1:52314/"]}';
 
+// Hermetic default: never touch the real service.json on the host machine.
+const noFile = async (): Promise<string> => {
+  throw new Error("ENOENT");
+};
+
 describe("OpenCode host discovery", () => {
   it("prefers OPENCODE_EXECUTABLE override and resolves the service base URL", async () => {
     const calls: string[][] = [];
@@ -34,6 +40,7 @@ describe("OpenCode host discovery", () => {
       readdir: async () => {
         throw new Error("ENOENT");
       },
+      readfile: noFile,
     });
     expect(endpoint).toEqual({
       cliPath: "C:\\tools\\opencode.exe",
@@ -58,6 +65,7 @@ describe("OpenCode host discovery", () => {
       platform: "win32",
       exec,
       readdir: async () => ["2.2.7-x64", "2.10.3-x64", "2.9.99-x64", "not-a-version", "README"],
+      readfile: noFile,
     });
     expect(endpoint.source).toBe("bundled");
     expect(endpoint.baseUrl).toBe("http://127.0.0.1:52314/");
@@ -76,6 +84,7 @@ describe("OpenCode host discovery", () => {
       readdir: async () => {
         throw new Error("ENOENT");
       },
+      readfile: noFile,
     });
     expect(endpoint).toEqual({
       cliPath: "C:\\bin\\opencode.exe",
@@ -93,6 +102,7 @@ describe("OpenCode host discovery", () => {
       environment: {},
       platform: "linux",
       exec,
+      readfile: noFile,
     });
     expect(endpoint.cliPath).toBe("/usr/local/bin/opencode");
     expect(endpoint.source).toBe("path");
@@ -109,6 +119,7 @@ describe("OpenCode host discovery", () => {
       platform: "win32",
       exec,
       readdir: async () => ["2.2.7-x64"],
+      readfile: noFile,
     });
     expect(endpoint.source).toBe("path");
   });
@@ -122,6 +133,7 @@ describe("OpenCode host discovery", () => {
         readdir: async () => {
           throw new Error("ENOENT");
         },
+        readfile: noFile,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
@@ -132,6 +144,7 @@ describe("OpenCode host discovery", () => {
         environment: { ...windowsEnvironment, OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe" },
         platform: "win32",
         exec: execFail(),
+        readfile: noFile,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
@@ -143,6 +156,7 @@ describe("OpenCode host discovery", () => {
       platform: "win32",
       exec,
       readdir: async () => ["2.2.7-x64"],
+      readfile: noFile,
     });
     await expect(promise).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(promise).rejects.toBeInstanceOf(SynloqError);
@@ -154,6 +168,7 @@ describe("OpenCode host discovery", () => {
         environment: { ...windowsEnvironment, OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe" },
         platform: "win32",
         exec: execOk('{"urls":["not a url"]}'),
+        readfile: noFile,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
@@ -164,6 +179,7 @@ describe("OpenCode host discovery", () => {
         environment: { ...windowsEnvironment, OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe" },
         platform: "win32",
         exec: execOk("plain text without json"),
+        readfile: noFile,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
@@ -174,7 +190,58 @@ describe("OpenCode host discovery", () => {
         environment: { ...windowsEnvironment, OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe" },
         platform: "win32",
         exec: execOk('{"urls":[]}'),
+        readfile: noFile,
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("attaches the service password when service.json exists", async () => {
+    const endpoint = await discoverOpenCodeHost({
+      environment: {
+        ...windowsEnvironment,
+        OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe",
+        HOME: "C:\\Users\\test",
+      },
+      platform: "win32",
+      exec: execOk(infoStdout),
+      readfile: async (path) => {
+        expect(path.replaceAll("\\", "/")).toBe("C:/Users/test/.config/opencode/service.json");
+        return '{"password":"secret-service-password"}';
+      },
+    });
+    expect(endpoint.authToken).toBe("secret-service-password");
+  });
+
+  it("omits the token when service.json is absent or malformed", async () => {
+    const base = {
+      environment: { ...windowsEnvironment, OPENCODE_EXECUTABLE: "C:\\tools\\opencode.exe" },
+      platform: "win32" as const,
+      exec: execOk(infoStdout),
+    };
+    const missing = await discoverOpenCodeHost({
+      ...base,
+      readfile: async () => {
+        throw new Error("ENOENT");
+      },
+    });
+    expect(missing.authToken).toBeUndefined();
+    const malformed = await discoverOpenCodeHost({
+      ...base,
+      readfile: async () => "{ not json",
+    });
+    expect(malformed.authToken).toBeUndefined();
+  });
+});
+
+describe("resolveOpenCodeServiceAuth", () => {
+  it("honours XDG_CONFIG_HOME over ~/.config", async () => {
+    const token = await resolveOpenCodeServiceAuth({
+      environment: { XDG_CONFIG_HOME: "/xdg", HOME: "/home/test" },
+      readfile: async (path) => {
+        expect(path.replaceAll("\\", "/")).toBe("/xdg/opencode/service.json");
+        return '{"password":"xdg-password"}';
+      },
+    });
+    expect(token).toBe("xdg-password");
   });
 });

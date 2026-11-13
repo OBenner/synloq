@@ -30,11 +30,10 @@ function unavailable(): SynloqError {
 
 export class OpencodeApiClient implements OpenCodeSessionHost {
   private readonly baseUrl: string;
+  private readonly authToken?: string;
+  private readonly fetchImpl: OpenCodeFetch;
 
-  constructor(
-    baseUrl: string,
-    private readonly fetchImpl: OpenCodeFetch = fetch as unknown as OpenCodeFetch,
-  ) {
+  constructor(baseUrl: string, options: { fetch?: OpenCodeFetch; authToken?: string } = {}) {
     if (!isLoopbackHttpUrl(baseUrl)) {
       throw new SynloqError(
         "INVALID_INPUT",
@@ -42,6 +41,8 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
       );
     }
     this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.fetchImpl = options.fetch ?? (fetch as unknown as OpenCodeFetch);
+    if (options.authToken !== undefined) this.authToken = options.authToken;
   }
 
   private async request(
@@ -53,7 +54,10 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(this.authToken !== undefined ? { authorization: `Bearer ${this.authToken}` } : {}),
+        },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch {
@@ -93,6 +97,7 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
       permissions.length > 0 &&
       result.status >= 400 &&
       result.status < 500 &&
+      result.status !== 401 &&
       result.status !== 404
     ) {
       result = await this.request("POST", "/api/session", body(false));
@@ -105,6 +110,12 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
 
   private expectCreated(result: { status: number; json: unknown }): { id: string } {
     if (result.status >= 500) throw unavailable();
+    if (result.status === 401 || result.status === 403) {
+      throw new SynloqError(
+        "INVALID_INPUT",
+        "OpenCode service rejected the request as unauthorized (service password missing or wrong)",
+      );
+    }
     if (result.status !== 200 && result.status !== 201) {
       throw new SynloqError(
         "INVALID_INPUT",

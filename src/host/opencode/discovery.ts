@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { SynloqError } from "../../domain/errors.js";
@@ -8,6 +9,8 @@ export interface OpenCodeHostEndpoint {
   cliPath: string;
   baseUrl: string;
   source: "override" | "bundled" | "path";
+  /** Bearer password of the local OpenCode service, when configured. Never log. */
+  authToken?: string;
 }
 
 export type OpenCodeDiscoveryExec = (
@@ -20,10 +23,37 @@ export interface OpenCodeDiscoveryOptions {
   environment?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   readdir?: (directory: string) => Promise<string[]>;
+  readfile?: (path: string) => Promise<string>;
   exec?: OpenCodeDiscoveryExec;
 }
 
 const infoSchema = z.object({ urls: z.array(z.string().min(1)).min(1) }).passthrough();
+
+const serviceAuthSchema = z.object({ password: z.string().min(1) }).passthrough();
+
+const defaultReadfile = (path: string): Promise<string> => readFile(path, "utf8");
+
+// The OpenCode desktop service (>= 2.x) protects its loopback API with a
+// bearer password stored in <config-home>/opencode/service.json. Absence of
+// the file means an unauthenticated server — that is not an error.
+export async function resolveOpenCodeServiceAuth(
+  options: Pick<OpenCodeDiscoveryOptions, "environment" | "readfile"> = {},
+): Promise<string | undefined> {
+  const environment = options.environment ?? process.env;
+  const read = options.readfile ?? defaultReadfile;
+  const configHome = environment.XDG_CONFIG_HOME ?? join(environment.HOME ?? homedir(), ".config");
+  let input: string;
+  try {
+    input = await read(join(configHome, "opencode", "service.json"));
+  } catch {
+    return undefined;
+  }
+  try {
+    return serviceAuthSchema.parse(JSON.parse(input)).password;
+  } catch {
+    return undefined;
+  }
+}
 
 const defaultExec: OpenCodeDiscoveryExec = (file, args, options) =>
   new Promise((resolve, reject) => {
@@ -188,7 +218,16 @@ export async function discoverOpenCodeHost(
   for (const candidate of candidates) {
     try {
       const baseUrl = await serviceBaseUrl(candidate.cliPath, environment, exec);
-      return { cliPath: candidate.cliPath, baseUrl, source: candidate.source };
+      const authToken = await resolveOpenCodeServiceAuth({
+        environment,
+        ...(options.readfile ? { readfile: options.readfile } : {}),
+      });
+      return {
+        cliPath: candidate.cliPath,
+        baseUrl,
+        source: candidate.source,
+        ...(authToken !== undefined ? { authToken } : {}),
+      };
     } catch (error) {
       if (error instanceof SynloqError && error.code === "INVALID_INPUT") throw error;
     }

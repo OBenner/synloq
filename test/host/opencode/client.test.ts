@@ -33,7 +33,7 @@ describe("OpencodeApiClient", () => {
 
   it("creates a session with deny rules for other roles' tools", async () => {
     const { fetchImpl, calls } = fetchSequence([{ status: 200, body: { id: "ses_1" } }]);
-    const client = new OpencodeApiClient("http://127.0.0.1:52314", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
     const created = await client.createSession({
       title: "CTO",
       directory: "I:\\project",
@@ -61,7 +61,7 @@ describe("OpencodeApiClient", () => {
       { status: 400, body: { error: "bad permissions" } },
       { status: 200, body: { id: "ses_2" } },
     ]);
-    const client = new OpencodeApiClient("http://127.0.0.1:52314/", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314/", { fetch: fetchImpl });
     const created = await client.createSession({
       title: "CTO",
       directory: "/project",
@@ -74,7 +74,7 @@ describe("OpencodeApiClient", () => {
 
   it("fails loud when session creation fails without a permissions cause", async () => {
     const { fetchImpl } = fetchSequence([{ status: 400, body: { error: "bad request" } }]);
-    const client = new OpencodeApiClient("http://127.0.0.1:52314", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
     await expect(
       client.createSession({ title: "CTO", directory: "/project", denyTools: [] }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -84,7 +84,7 @@ describe("OpencodeApiClient", () => {
     const fetchImpl: OpenCodeFetch = async () => {
       throw new Error("ECONNREFUSED");
     };
-    const client = new OpencodeApiClient("http://127.0.0.1:52314", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
     await expect(client.getSession("ses_x")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
@@ -93,7 +93,7 @@ describe("OpencodeApiClient", () => {
       { status: 200, body: { id: "ses_1" } },
       { status: 404 },
     ]);
-    const client = new OpencodeApiClient("http://127.0.0.1:52314", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
     await expect(client.getSession("ses_1")).resolves.toBe(true);
     await expect(client.getSession("ses_gone")).resolves.toBe(false);
     expect(calls[0]).toMatchObject({
@@ -104,7 +104,7 @@ describe("OpencodeApiClient", () => {
 
   it("posts prompts and rejects error statuses", async () => {
     const { fetchImpl, calls } = fetchSequence([{ status: 200, body: {} }]);
-    const client = new OpencodeApiClient("http://127.0.0.1:52314", fetchImpl);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
     await client.postPrompt("ses_1", "hello role");
     expect(calls).toEqual([
       {
@@ -114,12 +114,44 @@ describe("OpencodeApiClient", () => {
       },
     ]);
 
-    const failing = new OpencodeApiClient(
-      "http://127.0.0.1:52314",
-      fetchSequence([{ status: 409 }]).fetchImpl,
-    );
+    const failing = new OpencodeApiClient("http://127.0.0.1:52314", {
+      fetch: fetchSequence([{ status: 409 }]).fetchImpl,
+    });
     await expect(failing.postPrompt("ses_1", "x")).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
+  });
+
+  it("sends the bearer password only when one is configured", async () => {
+    const seen: Array<Record<string, string>> = [];
+    const capture: OpenCodeFetch = async (_url, init) => {
+      seen.push(init.headers);
+      return { status: 200, text: async () => '{"id":"ses_1"}' };
+    };
+    const authed = new OpencodeApiClient("http://127.0.0.1:52314", {
+      fetch: capture,
+      authToken: "service-password",
+    });
+    await authed.createSession({ title: "CTO", directory: "/p", denyTools: [] });
+    expect(seen[0]).toEqual({
+      "content-type": "application/json",
+      authorization: "Bearer service-password",
+    });
+
+    const anonymous = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: capture });
+    await anonymous.createSession({ title: "CTO", directory: "/p", denyTools: [] });
+    expect(seen[1]).toEqual({ "content-type": "application/json" });
+  });
+
+  it("maps 401 to a clear unauthorized error without a permissions retry", async () => {
+    const { fetchImpl, calls } = fetchSequence([{ status: 401 }]);
+    const client = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: fetchImpl });
+    await expect(
+      client.createSession({ title: "CTO", directory: "/p", denyTools: ["synloq-arch*"] }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("unauthorized"),
+    });
+    expect(calls).toHaveLength(1);
   });
 });

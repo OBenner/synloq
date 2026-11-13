@@ -28,7 +28,9 @@ export interface GenericInitDependencies {
 
 async function defaultOpenCodeHost(): Promise<OpenCodeSessionHost> {
   const discovered = await discoverOpenCodeHost();
-  return new OpencodeApiClient(discovered.baseUrl);
+  return new OpencodeApiClient(discovered.baseUrl, {
+    ...(discovered.authToken !== undefined ? { authToken: discovered.authToken } : {}),
+  });
 }
 
 interface InitIo {
