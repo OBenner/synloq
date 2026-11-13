@@ -90,7 +90,8 @@ describe("HTTP adapter failure recovery", () => {
     expect(adapter.visible(SESSION).map((entry) => entry.id)).toEqual([first.id, second.id]);
   });
 
-  it("durably quarantines an uncertain non-idempotent result and pauses the recipient", async () => {
+  it("releases an uncertain non-idempotent result without pausing the recipient", async () => {
+    let fail = true;
     const adapter: DeliveryAdapter = {
       capabilities: {
         activeDelivery: true,
@@ -98,9 +99,10 @@ describe("HTTP adapter failure recovery", () => {
         clientIdempotency: true,
       },
       state: async () => "idle",
-      submit: async () => {
+      submit: async (sessionId, message) => {
         adapter.capabilities.clientIdempotency = false;
-        throw new SynloqError("DELIVERY_UNCERTAIN", "admission outcome is unknown");
+        if (fail) throw new SynloqError("DELIVERY_UNCERTAIN", "admission outcome is unknown");
+        return { state: "delivered", clientMessageId: message.id };
       },
     };
     const binding = await register(adapter);
@@ -108,9 +110,13 @@ describe("HTTP adapter failure recovery", () => {
     const runner = new HttpAdapterRunner(arch, adapter, binding, 0);
 
     await expect(runner.runOnce()).resolves.toBe("failed");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
-    expect(relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(true);
+    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(false);
     expect(relay.messages.isPaused(PROJECT, "participant", "cto")).toBe(false);
+
+    fail = false;
+    await expect(runner.runOnce()).resolves.toBe("delivered");
+    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
   });
 
   it("rejects a failure report from a different participant", async () => {

@@ -129,48 +129,23 @@ export class SessionStore {
       const observedAt = new Date(now).toISOString();
       const leaseExpiresAt = new Date(now + LEASE_DURATION_MS).toISOString();
       if (existing) {
-        const submitted = this.database
+        // A fresh generation reconciles outstanding claims: every lingering
+        // submitted delivery (including previously quarantined ones) returns to
+        // the FIFO queue. Resubmission is probe-gated by the receiving adapter
+        // (history reconcile or client idempotency), so no pause gate and no
+        // quarantine entry is created here — an ambiguous host response must not
+        // silently mute the participant (issue #28).
+        this.database
           .prepare(
-            `SELECT id, acceptance_consumed_generation FROM messages
+            `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+             claim_generation = NULL
              WHERE project = ? AND recipient = ? AND delivery_state = 'submitted'
-               AND NOT EXISTS (
-                 SELECT 1 FROM delivery_quarantine WHERE message_id = messages.id
-               )
-             ORDER BY created_at, id`,
+               AND acceptance_consumed_generation IS NULL`,
           )
-          .all(registration.project, registration.agentId) as Array<{
-          id: string;
-          acceptance_consumed_generation: number | null;
-        }>;
-        for (const message of submitted) {
-          if (message.acceptance_consumed_generation !== null) continue;
-          if (
-            existing.session_id === registration.sessionId &&
-            existing.client_idempotency === 1 &&
-            registration.capabilities.clientIdempotency
-          ) {
-            this.database
-              .prepare(
-                `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
-                 claim_generation = NULL WHERE id = ? AND delivery_state = 'submitted'`,
-              )
-              .run(message.id);
-          } else {
-            this.database
-              .prepare(
-                `INSERT INTO delivery_quarantine (message_id, project, recipient, quarantined_at)
-                 VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
-              )
-              .run(message.id, registration.project, registration.agentId, observedAt);
-            this.database
-              .prepare(
-                `INSERT INTO pause_gates (project, scope, scope_id, created_at)
-                 VALUES (?, 'participant', ?, ?)
-                 ON CONFLICT(project, scope, scope_id) DO NOTHING`,
-              )
-              .run(registration.project, registration.agentId, observedAt);
-          }
-        }
+          .run(registration.project, registration.agentId);
+        this.database
+          .prepare("DELETE FROM delivery_quarantine WHERE project = ? AND recipient = ?")
+          .run(registration.project, registration.agentId);
       }
 
       const acceptanceConsumed =

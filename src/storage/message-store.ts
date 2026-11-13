@@ -256,6 +256,10 @@ export class SQLiteMessageStore {
                WHERE blocker.project = candidate.project
                  AND blocker.recipient = candidate.recipient
                  AND blocker.delivery_state = 'submitted'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM delivery_quarantine
+                   WHERE delivery_quarantine.message_id = blocker.id
+                 )
                  AND (
                    blocker.created_at < candidate.created_at OR
                    (blocker.created_at = candidate.created_at AND blocker.id < candidate.id)
@@ -330,6 +334,10 @@ export class SQLiteMessageStore {
                WHERE blocker.project = candidate.project
                  AND blocker.recipient = candidate.recipient
                  AND blocker.delivery_state = 'submitted'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM delivery_quarantine
+                   WHERE delivery_quarantine.message_id = blocker.id
+                 )
                  AND (
                    blocker.created_at < candidate.created_at OR
                    (blocker.created_at = candidate.created_at AND blocker.id < candidate.id)
@@ -496,27 +504,11 @@ export class SQLiteMessageStore {
         throw new SynloqError("UNAUTHORIZED", "delivery failure uses a stale claim");
       }
 
-      if (
-        code === "DELIVERY_UNCERTAIN" &&
-        (!clientIdempotency || session.client_idempotency !== 1)
-      ) {
-        const quarantinedAt = new Date(this.clock.now()).toISOString();
-        this.database
-          .prepare(
-            `INSERT INTO delivery_quarantine (message_id, project, recipient, quarantined_at)
-             VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
-          )
-          .run(id, project, recipient, quarantinedAt);
-        this.database
-          .prepare(
-            `INSERT INTO pause_gates (project, scope, scope_id, created_at)
-             VALUES (?, 'participant', ?, ?)
-             ON CONFLICT(project, scope, scope_id) DO NOTHING`,
-          )
-          .run(project, recipient, quarantinedAt);
-        return toMessage(row);
-      }
-
+      // Uncertain outcomes release back to the queue instead of quarantining:
+      // resubmission is probe-gated by the adapter (history reconcile or client
+      // idempotency), so a transient host hiccup must not mute the participant.
+      // clientIdempotency is retained in the signature for wire compatibility.
+      void clientIdempotency;
       const result = this.database
         .prepare(
           `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
@@ -531,6 +523,34 @@ export class SQLiteMessageStore {
       const updated = this.findById(id);
       if (!updated) throw new Error("reset message could not be read");
       return toMessage(updated);
+    });
+  }
+
+  /**
+   * Releases quarantined deliveries of a participant back into the FIFO queue.
+   * Called on (re)registration: a fresh generation is the natural reconcile
+   * point, and resubmission is probe-gated by the receiving adapter.
+   */
+  releaseQuarantinedDeliveries(project: string, recipient: string): number {
+    return this.write(() => {
+      const released = this.database
+        .prepare(
+          `UPDATE messages SET delivery_state = 'stored', claim_session_id = NULL,
+             claim_generation = NULL
+           WHERE project = ? AND recipient = ? AND delivery_state = 'submitted'
+             AND acceptance_consumed_generation IS NULL
+             AND EXISTS (
+               SELECT 1 FROM delivery_quarantine
+               WHERE delivery_quarantine.message_id = messages.id
+                 AND delivery_quarantine.project = messages.project
+                 AND delivery_quarantine.recipient = messages.recipient
+             )`,
+        )
+        .run(project, recipient);
+      this.database
+        .prepare("DELETE FROM delivery_quarantine WHERE project = ? AND recipient = ?")
+        .run(project, recipient);
+      return Number(released.changes);
     });
   }
 

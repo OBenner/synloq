@@ -318,33 +318,41 @@ describe("Dispatcher", () => {
     expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
   });
 
-  it("quarantines uncertain delivery without client idempotency across kicks, heartbeats, and reaping", async () => {
+  it("releases uncertain delivery without muting the participant and retries to success", async () => {
     const f = makeFixture({ clientIdempotency: false });
     const uncertain = createMessage(f, "message-uncertain", "2026-11-09T00:00:00.000Z");
     const later = createMessage(f, "message-quarantined", "2026-11-09T00:00:01.000Z");
-    f.adapter.handler = () =>
-      Promise.reject(new SynloqError("DELIVERY_UNCERTAIN", "submission outcome is unknown"));
+    let attempts = 0;
+    f.adapter.handler = (candidate) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return Promise.reject(
+          new SynloqError("DELIVERY_UNCERTAIN", "submission outcome is unknown"),
+        );
+      }
+      return Promise.resolve({ state: "delivered", clientMessageId: candidate.id });
+    };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
 
+    // The ambiguous outcome returns the message to the queue; no pause gate,
+    // no quarantine block — the participant is never muted (issue #28).
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("stored");
     expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
-    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(true);
+    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      heartbeat(f);
-      await f.dispatcher.kick(PROJECT, AGENT);
-      f.clock.advance(15_001);
-      f.sessions.reapExpired(f.store);
-      await f.dispatcher.kick(PROJECT, AGENT);
-    }
+    await f.dispatcher.kick(PROJECT, AGENT);
 
-    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.adapter.submissions[0]?.id).toBe(uncertain.id);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
-    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(true);
+    expect(f.adapter.submit).toHaveBeenCalledTimes(3);
+    expect(f.adapter.submissions.map((candidate) => candidate.id)).toEqual([
+      uncertain.id,
+      uncertain.id,
+      later.id,
+    ]);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(later.id)?.deliveryState).toBe("delivered");
+    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
   });
 
   it("retries uncertain delivery with the same ID when the client is idempotent", async () => {
@@ -464,55 +472,39 @@ describe("Dispatcher", () => {
     expect(f.store.getMessage(secondId)?.deliveryState).toBe("delivered");
   });
 
-  it("keeps asymmetric uncertain quarantine through reaping and participant resume", async () => {
+  it("releases asymmetric uncertain delivery and recovers without operator resume", async () => {
     const directory = mkdtempSync(join(tmpdir(), "synloq-asymmetric-quarantine-"));
     temporaryDirectories.push(directory);
     const database = join(directory, "synloq.sqlite");
     const f = makeFixture({ clientIdempotency: false }, { clientIdempotency: true }, database);
     const uncertain = createMessage(f, "message-asymmetric", "2026-11-09T00:00:00.000Z");
     const later = createMessage(f, "message-after-resume", "2026-11-09T00:00:01.000Z");
-    f.adapter.handler = () =>
-      Promise.reject(new SynloqError("DELIVERY_UNCERTAIN", "submission outcome is unknown"));
+    let attempts = 0;
+    f.adapter.handler = (candidate) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return Promise.reject(
+          new SynloqError("DELIVERY_UNCERTAIN", "submission outcome is unknown"),
+        );
+      }
+      return Promise.resolve({ state: "delivered", clientMessageId: candidate.id });
+    };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(true);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("stored");
+    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
 
     f.clock.advance(15_001);
     f.sessions.reapExpired(f.store);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-
-    f.store.resume(PROJECT, "participant", AGENT);
     heartbeat(f);
     await f.dispatcher.kick(PROJECT, AGENT);
 
-    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
-
-    f.clock.advance(15_001);
-    f.sessions.reapExpired(f.store);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-
-    f.sessions.register(
-      {
-        project: PROJECT,
-        agentId: AGENT,
-        sessionId: SESSION,
-        protocolVersion: 1,
-        capabilities: {
-          activeDelivery: true,
-          stateReporting: true,
-          clientIdempotency: true,
-        },
-      },
-      false,
-    );
-    await f.dispatcher.kick(PROJECT, AGENT);
-
-    expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("submitted");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
+    // Recovery needs no operator resume: the retry delivers the ambiguous
+    // message and the FIFO successor right behind it (issue #28).
+    expect(f.adapter.submit).toHaveBeenCalledTimes(3);
+    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(later.id)?.deliveryState).toBe("delivered");
+    expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
   });
 
   it("reaps ordinary idempotent submissions during an operator pause", async () => {

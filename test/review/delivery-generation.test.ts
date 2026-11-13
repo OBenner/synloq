@@ -262,7 +262,7 @@ describe("generation-bound HTTP delivery", () => {
     expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
   });
 
-  it("quarantines an outstanding non-idempotent claim on restart instead of reposting", async () => {
+  it("releases an outstanding non-idempotent claim on restart and delivers it once", async () => {
     const current = await fixture();
     const nonIdempotent = { ...capabilities, clientIdempotency: false };
     const old = await register(current.arch, SESSION, nonIdempotent);
@@ -270,10 +270,21 @@ describe("generation-bound HTTP delivery", () => {
     const message = await send(current, "review-restart-non-idempotent");
     await poll(current.arch, old);
 
-    await register(current.arch, SESSION, nonIdempotent);
+    const adapter = new ReferenceAdapter();
+    const fresh = await register(current.arch, SESSION, nonIdempotent);
+    await idle(current.arch, fresh);
 
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
-    expect(current.relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(true);
+    // Re-registration reconciles the outstanding claim back into the queue
+    // instead of quarantining it and muting the participant (issue #28).
+    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(current.relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(false);
+
+    const runner = new HttpAdapterRunner(current.arch, adapter, fresh, 0);
+    runners.push(runner);
+    await runner.runOnce();
+
+    expect(adapter.visible(SESSION).map((entry) => entry.id)).toEqual([message.id]);
+    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
   });
 });
 

@@ -387,11 +387,13 @@ describe("expired-session reaping", () => {
     expect(messages.getMessage("message-renewed")?.deliveryState).toBe("submitted");
   });
 
-  it("does not reset a stale snapshot after idempotency capability replacement", () => {
+  it("releases a stale claim at replacement registration, not through reaping", () => {
+    let stateAfterReplacement: string | undefined;
     const { store, clock, messages } = makeSharedReapingStores(() => {
       const replacement = ctoSession("session-b");
       replacement.capabilities.clientIdempotency = false;
       store.register(replacement, true);
+      stateAfterReplacement = messages.getMessage("message-replaced")?.deliveryState;
     });
     store.register(ctoSession("session-a"), false);
     createSubmitted(messages, "message-replaced");
@@ -399,7 +401,11 @@ describe("expired-session reaping", () => {
 
     store.reapExpired(messages);
 
-    expect(messages.getMessage("message-replaced")?.deliveryState).toBe("submitted");
+    // The replacement registration is the reconcile point and releases the
+    // outstanding claim itself (issue #28); reaping must not act on the stale
+    // idempotent snapshot afterwards.
+    expect(stateAfterReplacement).toBe("stored");
+    expect(messages.getMessage("message-replaced")?.deliveryState).toBe("stored");
   });
 
   it("skips delivered progress and continues reaping later submitted messages", () => {
