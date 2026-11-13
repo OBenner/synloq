@@ -61,6 +61,9 @@ export interface McpStdioOptions {
   kimiWorkFactory?: KimiWorkFactory;
   kimiWorkStartupAttempts?: number;
   kimiWorkRetryDelayMs?: number;
+  kimiWorkRecoveryLimit?: number;
+  kimiWorkRecoveryWindowMs?: number;
+  kimiWorkRecoveryCooldownMs?: number;
   relayFactory?: typeof startRelaySupervisor;
 }
 
@@ -154,6 +157,13 @@ function createKimiWorkLifecycle(
   const diagnostics = options.stderr ?? process.stderr;
   const attempts = Math.max(1, Math.floor(options.kimiWorkStartupAttempts ?? 5));
   const retryDelay = Math.max(0, options.kimiWorkRetryDelayMs ?? 200);
+  // Recovery storms burn relay generations (observed: 1.5-3 re-registrations
+  // per second during a client restart, issue #28). Cap recoveries per window;
+  // beyond the limit the lifecycle cools down before re-registering again.
+  const recoveryLimit = Math.max(1, Math.floor(options.kimiWorkRecoveryLimit ?? 5));
+  const recoveryWindowMs = Math.max(1, options.kimiWorkRecoveryWindowMs ?? 60_000);
+  const recoveryCooldownMs = Math.max(0, options.kimiWorkRecoveryCooldownMs ?? 60_000);
+  const recoveryTimestamps: number[] = [];
   let abort: AbortController | undefined;
   let task: Promise<void> | undefined;
   let bridge: KimiWorkMcpBridge | undefined;
@@ -172,6 +182,19 @@ function createKimiWorkLifecycle(
     );
     void (async () => {
       try {
+        const now = Date.now();
+        while (recoveryTimestamps.length > 0 && now - recoveryTimestamps[0]! >= recoveryWindowMs) {
+          recoveryTimestamps.shift();
+        }
+        recoveryTimestamps.push(now);
+        if (recoveryTimestamps.length > recoveryLimit) {
+          diagnostics.write(
+            `Synloq Kimi Work recovery throttled for ${binding.conversationKey}: ${recoveryTimestamps.length} recoveries within ${recoveryWindowMs}ms, cooling down for ${recoveryCooldownMs}ms\n`,
+          );
+          await abortableSleep(recoveryCooldownMs, new AbortController().signal);
+          recoveryTimestamps.length = 0;
+          if (closed) return;
+        }
         await stop();
         start();
       } finally {

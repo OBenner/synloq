@@ -354,6 +354,78 @@ describe("Synloq MCP stdio bridge", () => {
     await server.close();
   });
 
+  it("throttles recovery storms beyond the configured limit and cools down", async () => {
+    const { root, configPath } = await configuration();
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://127.0.0.1:49152",
+        credentialPath: join(root, "agent.token"),
+        kimiWork: {
+          projectRoot: root,
+          agentId: "arch",
+          conversationKey: "agent:main:main:conversation:d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+          workAgentId: "main",
+        },
+      }),
+    );
+    const makeBridge = () => ({
+      runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined) },
+    });
+    const bridges = [makeBridge(), makeBridge(), makeBridge(), makeBridge()];
+    const kimiWorkFactory = vi
+      .fn()
+      .mockResolvedValueOnce(bridges[0])
+      .mockResolvedValueOnce(bridges[1])
+      .mockResolvedValueOnce(bridges[2])
+      .mockResolvedValue(bridges[3]);
+    let diagnostics = "";
+    const server = await startMcpStdio(configPath, {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          diagnostics += chunk.toString("utf8");
+          callback();
+        },
+      }),
+      kimiWorkFactory,
+      kimiWorkRecoveryLimit: 2,
+      kimiWorkRecoveryWindowMs: 60_000,
+      kimiWorkRecoveryCooldownMs: 150,
+    });
+
+    await vi.waitFor(() => expect(bridges[0]!.runner.start).toHaveBeenCalledTimes(1));
+    const stale = Object.assign(new Error("session generation is stale"), {
+      code: "UNAUTHORIZED",
+    });
+    const reportStale = (index: number) => {
+      const callback = (bridges[index]!.runner as { onUnauthorized?: (error: unknown) => void })
+        .onUnauthorized;
+      expect(typeof callback).toBe("function");
+      callback!(stale);
+    };
+
+    reportStale(0);
+    await vi.waitFor(() => expect(bridges[1]!.runner.start).toHaveBeenCalledTimes(1));
+    reportStale(1);
+    await vi.waitFor(() => expect(bridges[2]!.runner.start).toHaveBeenCalledTimes(1));
+    expect(kimiWorkFactory).toHaveBeenCalledTimes(3);
+
+    // The third recovery inside the window exceeds the limit: it must cool
+    // down instead of immediately re-registering (issue #28).
+    reportStale(2);
+    await vi.waitFor(() => expect(diagnostics).toContain("recovery throttled"));
+    expect(kimiWorkFactory).toHaveBeenCalledTimes(3);
+
+    await vi.waitFor(() => expect(bridges[3]!.runner.start).toHaveBeenCalledTimes(1), {
+      timeout: 2_000,
+    });
+    expect(kimiWorkFactory).toHaveBeenCalledTimes(4);
+    await server.close();
+  });
+
   it("rejects strict configuration without writing the credential to diagnostics", async () => {
     const { root, configPath, token } = await configuration();
     await writeFile(
