@@ -488,6 +488,27 @@ describe("OpenCode queued prompt adapter", () => {
     await expectState(adapter, "idle");
   });
 
+  it("keeps reporting the observed idle state past the freshness window", async () => {
+    // Regression for #31 r2: decaying the REPORTED idle to "unknown" closed
+    // the relay delivery gate (deliveryReady requires state "idle"), so a
+    // quiet session never received pending messages.
+    const clock = new MutableClock();
+    const { adapter, relay } = makeFixture(undefined, clock);
+    await adapter.start();
+    await expectState(adapter, "idle");
+    const heartbeat = vi.mocked(relay.heartbeat);
+    const callsBefore = heartbeat.mock.calls.length;
+
+    clock.advance(60_000);
+
+    await vi.waitFor(() => {
+      expect(heartbeat.mock.calls.length).toBeGreaterThan(callsBefore);
+    });
+    const reported = heartbeat.mock.calls.slice(callsBefore).map((call) => call[0].state);
+    expect(reported.length).toBeGreaterThan(0);
+    expect(new Set(reported)).toEqual(new Set(["idle"]));
+  });
+
   it("refuses a closed session without an on-demand check", async () => {
     const { adapter, api } = makeFixture();
     await adapter.start();

@@ -419,6 +419,11 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     return this.observedState;
   }
 
+  private currentReportedState(): SessionState {
+    if (this.closed) return "closed";
+    return this.observedState;
+  }
+
   async submit(
     sessionId: string,
     message: Message,
@@ -533,7 +538,13 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     let failures = 0;
     while (!signal.aborted) {
       try {
-        await this.report(this.currentState());
+        // Report the raw observed state, not the freshness-decayed one: the
+        // relay gates delivery on the reported state being "idle", so
+        // reporting "unknown" for a quiet idle session would close the gate
+        // 5s after the last event and stall every pending message (#31 r2
+        // live evidence). Admission safety stays intact — submit() re-verifies
+        // the markers on demand before admitting.
+        await this.report(this.currentReportedState());
         failures = 0;
         await abortableSleep(
           Math.max(1, this.config.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS),
