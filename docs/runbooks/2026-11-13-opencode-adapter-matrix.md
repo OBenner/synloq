@@ -123,7 +123,7 @@ outcomes, the adapter log tails, and "done" or BLOCKED per row.
 
 - relay SQLite `40c048bcf8b11fe1`: every reported message id exists,
   `delivery_state=acked`, exactly one claim per message, empty quarantine;
-- adapter log shows `delivery:"queue"` + `resume:false` admissions, none while
+- adapter log shows `delivery:"queue"` + `resume:true` admissions, none while
   busy, no duplicates after restart;
 - OpenCode API: arch session turn times align with the reported admissions;
 - then `test/e2e/real-clients.md` OpenCode rows move from UNVERIFIED to the
