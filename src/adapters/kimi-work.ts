@@ -102,7 +102,6 @@ export class KimiWorkAdapter implements DeliveryAdapter {
   private readonly clock: Clock;
   private readonly receipts = new Map<string, DeliveryReceipt>();
   private readonly submissions = new Map<string, Promise<DeliveryReceipt>>();
-  private readonly uncertainMessages = new Set<string>();
   private observedState: SessionState = "unknown";
   private observedAt = Number.NaN;
   private abortController: AbortController | undefined;
@@ -198,7 +197,6 @@ export class KimiWorkAdapter implements DeliveryAdapter {
     if (sessionId !== this.config.conversationKey) {
       throw new SynloqError("UNAUTHORIZED", "session ID does not match the Kimi Work binding");
     }
-    if (this.uncertainMessages.has(message.id)) throw this.deliveryUncertain(message.id);
     if (this.closed) throw new SynloqError("INVALID_INPUT", "Kimi Work adapter is closed");
     if (this.currentState() !== "idle") {
       throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");
@@ -307,10 +305,12 @@ export class KimiWorkAdapter implements DeliveryAdapter {
   }
 
   private deliveryUncertain(messageId: string): SynloqError {
-    this.uncertainMessages.add(messageId);
+    // Retries stay probe-gated: a resubmit re-checks the visible history before
+    // sending, so an uncertain outcome must not permanently block the message
+    // (issue #28). The error only reports that THIS attempt stayed ambiguous.
     return new SynloqError(
       "DELIVERY_UNCERTAIN",
-      `Kimi Work admission for ${messageId} is uncertain; operator inspection is required before retry`,
+      `Kimi Work admission for ${messageId} is uncertain; the next attempt reconciles the visible history before resending`,
     );
   }
 

@@ -315,13 +315,43 @@ describe("KimiWorkAdapter submission", () => {
     expect(control.messages).toHaveBeenCalledTimes(2);
   });
 
-  it.each([
-    ["no match", []],
-    ["multiple matches", [visible("one"), visible("two")]],
-  ])("quarantines an ambiguous result with %s and never resubmits", async (_name, history) => {
+  it("reconciles a previously uncertain message from history without a second send", async () => {
     const { adapter, control } = await idleFixture();
     control.send.mockRejectedValueOnce(new Error("timeout after write"));
-    control.messages.mockResolvedValueOnce([]).mockResolvedValue(history);
+
+    await expect(
+      adapter.submit(binding.conversationKey, message, { generation: 3 }),
+    ).rejects.toMatchObject({ code: "DELIVERY_UNCERTAIN" });
+    expect(control.send).toHaveBeenCalledTimes(1);
+    expect(control.messages).toHaveBeenCalledTimes(4);
+
+    control.messages.mockResolvedValue([visible("found")]);
+    await expect(
+      adapter.submit(binding.conversationKey, message, { generation: 3 }),
+    ).resolves.toEqual({ state: "delivered", clientMessageId: "turn-found" });
+    expect(control.send).toHaveBeenCalledTimes(1);
+    expect(control.messages).toHaveBeenCalledTimes(5);
+  });
+
+  it("resends a previously uncertain message only when history proves it invisible", async () => {
+    const { adapter, control } = await idleFixture();
+    control.send.mockRejectedValueOnce(new Error("timeout after write"));
+
+    await expect(
+      adapter.submit(binding.conversationKey, message, { generation: 3 }),
+    ).rejects.toMatchObject({ code: "DELIVERY_UNCERTAIN" });
+    expect(control.send).toHaveBeenCalledTimes(1);
+
+    await expect(
+      adapter.submit(binding.conversationKey, message, { generation: 3 }),
+    ).resolves.toEqual({ state: "delivered", clientMessageId: "work-turn-uuid" });
+    expect(control.send).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps multiple history matches ambiguous on every attempt", async () => {
+    const { adapter, control } = await idleFixture();
+    control.send.mockRejectedValueOnce(new Error("timeout after write"));
+    control.messages.mockResolvedValueOnce([]).mockResolvedValue([visible("one"), visible("two")]);
 
     await expect(
       adapter.submit(binding.conversationKey, message, { generation: 3 }),
@@ -330,7 +360,7 @@ describe("KimiWorkAdapter submission", () => {
       adapter.submit(binding.conversationKey, message, { generation: 3 }),
     ).rejects.toMatchObject({ code: "DELIVERY_UNCERTAIN" });
     expect(control.send).toHaveBeenCalledTimes(1);
-    expect(control.messages).toHaveBeenCalledTimes(history.length > 1 ? 2 : 4);
+    expect(control.messages).toHaveBeenCalledTimes(3);
   });
 
   it("rejects another session before reading history or sending", async () => {

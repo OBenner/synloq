@@ -117,7 +117,7 @@ describe("Kimi Work adapter and real relay", () => {
     expect(control.send).toHaveBeenCalledTimes(1);
   });
 
-  it("durably quarantines an uncertain result without a second send", async () => {
+  it("releases an uncertain result and re-probes on the next poll without muting", async () => {
     const control = fakeControl();
     control.send.mockRejectedValue(new Error("connection lost after write"));
     const adapter = await runKimiWorkAdapter(config, arch, { control });
@@ -126,9 +126,14 @@ describe("Kimi Work adapter and real relay", () => {
     const message = await send("kimi-integration-uncertain-1");
 
     await expect(runner.runOnce()).resolves.toBe("failed");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
-    expect(relay.messages.isPaused("synloq", "participant", "arch")).toBe(true);
-    await expect(runner.runOnce()).resolves.toBe("empty");
-    expect(control.send).toHaveBeenCalledTimes(1);
+    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.isPaused("synloq", "participant", "arch")).toBe(false);
+
+    // The next poll retries the same message through the probe-first path
+    // instead of leaving the participant muted (issue #28).
+    await expect(runner.runOnce()).resolves.toBe("failed");
+    expect(control.send.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.isPaused("synloq", "participant", "arch")).toBe(false);
   });
 });
