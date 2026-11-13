@@ -50,9 +50,10 @@ See [README.md](README.md) for shared adapter configuration rules and the proces
   PATH, `OPENCODE_EXECUTABLE` override wins) and creates one visible session per
   role via `POST /api/session`, with a permission ruleset denying the other
   roles' tools, then posts the role prompt,
-- authenticates to the desktop service with the bearer password from
-  `<config-home>/opencode/service.json` when present (the desktop server
-  requires it; unauthenticated servers keep working),
+- authenticates to the desktop service with HTTP Basic (username `opencode`,
+  password from the service registration file
+  `<state-home>/opencode/service.json`, legacy mirror
+  `<config-home>/opencode/service.json`; unauthenticated servers keep working),
 - persists `conversations[role] = {kind: "opencode", sessionId, directory}` in
   team state; Kimi Work entries keep parsing as before (no `kind` field).
 
