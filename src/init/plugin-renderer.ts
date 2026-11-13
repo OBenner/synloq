@@ -25,6 +25,9 @@ function defaultTemplatePath(): string {
   return fileURLToPath(new URL("../../plugins/synloq", import.meta.url));
 }
 
+export const TEAM_CHARTER_SUMMARY =
+  "Team charter (TEAM.md): message the role that owns the domain directly — never ask the operator to relay between roles. Decide within your scope; escalate cross-level decisions to the CTO. Tasks run to completion without check-ins; obstacles are reported immediately as BLOCKED with a reason code. If expected delivery is silent for over 15 minutes, pull synloq_inbox yourself. Local commits, own-scope docs, tests, and verify need no approval; pushes to the public remote, deletions outside task scope, dependency upgrades, and role-instruction changes require the operator.";
+
 export function roleInstructions(role: RoleInput): string {
   return [
     "You are one visible role in a Synloq project team.",
@@ -38,6 +41,7 @@ export function roleInstructions(role: RoleInput): string {
     "A task is complete only after an explicit RESULT with real checks and limitations.",
     "Request operator approval for risky actions, external effects, new dependencies, secret changes, and work outside the workspace.",
     "Stop automatic delegation at four Synloq hops (protocol v1 hop limit) and ask the operator before continuing.",
+    TEAM_CHARTER_SUMMARY,
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
