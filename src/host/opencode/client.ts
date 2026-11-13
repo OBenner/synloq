@@ -56,7 +56,13 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
         method,
         headers: {
           "content-type": "application/json",
-          ...(this.authToken !== undefined ? { authorization: `Bearer ${this.authToken}` } : {}),
+          // The OpenCode desktop service authenticates with HTTP Basic:
+          // username "opencode", password from the service registration file.
+          ...(this.authToken !== undefined
+            ? {
+                authorization: `Basic ${Buffer.from(`opencode:${this.authToken}`).toString("base64")}`,
+              }
+            : {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });

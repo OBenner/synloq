@@ -33,26 +33,35 @@ const serviceAuthSchema = z.object({ password: z.string().min(1) }).passthrough(
 
 const defaultReadfile = (path: string): Promise<string> => readFile(path, "utf8");
 
-// The OpenCode desktop service (>= 2.x) protects its loopback API with a
-// bearer password stored in <config-home>/opencode/service.json. Absence of
-// the file means an unauthenticated server — that is not an error.
+// The OpenCode desktop service (>= 2.x) protects its loopback API with HTTP
+// Basic auth (username "opencode"). The password lives in the service
+// registration file <state-home>/opencode/service.json (XDG_STATE_HOME or
+// ~/.local/state); <config-home>/opencode/service.json is a legacy mirror.
+// Absence of both files means an unauthenticated server — not an error.
 export async function resolveOpenCodeServiceAuth(
   options: Pick<OpenCodeDiscoveryOptions, "environment" | "readfile"> = {},
 ): Promise<string | undefined> {
   const environment = options.environment ?? process.env;
   const read = options.readfile ?? defaultReadfile;
-  const configHome = environment.XDG_CONFIG_HOME ?? join(environment.HOME ?? homedir(), ".config");
-  let input: string;
-  try {
-    input = await read(join(configHome, "opencode", "service.json"));
-  } catch {
-    return undefined;
+  const home = environment.HOME ?? homedir();
+  const candidates = [
+    join(environment.XDG_STATE_HOME ?? join(home, ".local", "state"), "opencode", "service.json"),
+    join(environment.XDG_CONFIG_HOME ?? join(home, ".config"), "opencode", "service.json"),
+  ];
+  for (const path of candidates) {
+    let input: string;
+    try {
+      input = await read(path);
+    } catch {
+      continue;
+    }
+    try {
+      return serviceAuthSchema.parse(JSON.parse(input)).password;
+    } catch {
+      continue;
+    }
   }
-  try {
-    return serviceAuthSchema.parse(JSON.parse(input)).password;
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }
 
 const defaultExec: OpenCodeDiscoveryExec = (file, args, options) =>

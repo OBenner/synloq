@@ -195,7 +195,7 @@ describe("OpenCode host discovery", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
-  it("attaches the service password when service.json exists", async () => {
+  it("attaches the service password from the state registration file", async () => {
     const endpoint = await discoverOpenCodeHost({
       environment: {
         ...windowsEnvironment,
@@ -205,8 +205,8 @@ describe("OpenCode host discovery", () => {
       platform: "win32",
       exec: execOk(infoStdout),
       readfile: async (path) => {
-        expect(path.replaceAll("\\", "/")).toBe("C:/Users/test/.config/opencode/service.json");
-        return '{"password":"secret-service-password"}';
+        expect(path.replaceAll("\\", "/")).toBe("C:/Users/test/.local/state/opencode/service.json");
+        return '{"id":"x","password":"secret-service-password"}';
       },
     });
     expect(endpoint.authToken).toBe("secret-service-password");
@@ -234,14 +234,34 @@ describe("OpenCode host discovery", () => {
 });
 
 describe("resolveOpenCodeServiceAuth", () => {
-  it("honours XDG_CONFIG_HOME over ~/.config", async () => {
+  it("honours XDG_STATE_HOME and prefers it over the legacy config mirror", async () => {
+    const seen: string[] = [];
     const token = await resolveOpenCodeServiceAuth({
-      environment: { XDG_CONFIG_HOME: "/xdg", HOME: "/home/test" },
+      environment: { XDG_STATE_HOME: "/state", XDG_CONFIG_HOME: "/xdg", HOME: "/home/test" },
       readfile: async (path) => {
-        expect(path.replaceAll("\\", "/")).toBe("/xdg/opencode/service.json");
-        return '{"password":"xdg-password"}';
+        seen.push(path.replaceAll("\\", "/"));
+        return '{"password":"state-password"}';
       },
     });
-    expect(token).toBe("xdg-password");
+    expect(token).toBe("state-password");
+    expect(seen).toEqual(["/state/opencode/service.json"]);
+  });
+
+  it("falls back to the legacy config mirror when the state file is missing", async () => {
+    const seen: string[] = [];
+    const token = await resolveOpenCodeServiceAuth({
+      environment: { HOME: "/home/test" },
+      readfile: async (path) => {
+        const normalized = path.replaceAll("\\", "/");
+        seen.push(normalized);
+        if (normalized.includes(".local/state")) throw new Error("ENOENT");
+        return '{"password":"legacy-password"}';
+      },
+    });
+    expect(token).toBe("legacy-password");
+    expect(seen).toEqual([
+      "/home/test/.local/state/opencode/service.json",
+      "/home/test/.config/opencode/service.json",
+    ]);
   });
 });

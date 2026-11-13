@@ -135,7 +135,7 @@ describe("OpencodeApiClient", () => {
     await authed.createSession({ title: "CTO", directory: "/p", denyTools: [] });
     expect(seen[0]).toEqual({
       "content-type": "application/json",
-      authorization: "Bearer service-password",
+      authorization: `Basic ${Buffer.from("opencode:service-password").toString("base64")}`,
     });
 
     const anonymous = new OpencodeApiClient("http://127.0.0.1:52314", { fetch: capture });
