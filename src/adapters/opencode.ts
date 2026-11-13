@@ -40,6 +40,24 @@ export interface OpenCodeAdapterConfig {
 
 export interface OpenCodeRunConfig extends OpenCodeAdapterConfig {
   baseUrl: string;
+  authToken?: string;
+}
+
+// The desktop service authenticates with HTTP Basic (username "opencode").
+// Inject the header through a fetch wrapper so streamed endpoints (SSE) are
+// covered too, not just request/response calls.
+export function openCodeBasicAuthFetch(
+  password: string,
+  inner: (request: Request) => ReturnType<typeof fetch> = (request) => fetch(request),
+): typeof fetch {
+  const header = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+  const wrapped = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = new Request(input, init);
+    const headers = new Headers(request.headers);
+    headers.set("authorization", header);
+    return inner(new Request(request, { headers }));
+  };
+  return wrapped as typeof fetch;
 }
 
 export interface OpenCodeClientSet {
@@ -333,8 +351,17 @@ export async function runOpenCodeAdapter(
   relay: RelayHttpClient,
   clients?: OpenCodeClientSet,
 ): Promise<RegisteredOpenCodeAdapter> {
-  const openCode = clients?.openCode ?? createOpenCodeV2Client({ baseUrl: config.baseUrl });
-  const client = clients?.client ?? createOpenCodeClient({ baseUrl: config.baseUrl });
+  const authFetch = config.authToken ? openCodeBasicAuthFetch(config.authToken) : undefined;
+  const openCode =
+    clients?.openCode ??
+    (authFetch
+      ? createOpenCodeV2Client({ baseUrl: config.baseUrl, fetch: authFetch })
+      : createOpenCodeV2Client({ baseUrl: config.baseUrl }));
+  const client =
+    clients?.client ??
+    (authFetch
+      ? createOpenCodeClient({ baseUrl: config.baseUrl, fetch: authFetch })
+      : createOpenCodeClient({ baseUrl: config.baseUrl }));
   const adapter = new OpenCodeAdapter(openCode, client, relay, config);
   const { session } = await relay.registerSession({
     sessionId: config.sessionId,

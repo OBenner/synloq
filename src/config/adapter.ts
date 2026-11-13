@@ -60,6 +60,7 @@ const openCodeSchema = z
     ...commonFields,
     kind: z.literal("opencode"),
     baseUrl: loopbackHttp,
+    servicePassword: z.string().min(1).optional(),
     heartbeatIntervalMs: z.number().int().min(1).max(60_000).optional(),
   })
   .strict();

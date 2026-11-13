@@ -4,6 +4,7 @@ import { HttpAdapterRunner } from "../adapters/http-runner.js";
 import { runOpenCodeAdapter, type OpenCodeClientSet } from "../adapters/opencode.js";
 import { loadAdapterConfiguration } from "../config/adapter.js";
 import { SynloqError } from "../domain/errors.js";
+import { resolveOpenCodeServiceAuth } from "../host/opencode/discovery.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { runClaudeHook, type ClaudeHookIo } from "./claude-hook.js";
 import { runCodexHook, type CodexHookIo } from "./codex-hook.js";
@@ -12,6 +13,7 @@ export interface StandaloneAdapterDependencies {
   claudeTransport?: Transport;
   openCodeClients?: OpenCodeClientSet;
   deliveryWaitMs?: number;
+  environment?: NodeJS.ProcessEnv;
 }
 
 export interface StandaloneAdapterHandle {
@@ -39,12 +41,18 @@ export async function startStandaloneAdapter(
   const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token);
 
   if (configuration.kind === "opencode") {
+    const authToken =
+      configuration.servicePassword ??
+      (await resolveOpenCodeServiceAuth({
+        environment: dependencies.environment ?? process.env,
+      }));
     const adapter = await runOpenCodeAdapter(
       {
         project: configuration.project,
         agentId: configuration.agentId,
         sessionId: configuration.sessionId,
         baseUrl: configuration.baseUrl,
+        ...(authToken !== undefined ? { authToken } : {}),
         ...(configuration.heartbeatIntervalMs === undefined
           ? {}
           : { heartbeatIntervalMs: configuration.heartbeatIntervalMs }),

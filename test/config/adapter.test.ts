@@ -154,4 +154,32 @@ describe("standalone adapter configuration", () => {
       });
     },
   );
+
+  it("accepts an OpenCode config with an optional service password", async () => {
+    await writeConfiguration({
+      ...validConfiguration(),
+      kind: "opencode",
+      baseUrl: "http://127.0.0.1:4096",
+      servicePassword: "desktop-service-password",
+    });
+
+    const loaded = await loadAdapterConfiguration(configPath);
+    expect(loaded.configuration).toMatchObject({
+      kind: "opencode",
+      baseUrl: "http://127.0.0.1:4096",
+      servicePassword: "desktop-service-password",
+    });
+  });
+
+  it("accepts an OpenCode config without the password (resolved from the service file)", async () => {
+    await writeConfiguration({
+      ...validConfiguration(),
+      kind: "opencode",
+      baseUrl: "http://127.0.0.1:4096",
+    });
+
+    const loaded = await loadAdapterConfiguration(configPath);
+    expect(loaded.configuration).toMatchObject({ kind: "opencode" });
+    expect(loaded.configuration).not.toHaveProperty("servicePassword");
+  });
 });
