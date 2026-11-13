@@ -41,6 +41,21 @@ Append-only JSONL at `~/.synloq/data/<projectKey>-audit.jsonl`; one event per
 controlled denial (`SynloqError`) with action, project, agentId, reasonCode.
 Detective control: operator reviews on suspicion; no alerting in v1.
 
+## Known limitations
+
+- **Per-role channel isolation is instruction-only in the Kimi Work host**
+  (verified 2026-11-13, [#27](https://github.com/OBenner/synloq/issues/27)):
+  a chat that can see another role's MCP channel tools can invoke them and act
+  as that role — the relay authenticates the channel token and cannot
+  distinguish the initiating chat; the adapter conversationKey binding does not
+  cover the Kimi Work plugin path. Acceptable under the current threat model:
+  all MCP processes and tokens belong to a single OS user, and compromise of
+  the user's process already compromises the project. Resolution depends on the
+  upstream request for per-conversation MCP scoping
+  ([#9](https://github.com/OBenner/synloq/issues/9)); no self-built enforcement
+  (agentId + host attestation) is planned — without host support it would be
+  security theater.
+
 ## Non-goals (v1)
 
 Encryption, non-loopback transport, multi-relay federation, OS-user isolation.
