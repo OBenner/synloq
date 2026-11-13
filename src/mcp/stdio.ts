@@ -14,6 +14,11 @@ import {
   resolveKimiWorkBinding,
   type ResolvedKimiWorkBinding,
 } from "../host/kimi-work/binding.js";
+import {
+  openCodeConfigurationSchema,
+  resolveOpenCodeBinding,
+  type ResolvedOpenCodeBinding,
+} from "../host/opencode/binding.js";
 import { startRelaySupervisor, type RelaySupervisorLoop } from "../relay/supervisor-loop.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
@@ -28,11 +33,21 @@ const configurationSchema = z
     credentialPath: z.string().min(1),
     synloqHome: z.string().min(1).optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),
+    opencode: openCodeConfigurationSchema.optional(),
   })
   .strict()
   .superRefine((configuration, context) => {
-    if (configuration.synloqHome && !configuration.kimiWork) {
-      context.addIssue({ code: "custom", message: "Automatic relay requires a Kimi Work binding" });
+    if (configuration.kimiWork && configuration.opencode) {
+      context.addIssue({
+        code: "custom",
+        message: "kimiWork and opencode bindings are mutually exclusive",
+      });
+    }
+    if (configuration.synloqHome && !configuration.kimiWork && !configuration.opencode) {
+      context.addIssue({
+        code: "custom",
+        message: "Automatic relay requires a host binding (kimiWork or opencode)",
+      });
     }
   });
 
@@ -72,6 +87,7 @@ interface McpConfiguration {
   token: string;
   synloqHome?: string;
   kimiWork?: ResolvedKimiWorkBinding;
+  opencode?: ResolvedOpenCodeBinding;
 }
 
 async function readConfiguration(configPath: string): Promise<McpConfiguration> {
@@ -98,6 +114,9 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
   const kimiWork = configuration.data.kimiWork
     ? await resolveKimiWorkBinding(configPath, configuration.data.kimiWork)
     : undefined;
+  const opencode = configuration.data.opencode
+    ? await resolveOpenCodeBinding(configPath, configuration.data.opencode)
+    : undefined;
   return {
     relayUrl: configuration.data.relayUrl,
     token,
@@ -105,6 +124,7 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
       ? { synloqHome: resolve(dirname(configPath), configuration.data.synloqHome) }
       : {}),
     ...(kimiWork ? { kimiWork } : {}),
+    ...(opencode ? { opencode } : {}),
   };
 }
 
@@ -297,13 +317,15 @@ export async function startMcpStdio(
   const diagnostics = options.stderr ?? process.stderr;
   let lifecycle: KimiWorkLifecycle | undefined;
   let supervisor: RelaySupervisorLoop | undefined;
-  if (configuration.synloqHome && configuration.kimiWork) {
-    const participants = await loadManifest(configuration.kimiWork.workspacePath);
+  const hostWorkspace =
+    configuration.kimiWork?.workspacePath ?? configuration.opencode?.workspacePath;
+  if (configuration.synloqHome && hostWorkspace) {
+    const participants = await loadManifest(hostWorkspace);
     const project = participants[0]?.project;
     if (!project) throw new SynloqError("INVALID_INPUT", "Synloq manifest has no project");
     const relayFactory = options.relayFactory ?? startRelaySupervisor;
     supervisor = await relayFactory({
-      projectRoot: configuration.kimiWork.workspacePath,
+      projectRoot: hostWorkspace,
       project,
       relayUrl: configuration.relayUrl,
       token: configuration.token,
@@ -355,8 +377,14 @@ async function main(): Promise<void> {
 
   try {
     await startMcpStdio(configPath);
-  } catch {
-    process.stderr.write("Synloq MCP stdio bridge failed to start\n");
+  } catch (error) {
+    const detail =
+      error instanceof SynloqError
+        ? `${error.code}: ${error.message}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    process.stderr.write(`Synloq MCP stdio bridge failed to start: ${detail}\n`);
     process.exitCode = 1;
   }
 }

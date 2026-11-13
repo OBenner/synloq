@@ -61,7 +61,10 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
       participants.length === 0 ||
       participants.some((participant) => participant.project !== options.project)
     ) {
-      throw new SynloqError("INVALID_INPUT", "Synloq relay project does not match");
+      throw new SynloqError(
+        "INVALID_INPUT",
+        `Synloq relay at ${target.baseUrl} serves a different project (one relay = one project = one port)`,
+      );
     }
     return { baseUrl: target.baseUrl, client, owned: false, close: async () => undefined };
   };

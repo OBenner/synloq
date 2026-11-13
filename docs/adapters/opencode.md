@@ -1,12 +1,13 @@
 # OpenCode adapter (experimental)
 
-> **Status: UNVERIFIED.** Active delivery has not been verified against a live
-> OpenCode server. It stays disabled until the manual evidence matrix
-> (`test/e2e/real-clients.md`) is executed with an operator.
+> **Status: verified live on 2026-11-13 against the OpenCode desktop service
+> 2.2.7.** The idle, busy-suppression, and reconnect rows of the evidence
+> matrix (`test/e2e/real-clients.md`) were executed on a real stand (runbook
+> `docs/runbooks/2026-11-13-opencode-adapter-matrix.md`, runs r3/r3b).
 >
 > See also `docs/research/2026-11-13-opencode-manual-stand.md`: the manual six-tool
 > MCP path and the session/prompt API primitives this adapter relies on were verified
-> live on 2026-11-13; the adapter itself remains unverified.
+> live on 2026-11-13.
 
 The visible OpenCode chat uses the ordinary `synloq mcp` stdio command for the six tools. Run active delivery as a separate, operator-configured process:
 
@@ -33,7 +34,7 @@ Example `/secure/opencode-arch.json`:
 }
 ```
 
-`baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter authenticates to the desktop service with HTTP Basic: the password is read automatically from the service registration file (`<state-home>/opencode/service.json`, legacy `<config-home>` mirror); set the optional `servicePassword` field only to override that resolution. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: false`. It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
+`baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter authenticates to the desktop service with HTTP Basic: the password is read automatically from the service registration file (`<state-home>/opencode/service.json`, legacy `<config-home>` mirror); set the optional `servicePassword` field only to override that resolution. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: true` (`resume: false` admits into the session inbox without scheduling execution — verified live on 2.2.7). It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
 
 See [README.md](README.md) for shared adapter configuration rules and the process topology.
 
@@ -43,7 +44,9 @@ See [README.md](README.md) for shared adapter configuration rules and the proces
 `docs/research/2026-11-13-opencode-manual-stand.md`:
 
 - writes the manifest and per-role credentials (reused on re-run),
-- writes legacy MCP configs (`{relayUrl, credentialPath}`) under the Synloq home,
+- writes MCP configs (`{relayUrl, credentialPath, synloqHome, opencode}`) under
+  the Synloq home — the `opencode` binding (`{projectRoot, agentId, sessionId}`)
+  lets each role channel host the relay itself,
 - merges `mcp.servers["synloq-<role>"]` into the project `opencode.json`
   non-destructively (foreign keys preserved, broken JSON fails loud),
 - discovers the running OpenCode desktop/service (bundled versioned CLI, then
@@ -71,5 +74,12 @@ Known limitations on this host:
   the session without host-level tool denies (the result reports
   `permissionsApplied: false`). Role separation then rests on prompt discipline
   only.
-- Relay auto-start for OpenCode MCP configs is not part of init yet; run
-  `synloq serve` separately (tracked as the W3 issue).
+
+## Relay auto-start
+
+No manual `synloq serve` is needed: the generated MCP configs carry an
+`opencode` binding, and the first role channel to start elects itself as the
+relay host (the same supervisor election the Kimi Work channels use). If the
+configured port is already served by a relay of a different project, startup
+fails with `Synloq relay at <url> serves a different project` — one relay serves one
+project on one port; pick another port via `--relay-url` at init time.

@@ -43,6 +43,11 @@ describe("initializeOpenCodeTeam", () => {
     expect(ctoConfig).toEqual({
       relayUrl: "http://127.0.0.1:4100",
       credentialPath: result.roles[0]!.credentialPath,
+      synloqHome: paths.home,
+      opencode: {
+        projectRoot: root,
+        agentId: "cto",
+      },
     });
     await readFile(result.roles[0]!.credentialPath, "utf8");
 
@@ -272,6 +277,16 @@ describe("initializeOpenCodeTeam with a live server API", () => {
         directory: root,
       });
       expect(state!.conversations["arch"]).toMatchObject({ kind: "opencode", sessionId: "ses_2" });
+
+      const ctoConfig = JSON.parse(
+        await readFile(join(paths.runtime, "mcp", "cto.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(ctoConfig["opencode"]).toEqual({
+        projectRoot: root,
+        agentId: "cto",
+        sessionId: "ses_1",
+      });
+      expect(typeof ctoConfig["synloqHome"]).toBe("string");
     } finally {
       await close();
     }

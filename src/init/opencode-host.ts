@@ -87,10 +87,6 @@ export async function initializeOpenCodeTeam(
   for (const role of roles) {
     const credential = await credentials.ensureCredential(project, role.agentId);
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
-    await writeJsonAtomic(configPath, {
-      relayUrl,
-      credentialPath: credential.tokenPath,
-    });
     servers[`synloq-${role.agentId}`] = {
       type: "local",
       command: ["node", options.runtimeEntrypoint, configPath],
@@ -102,6 +98,7 @@ export async function initializeOpenCodeTeam(
       credentialPath: credential.tokenPath,
     };
 
+    let boundSessionId: string | undefined;
     if (host) {
       const existing = state?.conversations[role.agentId];
       if (existing && existing.kind !== "opencode") {
@@ -157,7 +154,21 @@ export async function initializeOpenCodeTeam(
       });
       initialized.sessionId = sessionId;
       if (permissionsApplied !== undefined) initialized.permissionsApplied = permissionsApplied;
+      boundSessionId = sessionId;
     }
+    // The opencode binding lets the MCP channel host the relay itself
+    // (supervisor election), so no manual `synloq serve` is needed (#30).
+    // sessionId is absent only when init ran without a reachable service.
+    await writeJsonAtomic(configPath, {
+      relayUrl,
+      credentialPath: credential.tokenPath,
+      synloqHome: paths.home,
+      opencode: {
+        projectRoot,
+        agentId: role.agentId,
+        ...(boundSessionId ? { sessionId: boundSessionId } : {}),
+      },
+    });
     initializedRoles.push(initialized);
   }
 
