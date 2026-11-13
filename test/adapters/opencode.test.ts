@@ -1,7 +1,12 @@
-import type { OpencodeClient as OpenCodeClient } from "@opencode-ai/sdk/client";
-import type { OpencodeClient as OpenCodeV2Client } from "@opencode-ai/sdk/v2/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenCodeAdapter, runOpenCodeAdapter } from "../../src/adapters/opencode.js";
+import {
+  createOpenCodeApi,
+  OpenCodeAdapter,
+  runOpenCodeAdapter,
+  type OpenCodeAdmission,
+  type OpenCodeApi,
+  type OpenCodeSessionSnapshot,
+} from "../../src/adapters/opencode.js";
 import { frameMessage } from "../../src/adapters/reference.js";
 import type { Clock } from "../../src/adapters/types.js";
 import { SynloqError } from "../../src/domain/errors.js";
@@ -11,7 +16,7 @@ import { Dispatcher } from "../../src/relay/dispatcher.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
 import type { RelayHttpClient } from "../../src/transport/http-client.js";
-import { MutableClock } from "./contract.js";
+import { MutableClock, contractDatabase } from "./contract.js";
 
 const SESSION_ID = "ses_cto";
 const config = { project: "verdicta", agentId: "cto", sessionId: SESSION_ID };
@@ -28,34 +33,16 @@ const message: Message = {
   deliveryState: "stored",
 };
 
-interface PromptParameters {
-  sessionID: string;
-  prompt: { text: string };
-  delivery: "queue";
-  resume: false;
-}
-
-interface AdmittedEntry {
-  admittedSeq: number;
-  id: string;
-  sessionID: string;
-  prompt: { text: string };
-  delivery: "queue";
-  timeCreated: number;
-}
-
-type FakeEvent = unknown;
-
-class FakeEventStream implements AsyncIterable<FakeEvent> {
-  private readonly events: FakeEvent[] = [];
-  private readonly waiters: Array<(result: IteratorResult<FakeEvent>) => void> = [];
+class FakeEventStream implements AsyncIterable<unknown> {
+  private readonly events: unknown[] = [];
+  private readonly waiters: Array<(result: IteratorResult<unknown>) => void> = [];
   private ended = false;
 
   get isEnded(): boolean {
     return this.ended;
   }
 
-  push(event: FakeEvent): void {
+  push(event: unknown): void {
     const waiter = this.waiters.shift();
     if (waiter) waiter({ value: event, done: false });
     else this.events.push(event);
@@ -69,75 +56,46 @@ class FakeEventStream implements AsyncIterable<FakeEvent> {
     }
   }
 
-  next(): Promise<IteratorResult<FakeEvent>> {
+  next(): Promise<IteratorResult<unknown>> {
     const event = this.events.shift();
     if (event !== undefined) return Promise.resolve({ value: event, done: false });
     if (this.ended) return Promise.resolve({ value: undefined, done: true });
     return new Promise((resolve) => this.waiters.push(resolve));
   }
 
-  return(): Promise<IteratorResult<FakeEvent>> {
+  return(): Promise<IteratorResult<unknown>> {
     this.end();
     return Promise.resolve({ value: undefined, done: true });
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<FakeEvent> {
+  [Symbol.asyncIterator](): AsyncIterator<unknown> {
     return this;
   }
 }
 
-function messageId(parameters: PromptParameters): string {
-  return /message="([^"]+)"/.exec(parameters.prompt.text)?.[1] ?? "opencode-entry";
+function messageId(text: string): string {
+  return /message="([^"]+)"/.exec(text)?.[1] ?? "opencode-entry";
 }
 
-function admission(parameters: PromptParameters): {
-  data: { data: AdmittedEntry };
-} {
-  return {
-    data: {
-      data: {
-        admittedSeq: 1,
-        id: messageId(parameters),
-        sessionID: parameters.sessionID,
-        prompt: parameters.prompt,
-        delivery: "queue",
-        timeCreated: 1,
-      },
-    },
-  };
-}
-
-class FakeSdk {
+class FakeApi implements OpenCodeApi {
   readonly streams: FakeEventStream[] = [];
-  readonly prompt = vi.fn(async (parameters: PromptParameters, _options: unknown) =>
-    admission(parameters),
+  snapshot: OpenCodeSessionSnapshot = { exists: true, busy: false };
+  readonly getSession = vi.fn(
+    async (_sessionId: string, _signal?: AbortSignal): Promise<OpenCodeSessionSnapshot> =>
+      this.snapshot,
   );
-  readonly status = vi.fn(
-    async (_input: unknown): Promise<{ data: Record<string, { type: string }> }> => ({
-      data: { [SESSION_ID]: { type: "idle" } },
-    }),
-  );
-  readonly subscribe = vi.fn((options?: { signal?: AbortSignal }) => {
+  readonly admit = vi.fn(async (sessionId: string, text: string): Promise<OpenCodeAdmission> => ({
+    id: messageId(text),
+    sessionID: sessionId,
+    text,
+    delivery: "queue",
+  }));
+  readonly subscribeEvents = vi.fn((signal?: AbortSignal) => {
     const stream = new FakeEventStream();
     this.streams.push(stream);
-    options?.signal?.addEventListener("abort", () => stream.end(), {
-      once: true,
-    });
-    return Promise.resolve({ stream });
+    signal?.addEventListener("abort", () => stream.end(), { once: true });
+    return Promise.resolve(stream as AsyncIterable<unknown>);
   });
-
-  asNormalClient(): OpenCodeClient {
-    return {
-      session: { status: this.status },
-      event: { subscribe: this.subscribe },
-    } as unknown as OpenCodeClient;
-  }
-
-  asV2Client(): OpenCodeV2Client {
-    return {
-      v2: { session: { prompt: this.prompt } },
-    } as unknown as OpenCodeV2Client;
-  }
 }
 
 function makeRelay(): RelayHttpClient {
@@ -156,18 +114,17 @@ afterEach(async () => {
 });
 
 function makeFixture(capabilities?: AdapterCapabilities, clock: Clock = { now: () => Date.now() }) {
-  const sdk = new FakeSdk();
+  const api = new FakeApi();
   const relay = makeRelay();
   const adapter = new OpenCodeAdapter(
-    sdk.asV2Client(),
-    sdk.asNormalClient(),
+    api,
     relay,
     { ...config, heartbeatIntervalMs: 5 },
     capabilities,
     clock,
   );
   closers.push(() => adapter.close());
-  return { adapter, sdk, relay };
+  return { adapter, api, relay };
 }
 
 async function makeIdleFixture() {
@@ -178,9 +135,10 @@ async function makeIdleFixture() {
 }
 
 function makeDispatcherFixture(clock = new MutableClock()) {
-  const { adapter, sdk, relay } = makeFixture(undefined, clock);
-  const store = new SQLiteMessageStore(":memory:");
-  const sessions = new SessionStore(":memory:", clock);
+  const { adapter, api, relay } = makeFixture(undefined, clock);
+  const database = contractDatabase();
+  const store = new SQLiteMessageStore(database, clock);
+  const sessions = new SessionStore(database, clock);
   sessions.register(
     {
       ...config,
@@ -212,7 +170,7 @@ function makeDispatcherFixture(clock = new MutableClock()) {
     sessions.close();
     store.close();
   });
-  return { adapter, sdk, relay, store, sessions, dispatcher, pending, clock };
+  return { adapter, api, relay, store, sessions, dispatcher, pending, clock };
 }
 
 async function expectState(adapter: OpenCodeAdapter, expected: string): Promise<void> {
@@ -222,23 +180,15 @@ async function expectState(adapter: OpenCodeAdapter, expected: string): Promise<
 }
 
 describe("OpenCode queued prompt adapter", () => {
-  it("uses queue delivery and never steer", async () => {
-    const { adapter, sdk } = await makeIdleFixture();
+  it("admits the framed message through the queued prompt API", async () => {
+    const { adapter, api } = await makeIdleFixture();
 
     await adapter.submit(SESSION_ID, message);
 
-    expect(sdk.prompt).toHaveBeenCalledWith(
-      {
-        sessionID: SESSION_ID,
-        prompt: { text: frameMessage(message) },
-        delivery: "queue",
-        resume: false,
-      },
-      { throwOnError: true },
-    );
+    expect(api.admit).toHaveBeenCalledWith(SESSION_ID, frameMessage(message), undefined);
   });
 
-  it("returns delivered only for the new inbox entry bound to the visible session", async () => {
+  it("returns delivered only for the admission bound to the visible session", async () => {
     const { adapter } = await makeIdleFixture();
 
     const receipt = await adapter.submit(SESSION_ID, message);
@@ -249,13 +199,14 @@ describe("OpenCode queued prompt adapter", () => {
     });
   });
 
-  it("does not accept another session's inbox entry as delivery evidence", async () => {
-    const { adapter, sdk } = await makeIdleFixture();
-    sdk.prompt.mockImplementationOnce(async (parameters) => {
-      const response = admission(parameters);
-      response.data.data.sessionID = "ses_other";
-      return response;
-    });
+  it("does not accept another session's admission as delivery evidence", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockImplementationOnce(async (sessionId: string, text: string) => ({
+      id: messageId(text),
+      sessionID: "ses_other",
+      text,
+      delivery: "queue",
+    }));
 
     await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
       code: "DELIVERY_UNCERTAIN",
@@ -263,19 +214,48 @@ describe("OpenCode queued prompt adapter", () => {
     expect(adapter.capabilities.clientIdempotency).toBe(false);
   });
 
-  it("caches known message-ID receipts without another prompt", async () => {
-    const { adapter, sdk } = await makeIdleFixture();
+  it("does not accept an admission that echoes different text", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockImplementationOnce(async (sessionId: string) => ({
+      id: message.id,
+      sessionID: sessionId,
+      text: "some other payload",
+      delivery: "queue",
+    }));
+
+    await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
+      code: "DELIVERY_UNCERTAIN",
+    });
+    expect(adapter.capabilities.clientIdempotency).toBe(false);
+  });
+
+  it("does not accept a steered admission as queued delivery", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockImplementationOnce(async (sessionId: string, text: string) => ({
+      id: messageId(text),
+      sessionID: sessionId,
+      text,
+      delivery: "steer",
+    }));
+
+    await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
+      code: "DELIVERY_UNCERTAIN",
+    });
+  });
+
+  it("caches known message-ID receipts without another admission", async () => {
+    const { adapter, api } = await makeIdleFixture();
 
     const first = await adapter.submit(SESSION_ID, message);
     const retry = await adapter.submit(SESSION_ID, message);
 
     expect(retry).toBe(first);
-    expect(sdk.prompt).toHaveBeenCalledTimes(1);
+    expect(api.admit).toHaveBeenCalledTimes(1);
   });
 
   it("marks post-transmission failures uncertain and never blindly reposts", async () => {
-    const { adapter, sdk } = await makeIdleFixture();
-    sdk.prompt.mockRejectedValueOnce(new Error("socket reset after request transmission"));
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockRejectedValueOnce(new Error("socket reset after request transmission"));
 
     await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
       code: "DELIVERY_UNCERTAIN",
@@ -286,12 +266,12 @@ describe("OpenCode queued prompt adapter", () => {
     await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
       code: "DELIVERY_UNCERTAIN",
     });
-    expect(sdk.prompt).toHaveBeenCalledTimes(1);
+    expect(api.admit).toHaveBeenCalledTimes(1);
   });
 
   it("preserves a known pre-transmission rejection for ordinary backoff", async () => {
-    const { adapter, sdk } = await makeIdleFixture();
-    sdk.prompt.mockRejectedValueOnce(
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockRejectedValueOnce(
       new SynloqError("INVALID_INPUT", "rejected before request transmission"),
     );
 
@@ -303,10 +283,11 @@ describe("OpenCode queued prompt adapter", () => {
     await expect(adapter.submit(SESSION_ID, message)).resolves.toMatchObject({
       state: "delivered",
     });
-    expect(sdk.prompt).toHaveBeenCalledTimes(2);
+    expect(api.admit).toHaveBeenCalledTimes(2);
   });
 
   it.each([
+    [{ type: "session.execution.started", data: { sessionID: SESSION_ID } }, "busy"],
     [
       {
         type: "session.status",
@@ -314,6 +295,7 @@ describe("OpenCode queued prompt adapter", () => {
       },
       "busy",
     ],
+    [{ type: "session.status", data: { sessionID: SESSION_ID, status: { type: "busy" } } }, "busy"],
     [
       {
         type: "session.status",
@@ -322,34 +304,37 @@ describe("OpenCode queued prompt adapter", () => {
       "idle",
     ],
     [{ type: "session.idle", properties: { sessionID: SESSION_ID } }, "idle"],
+    [{ type: "session.execution.succeeded", data: { sessionID: SESSION_ID } }, "idle"],
+    [{ type: "session.execution.failed", data: { sessionID: SESSION_ID } }, "idle"],
+    [{ type: "session.deleted", data: { sessionID: SESSION_ID } }, "closed"],
     [{ type: "session.deleted", properties: { sessionID: SESSION_ID } }, "closed"],
     [{ type: "session.deleted", properties: { info: { id: SESSION_ID } } }, "closed"],
   ] as const)("maps event to fresh state", async (event, expected) => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.push(event);
+    api.streams[0]?.push(event);
 
     await expectState(adapter, expected);
   });
 
-  it("ignores status, idle, and deletion events for every other session", async () => {
-    const { adapter, sdk } = makeFixture();
+  it("ignores status, execution, and deletion events for every other session", async () => {
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.push({
-      type: "session.status",
-      properties: { sessionID: "ses_other", status: { type: "busy" } },
+    api.streams[0]?.push({
+      type: "session.execution.started",
+      data: { sessionID: "ses_other" },
     });
-    sdk.streams[0]?.push({
+    api.streams[0]?.push({
       type: "session.idle",
       properties: { sessionID: "ses_other" },
     });
-    sdk.streams[0]?.push({
+    api.streams[0]?.push({
       type: "session.deleted",
-      properties: { sessionID: "ses_other" },
+      data: { sessionID: "ses_other" },
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -357,16 +342,16 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("does not revive a deleted session with a later stale idle event", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.push({
+    api.streams[0]?.push({
       type: "session.deleted",
-      properties: { sessionID: SESSION_ID },
+      data: { sessionID: SESSION_ID },
     });
     await expectState(adapter, "closed");
-    sdk.streams[0]?.push({
+    api.streams[0]?.push({
       type: "session.idle",
       properties: { sessionID: SESSION_ID },
     });
@@ -376,89 +361,154 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("changes the event-stream EOF state to unknown", async () => {
-    const { adapter, sdk } = makeFixture();
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.end();
+    api.streams[0]?.end();
 
     await expectState(adapter, "unknown");
   });
 
-  it("requires a fresh matching status after reconnect before reporting idle or busy", async () => {
-    const { adapter, sdk } = makeFixture();
-    let resolveReconnectStatus!: (value: { data: Record<string, { type: string }> }) => void;
-    sdk.status
-      .mockResolvedValueOnce({ data: { [SESSION_ID]: { type: "idle" } } })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveReconnectStatus = resolve;
-          }),
-      );
+  it("rereads the session markers after reconnect before reporting idle or busy", async () => {
+    const { adapter, api } = makeFixture();
+    let resolveReconnect!: (value: OpenCodeSessionSnapshot) => void;
+    api.getSession.mockImplementationOnce(async () => ({ exists: true, busy: false }));
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.end();
+    api.getSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReconnect = resolve;
+        }),
+    );
+    api.streams[0]?.end();
     await expectState(adapter, "unknown");
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
-      timeout: 2_000,
-    });
-    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.streams).toHaveLength(2), { timeout: 2_000 });
+    await vi.waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(2));
 
     expect(await adapter.state(SESSION_ID)).toBe("unknown");
-    expect(sdk.status).toHaveBeenNthCalledWith(2, {});
-    resolveReconnectStatus({ data: { [SESSION_ID]: { type: "busy" } } });
+    resolveReconnect({ exists: true, busy: true });
     await expectState(adapter, "busy");
   });
 
-  it("does not revive idle from buffered events when reconnect status has no matching entry", async () => {
-    const { adapter, sdk } = makeFixture();
-    sdk.status
-      .mockResolvedValueOnce({ data: { [SESSION_ID]: { type: "idle" } } })
-      .mockResolvedValueOnce({ data: { ses_other: { type: "idle" } } });
+  it("reports closed when the session is gone after reconnect", async () => {
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.end();
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
-      timeout: 2_000,
-    });
-    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
-    sdk.streams[1]?.push({
-      type: "session.idle",
-      properties: { sessionID: SESSION_ID },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    api.snapshot = { exists: false, busy: false };
+    api.streams[0]?.end();
+    await expectState(adapter, "unknown");
+    await vi.waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(2), { timeout: 2_000 });
 
-    expect(await adapter.state(SESSION_ID)).toBe("unknown");
+    await expectState(adapter, "closed");
   });
 
-  it("invalidates state and rereads status on server.connected", async () => {
-    const { adapter, sdk } = makeFixture();
-    let resolveConnectedStatus!: (value: { data: Record<string, { type: string }> }) => void;
-    sdk.status
-      .mockResolvedValueOnce({ data: { [SESSION_ID]: { type: "idle" } } })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveConnectedStatus = resolve;
-          }),
-      );
+  it("invalidates state and rereads markers on server.connected", async () => {
+    const { adapter, api } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
 
-    sdk.streams[0]?.push({ type: "server.connected", properties: {} });
+    let resolveConnected!: (value: OpenCodeSessionSnapshot) => void;
+    api.getSession.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConnected = resolve;
+        }),
+    );
+    api.streams[0]?.push({ type: "server.connected", data: {} });
     await expectState(adapter, "unknown");
-    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(2));
     expect(await adapter.state(SESSION_ID)).toBe("unknown");
 
-    resolveConnectedStatus({ data: { [SESSION_ID]: { type: "idle" } } });
+    resolveConnected({ exists: true, busy: false });
     await expectState(adapter, "idle");
+  });
+
+  it("verifies freshness on demand when the cached idle state is stale", async () => {
+    const clock = new MutableClock();
+    const { adapter, api } = makeFixture(undefined, clock);
+    await adapter.start();
+    await expectState(adapter, "idle");
+    clock.advance(5_001);
+    const callsBefore = api.getSession.mock.calls.length;
+
+    await adapter.submit(SESSION_ID, message);
+
+    expect(api.getSession.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(api.admit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not admit when the on-demand check reports busy", async () => {
+    const clock = new MutableClock();
+    const { adapter, api } = makeFixture(undefined, clock);
+    await adapter.start();
+    await expectState(adapter, "idle");
+    clock.advance(5_001);
+    api.snapshot = { exists: true, busy: true };
+
+    await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    expect(api.admit).not.toHaveBeenCalled();
+  });
+
+  it("does not admit when the on-demand check finds the session gone", async () => {
+    const clock = new MutableClock();
+    const { adapter, api } = makeFixture(undefined, clock);
+    await adapter.start();
+    await expectState(adapter, "idle");
+    clock.advance(5_001);
+    api.snapshot = { exists: false, busy: false };
+
+    await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    await expectState(adapter, "closed");
+    expect(api.admit).not.toHaveBeenCalled();
+  });
+
+  it("recovers from a stale busy observation through the on-demand check", async () => {
+    const { adapter, api } = makeFixture();
+    await adapter.start();
+    await expectState(adapter, "idle");
+    api.streams[0]?.push({
+      type: "session.execution.started",
+      data: { sessionID: SESSION_ID },
+    });
+    await expectState(adapter, "busy");
+    // The turn ended but the completion event was missed; the markers say idle.
+    api.snapshot = { exists: true, busy: false };
+
+    await adapter.submit(SESSION_ID, message);
+
+    expect(api.admit).toHaveBeenCalledTimes(1);
+    await expectState(adapter, "idle");
+  });
+
+  it("refuses a closed session without an on-demand check", async () => {
+    const { adapter, api } = makeFixture();
+    await adapter.start();
+    await expectState(adapter, "idle");
+    api.streams[0]?.push({
+      type: "session.deleted",
+      data: { sessionID: SESSION_ID },
+    });
+    await expectState(adapter, "closed");
+    const callsBefore = api.getSession.mock.calls.length;
+
+    await expect(adapter.submit(SESSION_ID, message)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("closed"),
+    });
+    expect(api.getSession.mock.calls.length).toBe(callsBefore);
+    expect(api.admit).not.toHaveBeenCalled();
   });
 
   it("close aborts event and heartbeat loops and reports closed", async () => {
-    const { adapter, sdk, relay } = makeFixture();
+    const { adapter, api, relay } = makeFixture();
     await adapter.start();
     await expectState(adapter, "idle");
     const heartbeat = vi.mocked(relay.heartbeat);
@@ -468,18 +518,18 @@ describe("OpenCode queued prompt adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(await adapter.state(SESSION_ID)).toBe("closed");
-    expect(sdk.streams[0]?.isEnded).toBe(true);
+    expect(api.streams[0]?.isEnded).toBe(true);
     expect(relay.closeSession).toHaveBeenCalledWith({ sessionId: SESSION_ID });
     expect(heartbeat).toHaveBeenCalledTimes(callsAfterClose);
   });
 
   it("composes a standalone adapter through runOpenCodeAdapter", async () => {
-    const sdk = new FakeSdk();
+    const api = new FakeApi();
     const relay = makeRelay();
     const adapter = await runOpenCodeAdapter(
       { ...config, baseUrl: "http://127.0.0.1:4096", heartbeatIntervalMs: 5 },
       relay,
-      { openCode: sdk.asV2Client(), client: sdk.asNormalClient() },
+      api,
     );
     closers.push(() => adapter.close());
 
@@ -496,15 +546,15 @@ describe("OpenCode queued prompt adapter", () => {
   });
 
   it("close completes while a status observation never settles", async () => {
-    const sdk = new FakeSdk();
-    sdk.status.mockImplementationOnce(() => new Promise(() => {}));
+    const api = new FakeApi();
+    api.getSession.mockImplementationOnce(() => new Promise(() => {}));
     const relay = makeRelay();
-    const adapter = new OpenCodeAdapter(sdk.asV2Client(), sdk.asNormalClient(), relay, {
+    const adapter = new OpenCodeAdapter(api, relay, {
       ...config,
       heartbeatIntervalMs: 5,
     });
     adapter.start();
-    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(api.getSession).toHaveBeenCalledTimes(1));
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -518,127 +568,182 @@ describe("OpenCode queued prompt adapter", () => {
   });
 });
 
-describe("OpenCode dispatcher local freshness", () => {
-  it("performs zero prompts during startup before local idle observation", async () => {
-    const { sdk, dispatcher } = makeDispatcherFixture();
-
-    await dispatcher.runOnce(config.project, config.agentId);
-
-    expect(sdk.prompt).not.toHaveBeenCalled();
-  });
-
-  it("performs zero prompts after EOF while its heartbeat is deferred", async () => {
-    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
-    adapter.start();
-    await expectState(adapter, "idle");
-    let releaseHeartbeat!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      releaseHeartbeat = resolve;
-    });
-    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
-      await blocked;
-      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
-    });
-    sdk.streams[0]?.end();
-    await expectState(adapter, "unknown");
-
-    try {
-      await dispatcher.runOnce(config.project, config.agentId);
-      expect(sdk.prompt).not.toHaveBeenCalled();
-    } finally {
-      releaseHeartbeat();
-    }
-  });
-
-  it("performs zero prompts during reconnect before fresh status", async () => {
-    const { adapter, sdk, dispatcher } = makeDispatcherFixture();
-    let resolveReconnectStatus!: (value: { data: Record<string, { type: string }> }) => void;
-    sdk.status
-      .mockResolvedValueOnce({ data: { [SESSION_ID]: { type: "idle" } } })
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveReconnectStatus = resolve;
-          }),
-      );
-    adapter.start();
-    await expectState(adapter, "idle");
-    sdk.streams[0]?.end();
-    await vi.waitFor(() => expect(sdk.streams).toHaveLength(2), {
-      timeout: 2_000,
-    });
-    await vi.waitFor(() => expect(sdk.status).toHaveBeenCalledTimes(2));
-    expect(await adapter.state(SESSION_ID)).toBe("unknown");
-
-    try {
-      await dispatcher.runOnce(config.project, config.agentId);
-      expect(sdk.prompt).not.toHaveBeenCalled();
-    } finally {
-      resolveReconnectStatus({ data: { [SESSION_ID]: { type: "idle" } } });
-    }
-  });
-
-  it("performs zero prompts on local busy while the relay remains idle", async () => {
-    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
-    adapter.start();
-    await expectState(adapter, "idle");
-    let releaseHeartbeat!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      releaseHeartbeat = resolve;
-    });
-    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
-      await blocked;
-      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
-    });
-    sdk.streams[0]?.push({
-      type: "session.status",
-      properties: { sessionID: SESSION_ID, status: { type: "busy" } },
-    });
-    await expectState(adapter, "busy");
-
-    try {
-      await dispatcher.runOnce(config.project, config.agentId);
-      expect(sdk.prompt).not.toHaveBeenCalled();
-    } finally {
-      releaseHeartbeat();
-    }
-  });
-
-  it("performs zero prompts after deletion while its heartbeat is deferred", async () => {
-    const { adapter, sdk, relay, dispatcher } = makeDispatcherFixture();
-    adapter.start();
-    await expectState(adapter, "idle");
-    let releaseHeartbeat!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      releaseHeartbeat = resolve;
-    });
-    vi.mocked(relay.heartbeat).mockImplementationOnce(async () => {
-      await blocked;
-      return {} as Awaited<ReturnType<RelayHttpClient["heartbeat"]>>;
-    });
-    sdk.streams[0]?.push({
-      type: "session.deleted",
-      properties: { sessionID: SESSION_ID },
-    });
-    await expectState(adapter, "closed");
-
-    try {
-      await dispatcher.runOnce(config.project, config.agentId);
-      expect(sdk.prompt).not.toHaveBeenCalled();
-    } finally {
-      releaseHeartbeat();
-    }
-  });
-
-  it("performs zero prompts when local idle is older than five seconds", async () => {
-    const { adapter, sdk, sessions, dispatcher, clock } = makeDispatcherFixture();
-    adapter.start();
-    await expectState(adapter, "idle");
-    clock.advance(5_001);
+describe("OpenCode dispatcher on-demand freshness", () => {
+  it("verifies freshness on startup before the first admission", async () => {
+    const { api, sessions, dispatcher, store, pending } = makeDispatcherFixture();
     sessions.heartbeat(config.project, config.agentId, SESSION_ID, "idle");
 
     await dispatcher.runOnce(config.project, config.agentId);
 
-    expect(sdk.prompt).not.toHaveBeenCalled();
+    expect(api.getSession).toHaveBeenCalled();
+    expect(api.admit).toHaveBeenCalledTimes(1);
+    expect(store.getMessage(pending.id)?.deliveryState).toBe("delivered");
+  });
+
+  it("performs zero admissions while the session markers report busy", async () => {
+    const { api, sessions, dispatcher, store, pending } = makeDispatcherFixture();
+    api.snapshot = { exists: true, busy: true };
+    sessions.heartbeat(config.project, config.agentId, SESSION_ID, "busy");
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(api.admit).not.toHaveBeenCalled();
+    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+  });
+
+  it("performs zero admissions after the stream ends while the markers report busy", async () => {
+    const { adapter, api, sessions, dispatcher, store, pending } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    api.streams[0]?.end();
+    await expectState(adapter, "unknown");
+    api.snapshot = { exists: true, busy: true };
+    sessions.heartbeat(config.project, config.agentId, SESSION_ID, "unknown");
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(api.admit).not.toHaveBeenCalled();
+    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+  });
+
+  it("performs zero admissions after the session is deleted", async () => {
+    const { adapter, api, sessions, dispatcher, store, pending } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    api.streams[0]?.push({
+      type: "session.deleted",
+      data: { sessionID: SESSION_ID },
+    });
+    await expectState(adapter, "closed");
+    sessions.heartbeat(config.project, config.agentId, SESSION_ID, "closed");
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(api.admit).not.toHaveBeenCalled();
+    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+  });
+
+  it("admits a stored message on a quiet idle session without any events", async () => {
+    // Regression guard for the live M2 stall (#31): a session idle for hours
+    // emits no events, so the cached observation decays — the on-demand
+    // marker check must still admit the delivery.
+    const { adapter, api, sessions, dispatcher, store, pending, clock } = makeDispatcherFixture();
+    adapter.start();
+    await expectState(adapter, "idle");
+    clock.advance(3_600_000);
+    sessions.heartbeat(config.project, config.agentId, SESSION_ID, "idle");
+
+    await dispatcher.runOnce(config.project, config.agentId);
+
+    expect(api.admit).toHaveBeenCalledTimes(1);
+    expect(store.getMessage(pending.id)?.deliveryState).toBe("delivered");
+  });
+});
+
+describe("createOpenCodeApi wire contract", () => {
+  const baseUrl = "http://127.0.0.1:28894";
+
+  function fetchReturning(status: number, body: unknown) {
+    return vi.fn(async () => new Response(JSON.stringify(body), { status }));
+  }
+
+  it("rejects a non-loopback base URL before any request", () => {
+    expect(() => createOpenCodeApi("http://198.51.100.7:28894")).toThrow(
+      expect.objectContaining({ code: "INVALID_INPUT" }),
+    );
+  });
+
+  it("reads busy markers from the enveloped session response", async () => {
+    const fetchImpl = fetchReturning(200, {
+      data: { id: SESSION_ID, time: { busy: 20, idle: 10 } },
+    });
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    await expect(api.getSession(SESSION_ID)).resolves.toEqual({ exists: true, busy: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `${baseUrl}/api/session/${SESSION_ID}`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("reports idle when the session never ran a turn", async () => {
+    const fetchImpl = fetchReturning(200, { data: { id: SESSION_ID, time: {} } });
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    await expect(api.getSession(SESSION_ID)).resolves.toEqual({ exists: true, busy: false });
+  });
+
+  it("reports a missing session as not existing", async () => {
+    const fetchImpl = fetchReturning(404, undefined);
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    await expect(api.getSession(SESSION_ID)).resolves.toEqual({ exists: false, busy: false });
+  });
+
+  it("admits with a flat queued body that schedules execution", async () => {
+    const fetchImpl = fetchReturning(200, {
+      data: {
+        id: "msg_1",
+        sessionID: SESSION_ID,
+        time: { created: 1 },
+        type: "user",
+        payload: { text: "hello" },
+        delivery: "queue",
+      },
+    });
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    const admission = await api.admit(SESSION_ID, "hello");
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `${baseUrl}/api/session/${SESSION_ID}/prompt`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ text: "hello", delivery: "queue", resume: true }),
+      }),
+    );
+    expect(admission).toEqual({
+      id: "msg_1",
+      sessionID: SESSION_ID,
+      text: "hello",
+      delivery: "queue",
+    });
+  });
+
+  it("parses server-sent events with data payloads", async () => {
+    const events = [
+      { id: "evt_1", type: "server.connected", data: {} },
+      { id: "evt_2", type: "session.execution.started", data: { sessionID: SESSION_ID } },
+    ];
+    const payload = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(payload, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    const stream = await api.subscribeEvents(new AbortController().signal);
+    const seen: unknown[] = [];
+    for await (const event of stream) seen.push(event);
+
+    expect(seen).toEqual(events);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `${baseUrl}/api/event`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ accept: "text/event-stream" }),
+      }),
+    );
+  });
+
+  it("fails the event subscription on a non-OK response", async () => {
+    const fetchImpl = vi.fn(async () => new Response("nope", { status: 401 }));
+    const api = createOpenCodeApi(baseUrl, { fetch: fetchImpl as unknown as typeof fetch });
+
+    await expect(api.subscribeEvents(new AbortController().signal)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
   });
 });

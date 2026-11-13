@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { OpencodeClient as OpenCodeClient } from "@opencode-ai/sdk/client";
-import type { OpencodeClient as OpenCodeV2Client } from "@opencode-ai/sdk/v2/client";
 import { expect, it, vi } from "vitest";
-import { OpenCodeAdapter } from "../../src/adapters/opencode.js";
+import {
+  OpenCodeAdapter,
+  type OpenCodeAdmission,
+  type OpenCodeApi,
+} from "../../src/adapters/opencode.js";
 import type { DeliveryAdapter, DeliveryReceipt } from "../../src/adapters/types.js";
 import { SynloqError } from "../../src/domain/errors.js";
 import type { Message } from "../../src/domain/message.js";
@@ -24,11 +26,6 @@ import {
   type Harness,
   type VisibleEntry,
 } from "./contract.js";
-
-interface PromptParameters {
-  sessionID: string;
-  prompt: { text: string };
-}
 
 class ContractEventStream implements AsyncIterable<unknown> {
   private readonly events: unknown[] = [];
@@ -98,48 +95,32 @@ runAdapterContract("OpenCodeAdapter delivery contract", (capabilities = contract
   const sessions = new SessionStore(database, clock);
   const visible: VisibleEntry[] = [];
   const failures = new Set<string>();
-  const prompt = vi.fn(async (parameters: PromptParameters) => {
-    const messageId = /message="([^"]+)"/.exec(parameters.prompt.text)?.[1];
+  let hostBusy = false;
+  const admit = vi.fn(async (sessionId: string, text: string): Promise<OpenCodeAdmission> => {
+    const messageId = /message="([^"]+)"/.exec(text)?.[1];
     if (!messageId) throw new Error("fake OpenCode prompt has no Synloq message ID");
     if (failures.delete(messageId)) {
       // The fake rejects before transmission, which is safe for ordinary retry backoff.
       throw new SynloqError("INVALID_INPUT", `forced pre-transmission failure for ${messageId}`);
     }
-    const entry = { id: messageId, content: parameters.prompt.text };
-    visible.push(entry);
-    return {
-      data: {
-        data: {
-          admittedSeq: visible.length,
-          id: messageId,
-          sessionID: parameters.sessionID,
-          prompt: parameters.prompt,
-          delivery: "queue",
-          timeCreated: visible.length,
-        },
-      },
-    };
+    visible.push({ id: messageId, content: text });
+    return { id: messageId, sessionID: sessionId, text, delivery: "queue" };
   });
-  const openCode = { v2: { session: { prompt } } } as unknown as OpenCodeV2Client;
   const stream = new ContractEventStream();
-  const client = {
-    session: {
-      status: vi.fn(async () => ({ data: { [CONTRACT_SESSION]: { type: "idle" } } })),
-    },
-    event: {
-      subscribe: vi.fn((options?: { signal?: AbortSignal }) => {
-        options?.signal?.addEventListener("abort", () => stream.end(), { once: true });
-        return Promise.resolve({ stream });
-      }),
-    },
-  } as unknown as OpenCodeClient;
+  const api: OpenCodeApi = {
+    getSession: vi.fn(async () => ({ exists: true, busy: hostBusy })),
+    admit,
+    subscribeEvents: vi.fn((signal?: AbortSignal) => {
+      signal?.addEventListener("abort", () => stream.end(), { once: true });
+      return Promise.resolve(stream as AsyncIterable<unknown>);
+    }),
+  };
   const relay = {
     heartbeat: vi.fn().mockResolvedValue({}),
     closeSession: vi.fn().mockResolvedValue({}),
   } as unknown as RelayHttpClient;
   const adapter = new OpenCodeAdapter(
-    openCode,
-    client,
+    api,
     relay,
     { project: CONTRACT_PROJECT, agentId: CONTRACT_AGENT, sessionId: CONTRACT_SESSION },
     capabilities,
@@ -165,15 +146,13 @@ runAdapterContract("OpenCodeAdapter delivery contract", (capabilities = contract
     dispatcher,
     setState(state) {
       sessions.heartbeat(CONTRACT_PROJECT, CONTRACT_AGENT, CONTRACT_SESSION, state);
+      hostBusy = state === "busy";
       if (state === "idle" || state === "busy") {
         expectedState = state;
         stream.push(
           state === "idle"
             ? { type: "session.idle", properties: { sessionID: CONTRACT_SESSION } }
-            : {
-                type: "session.status",
-                properties: { sessionID: CONTRACT_SESSION, status: { type: "busy" } },
-              },
+            : { type: "session.execution.started", data: { sessionID: CONTRACT_SESSION } },
         );
       }
     },

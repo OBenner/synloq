@@ -1,7 +1,7 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { runClaudeAdapter } from "../adapters/claude-channel.js";
 import { HttpAdapterRunner } from "../adapters/http-runner.js";
-import { runOpenCodeAdapter, type OpenCodeClientSet } from "../adapters/opencode.js";
+import { runOpenCodeAdapter, type OpenCodeApi } from "../adapters/opencode.js";
 import { loadAdapterConfiguration } from "../config/adapter.js";
 import { SynloqError } from "../domain/errors.js";
 import { resolveOpenCodeServiceAuth } from "../host/opencode/discovery.js";
@@ -11,7 +11,7 @@ import { runCodexHook, type CodexHookIo } from "./codex-hook.js";
 
 export interface StandaloneAdapterDependencies {
   claudeTransport?: Transport;
-  openCodeClients?: OpenCodeClientSet;
+  openCodeApi?: OpenCodeApi;
   deliveryWaitMs?: number;
   environment?: NodeJS.ProcessEnv;
 }
@@ -58,7 +58,7 @@ export async function startStandaloneAdapter(
           : { heartbeatIntervalMs: configuration.heartbeatIntervalMs }),
       },
       relay,
-      dependencies.openCodeClients,
+      dependencies.openCodeApi,
     );
     const runner = new HttpAdapterRunner(
       relay,

@@ -1,7 +1,5 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/client";
-import type { OpencodeClient as OpenCodeV2Client } from "@opencode-ai/sdk/v2/client";
 import { describe, expect, it, vi } from "vitest";
-import { OpenCodeAdapter } from "../../src/adapters/opencode.js";
+import { OpenCodeAdapter, type OpenCodeApi } from "../../src/adapters/opencode.js";
 import type { Message } from "../../src/domain/message.js";
 import type { RelayHttpClient } from "../../src/transport/http-client.js";
 
@@ -21,31 +19,29 @@ const message: Message = {
 
 describe("OpenCode submission cancellation", () => {
   it("unblocks a never-settling prompt and preserves delivery uncertainty", async () => {
-    const prompt = vi.fn().mockImplementation(() => new Promise(() => {}));
-    const subscribe = vi.fn((options?: { signal?: AbortSignal }) => {
-      const stream = {
-        async *[Symbol.asyncIterator]() {
-          await new Promise<void>((resolve) => {
-            if (options?.signal?.aborted) {
-              resolve();
-              return;
-            }
-            options?.signal?.addEventListener("abort", () => resolve(), { once: true });
-          });
-        },
-      };
-      return Promise.resolve({ stream });
-    });
-    const client = {
-      session: { status: vi.fn().mockResolvedValue({ data: { [SESSION]: { type: "idle" } } }) },
-      event: { subscribe },
-    } as unknown as OpencodeClient;
-    const openCode = { v2: { session: { prompt } } } as unknown as OpenCodeV2Client;
+    const api: OpenCodeApi = {
+      getSession: vi.fn(async () => ({ exists: true, busy: false })),
+      admit: vi.fn().mockImplementation(() => new Promise(() => {})),
+      subscribeEvents: vi.fn((signal?: AbortSignal) => {
+        const stream = {
+          async *[Symbol.asyncIterator]() {
+            await new Promise<void>((resolve) => {
+              if (signal?.aborted) {
+                resolve();
+                return;
+              }
+              signal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+          },
+        };
+        return Promise.resolve(stream as AsyncIterable<unknown>);
+      }),
+    };
     const relay = {
       heartbeat: vi.fn().mockResolvedValue({}),
       closeSession: vi.fn().mockResolvedValue({}),
     } as unknown as RelayHttpClient;
-    const adapter = new OpenCodeAdapter(openCode, client, relay, {
+    const adapter = new OpenCodeAdapter(api, relay, {
       project: "verdicta",
       agentId: "arch",
       sessionId: SESSION,

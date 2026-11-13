@@ -1,13 +1,12 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Notification } from "@modelcontextprotocol/sdk/types.js";
-import type { OpencodeClient } from "@opencode-ai/sdk/client";
-import type { OpencodeClient as OpenCodeV2Client } from "@opencode-ai/sdk/v2/client";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { OpenCodeApi } from "../../src/adapters/opencode.js";
 import { frameMessage } from "../../src/adapters/reference.js";
 import {
   runStandaloneClaudeHook,
@@ -178,47 +177,26 @@ class FakeEventStream implements AsyncIterable<unknown> {
   }
 }
 
-function fakeOpenCode(sessionId: string) {
+function fakeOpenCode() {
   const stream = new FakeEventStream();
-  const prompt = vi.fn(
-    async (parameters: {
-      sessionID: string;
-      prompt: { text: string };
-      delivery: "queue";
-      resume: false;
-    }) => ({
-      data: {
-        data: {
-          admittedSeq: 1,
-          id: "opencode-admission-1",
-          sessionID: parameters.sessionID,
-          prompt: parameters.prompt,
-          delivery: "queue" as const,
-          timeCreated: 1,
-        },
-      },
-    }),
-  );
-  const status = vi.fn(async () => ({
-    data: { [sessionId]: { type: "idle" } },
+  const admit = vi.fn(async (id: string, text: string) => ({
+    id: "opencode-admission-1",
+    sessionID: id,
+    text,
+    delivery: "queue" as const,
   }));
-  const subscribe = vi.fn((options?: { signal?: AbortSignal }) => {
-    options?.signal?.addEventListener("abort", () => stream.end(), {
+  const getSession = vi.fn(async () => ({ exists: true, busy: false }));
+  const subscribeEvents = vi.fn((signal?: AbortSignal) => {
+    signal?.addEventListener("abort", () => stream.end(), {
       once: true,
     });
-    return Promise.resolve({ stream });
+    return Promise.resolve(stream as AsyncIterable<unknown>);
   });
   return {
-    prompt,
-    status,
+    admit,
+    getSession,
     stream,
-    clients: {
-      openCode: { v2: { session: { prompt } } } as unknown as OpenCodeV2Client,
-      client: {
-        session: { status },
-        event: { subscribe },
-      } as unknown as OpencodeClient,
-    },
+    api: { getSession, admit, subscribeEvents } satisfies OpenCodeApi,
   };
 }
 
@@ -318,7 +296,7 @@ describe("standalone real-client composition", () => {
 
   it("composes OpenCode queue admission, receipts, exact binding, and shutdown", async () => {
     const current = await fixture();
-    const sdk = fakeOpenCode(OPENCODE_SESSION);
+    const sdk = fakeOpenCode();
     const configPath = await writeConfig(current.home, {
       root: current.root,
       relay: current.relay,
@@ -329,7 +307,7 @@ describe("standalone real-client composition", () => {
       baseUrl: "http://127.0.0.1:4096",
     });
     const handle = await startStandaloneAdapter(configPath, {
-      openCodeClients: sdk.clients,
+      openCodeApi: sdk.api,
       deliveryWaitMs: 5,
     });
     closers.push(() => handle.close());
@@ -342,19 +320,15 @@ describe("standalone real-client composition", () => {
 
     await vi.waitFor(
       () => {
-        expect(sdk.prompt).toHaveBeenCalledTimes(1);
+        expect(sdk.admit).toHaveBeenCalledTimes(1);
         expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
       },
       { timeout: 1_000, interval: 1 },
     );
-    expect(sdk.prompt).toHaveBeenCalledWith(
-      {
-        sessionID: OPENCODE_SESSION,
-        prompt: { text: frameMessage(message) },
-        delivery: "queue",
-        resume: false,
-      },
-      { throwOnError: true },
+    expect(sdk.admit).toHaveBeenCalledWith(
+      OPENCODE_SESSION,
+      frameMessage(message),
+      expect.any(AbortSignal),
     );
     expect(current.relay.sessions.list(PROJECT)[0]).toMatchObject({
       agentId: "arch",

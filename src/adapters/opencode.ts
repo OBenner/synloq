@@ -1,14 +1,3 @@
-import {
-  createOpencodeClient as createOpenCodeClient,
-  type Event as OpenCodeEvent,
-  type OpencodeClient as OpenCodeClient,
-  type SessionStatus as OpenCodeSessionStatus,
-} from "@opencode-ai/sdk/client";
-import {
-  createOpencodeClient as createOpenCodeV2Client,
-  type OpencodeClient as OpenCodeV2Client,
-  type SessionInputAdmitted,
-} from "@opencode-ai/sdk/v2/client";
 import { SynloqError } from "../domain/errors.js";
 import type { Message } from "../domain/message.js";
 import {
@@ -18,6 +7,7 @@ import {
   type SessionState,
 } from "../domain/session.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
+import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { frameMessage } from "./reference.js";
 import type {
   Clock,
@@ -60,9 +50,251 @@ export function openCodeBasicAuthFetch(
   return wrapped as typeof fetch;
 }
 
-export interface OpenCodeClientSet {
-  openCode: OpenCodeV2Client;
-  client: OpenCodeClient;
+/**
+ * Session liveness derived from the session record's time markers: the host
+ * stamps `time.busy` when a turn starts and `time.idle` when it ends, so
+ * busy > idle means a turn is currently running. Verified live against the
+ * OpenCode desktop service 2.2.7 (#31).
+ */
+export interface OpenCodeSessionSnapshot {
+  exists: boolean;
+  busy: boolean;
+}
+
+/** Admission record as returned by the desktop service on POST prompt. */
+export interface OpenCodeAdmission {
+  id: string;
+  sessionID: string;
+  text?: string;
+  delivery?: string;
+}
+
+/**
+ * Minimal transport surface the adapter needs from an OpenCode host. The
+ * default implementation targets the desktop service API (`/api/*`); tests
+ * inject fakes.
+ */
+export interface OpenCodeApi {
+  getSession(sessionId: string, signal?: AbortSignal): Promise<OpenCodeSessionSnapshot>;
+  admit(sessionId: string, text: string, signal?: AbortSignal): Promise<OpenCodeAdmission>;
+  subscribeEvents(signal: AbortSignal): Promise<AsyncIterable<unknown>>;
+}
+
+function unavailable(): SynloqError {
+  return new SynloqError("NOT_FOUND", "OpenCode service is unavailable");
+}
+
+function invalidResponse(detail: string): SynloqError {
+  return new SynloqError("INVALID_INPUT", `OpenCode service response is invalid: ${detail}`);
+}
+
+// The desktop API wraps payloads in an envelope: {"data": ...}. Tolerate a
+// bare payload too, for forwards compatibility.
+function unwrap(json: unknown): unknown {
+  if (typeof json === "object" && json !== null && "data" in json) {
+    return (json as { data: unknown }).data;
+  }
+  return json;
+}
+
+function readTimeMarkers(payload: unknown): { busy: number; idle: number } {
+  if (typeof payload !== "object" || payload === null) throw invalidResponse("not an object");
+  const time = (payload as { time?: unknown }).time;
+  if (typeof time !== "object" || time === null) throw invalidResponse("missing time markers");
+  const { busy, idle } = time as { busy?: unknown; idle?: unknown };
+  return {
+    busy: typeof busy === "number" && Number.isFinite(busy) ? busy : 0,
+    idle: typeof idle === "number" && Number.isFinite(idle) ? idle : 0,
+  };
+}
+
+function readAdmission(payload: unknown): OpenCodeAdmission {
+  if (typeof payload !== "object" || payload === null) throw invalidResponse("not an object");
+  const record = payload as {
+    id?: unknown;
+    sessionID?: unknown;
+    payload?: unknown;
+    prompt?: unknown;
+    delivery?: unknown;
+  };
+  if (typeof record.id !== "string" || typeof record.sessionID !== "string") {
+    throw invalidResponse("missing admission id or sessionID");
+  }
+  // The desktop wire echoes the admitted text under payload.text; the SDK
+  // types describe prompt.text. Accept both, prefer the observed wire shape.
+  const textOf = (bag: unknown): unknown =>
+    typeof bag === "object" && bag !== null ? (bag as { text?: unknown }).text : undefined;
+  const text = textOf(record.payload) ?? textOf(record.prompt);
+  return {
+    id: record.id,
+    sessionID: record.sessionID,
+    ...(typeof text === "string" ? { text } : {}),
+    ...(typeof record.delivery === "string" ? { delivery: record.delivery } : {}),
+  };
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (text.length === 0) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw invalidResponse("not JSON");
+  }
+}
+
+async function* streamServerEvents(
+  body: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+): AsyncGenerator<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const onAbort = (): void => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const data = chunk
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).replace(/^ /, ""))
+          .join("\n");
+        if (data.length === 0) continue;
+        try {
+          yield JSON.parse(data) as unknown;
+        } catch {
+          // Keep the stream alive on a malformed event; the next events and
+          // the periodic status refresh keep the observed state truthful.
+        }
+      }
+    }
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
+/**
+ * Default OpenCode API client, written against the desktop service wire
+ * contract verified live on 2.2.7 (#31): endpoints live under `/api`,
+ * responses are enveloped in {"data": ...}, the prompt body is flat
+ * (`{text, delivery, resume}`), and SSE events carry their payload in `data`.
+ */
+export function createOpenCodeApi(
+  baseUrl: string,
+  options: { fetch?: typeof fetch } = {},
+): OpenCodeApi {
+  if (!isLoopbackHttpUrl(baseUrl)) {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      "OpenCode service URL must be an explicit loopback origin",
+    );
+  }
+  const base = baseUrl.replace(/\/+$/, "");
+  const fetchImpl = options.fetch ?? fetch;
+
+  const request = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ status: number; json: unknown }> => {
+    let response: Response;
+    try {
+      response = await fetchImpl(`${base}${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(signal !== undefined ? { signal } : {}),
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw unavailable();
+    }
+    return { status: response.status, json: await readJson(response) };
+  };
+
+  return {
+    async getSession(sessionId, signal) {
+      const result = await request(
+        "GET",
+        `/api/session/${encodeURIComponent(sessionId)}`,
+        undefined,
+        signal,
+      );
+      if (result.status === 404) return { exists: false, busy: false };
+      if (result.status === 401 || result.status === 403) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          "OpenCode service rejected the request as unauthorized (service password missing or wrong)",
+        );
+      }
+      if (result.status >= 500) throw unavailable();
+      if (result.status !== 200) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `OpenCode session lookup failed with status ${result.status}`,
+        );
+      }
+      const markers = readTimeMarkers(unwrap(result.json));
+      return { exists: true, busy: markers.busy > markers.idle };
+    },
+
+    async admit(sessionId, text, signal) {
+      const result = await request(
+        "POST",
+        `/api/session/${encodeURIComponent(sessionId)}/prompt`,
+        // queue never interrupts a running turn; resume schedules execution,
+        // otherwise the admission would sit in the session inbox forever.
+        { text, delivery: "queue", resume: true },
+        signal,
+      );
+      if (result.status === 401 || result.status === 403) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          "OpenCode service rejected the request as unauthorized (service password missing or wrong)",
+        );
+      }
+      if (result.status >= 500) throw unavailable();
+      if (result.status < 200 || result.status >= 300) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `OpenCode prompt failed with status ${result.status}`,
+        );
+      }
+      return readAdmission(unwrap(result.json));
+    },
+
+    async subscribeEvents(signal) {
+      let response: Response;
+      try {
+        response = await fetchImpl(`${base}/api/event`, {
+          method: "GET",
+          headers: { accept: "text/event-stream" },
+          signal,
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw unavailable();
+      }
+      if (!response.ok || response.body === null) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `OpenCode event subscription failed with status ${response.status}`,
+        );
+      }
+      return streamServerEvents(response.body, signal);
+    },
+  };
 }
 
 function backoffDelay(failures: number): number {
@@ -87,27 +319,52 @@ function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
   let abort!: () => void;
   const aborted = new Promise<never>((_, reject) => {
     abort = () => reject(new DOMException("aborted", "AbortError"));
-    signal.addEventListener("abort", abort, { once: true });
   });
+  signal.addEventListener("abort", abort);
   return Promise.race([operation, aborted]).finally(() => {
     signal.removeEventListener("abort", abort);
   });
 }
 
-function mapStatus(status: OpenCodeSessionStatus): SessionState {
-  if (status.type === "idle") return "idle";
-  if (status.type === "busy") return "busy";
-  return "unknown";
+function eventBags(event: unknown): Array<Record<string, unknown>> {
+  if (typeof event !== "object" || event === null) return [];
+  const record = event as { data?: unknown; properties?: unknown };
+  const bags: Array<Record<string, unknown>> = [];
+  for (const bag of [record.data, record.properties]) {
+    if (typeof bag === "object" && bag !== null) bags.push(bag as Record<string, unknown>);
+  }
+  return bags;
 }
 
-function eventSessionId(event: OpenCodeEvent): string | undefined {
-  if (!("properties" in event)) return undefined;
-  const properties = event.properties as {
-    sessionID?: unknown;
-    info?: { id?: unknown };
-  };
-  if (typeof properties.sessionID === "string") return properties.sessionID;
-  return typeof properties.info?.id === "string" ? properties.info.id : undefined;
+// Event payloads arrive under `data` on the desktop wire; the SDK types call
+// the same bag `properties`. Read both.
+function eventSessionId(event: unknown): string | undefined {
+  for (const bag of eventBags(event)) {
+    if (typeof bag.sessionID === "string") return bag.sessionID;
+    const info = bag.info;
+    if (typeof info === "object" && info !== null) {
+      const id = (info as { id?: unknown }).id;
+      if (typeof id === "string") return id;
+    }
+  }
+  return undefined;
+}
+
+function eventType(event: unknown): string | undefined {
+  if (typeof event !== "object" || event === null) return undefined;
+  const type = (event as { type?: unknown }).type;
+  return typeof type === "string" ? type : undefined;
+}
+
+function eventStatusType(event: unknown): string | undefined {
+  for (const bag of eventBags(event)) {
+    const status = bag.status;
+    if (typeof status === "object" && status !== null) {
+      const type = (status as { type?: unknown }).type;
+      if (typeof type === "string") return type;
+    }
+  }
+  return undefined;
 }
 
 export class OpenCodeAdapter implements DeliveryAdapter {
@@ -125,8 +382,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   private closed = false;
 
   constructor(
-    private readonly openCode: OpenCodeV2Client,
-    private readonly client: OpenCodeClient,
+    private readonly api: OpenCodeApi,
     private readonly relay: RelayHttpClient,
     private readonly config: OpenCodeAdapterConfig,
     capabilities: AdapterCapabilities = {
@@ -177,22 +433,24 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     if (this.closed) {
       throw new SynloqError("INVALID_INPUT", "OpenCode adapter is closed");
     }
+    if (this.currentState() === "closed") {
+      throw new SynloqError("INVALID_INPUT", "visible session is closed");
+    }
     if (this.currentState() !== "idle") {
-      throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");
+      // The event stream is the primary state source, but a quiet idle
+      // session emits no events — verify the markers on demand instead of
+      // stalling the delivery forever (#31 live evidence).
+      await this.refreshStatus(context?.signal);
+      if (this.currentState() !== "idle") {
+        throw new SynloqError("INVALID_INPUT", "visible session is not idle");
+      }
     }
 
     try {
-      const prompt = this.openCode.v2.session.prompt(
-        {
-          sessionID: sessionId,
-          prompt: { text: frameMessage(message) },
-          delivery: "queue",
-          resume: false,
-        },
-        { throwOnError: true },
-      );
-      const response = context?.signal ? await raceWithAbort(prompt, context.signal) : await prompt;
-      const admitted = response.data.data;
+      const admission = this.api.admit(sessionId, frameMessage(message), context?.signal);
+      const admitted = context?.signal
+        ? await raceWithAbort(admission, context.signal)
+        : await admission;
       if (!this.isMatchingAdmission(admitted, sessionId, message)) {
         throw this.deliveryUncertain(message.id);
       }
@@ -218,17 +476,15 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   }
 
   private isMatchingAdmission(
-    admitted: SessionInputAdmitted,
+    admitted: OpenCodeAdmission,
     sessionId: string,
     message: Message,
   ): boolean {
     return (
       admitted.id.trim() !== "" &&
       admitted.sessionID === sessionId &&
-      admitted.prompt.text === frameMessage(message) &&
-      admitted.delivery === "queue" &&
-      Number.isSafeInteger(admitted.admittedSeq) &&
-      admitted.admittedSeq >= 0
+      admitted.text === frameMessage(message) &&
+      admitted.delivery === "queue"
     );
   }
 
@@ -260,15 +516,16 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     }
   }
 
-  private async refreshStatus(signal: AbortSignal): Promise<boolean> {
-    const response = await raceWithAbort(this.client.session.status({}), signal);
+  private async refreshStatus(signal?: AbortSignal): Promise<boolean> {
+    const snapshot = await (signal
+      ? raceWithAbort(this.api.getSession(this.config.sessionId, signal), signal)
+      : this.api.getSession(this.config.sessionId));
     if (this.closed) return false;
-    const status = response.data?.[this.config.sessionId];
-    if (!status) {
-      await this.observe("unknown");
+    if (!snapshot.exists) {
+      await this.observe("closed");
       return false;
     }
-    await this.observe(mapStatus(status));
+    await this.observe(snapshot.busy ? "busy" : "idle");
     return true;
   }
 
@@ -294,26 +551,37 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     while (!signal.aborted) {
       try {
         await this.observe("unknown");
-        const events = await this.client.event.subscribe({ signal });
-        let freshStatus = await this.refreshStatus(signal);
-        for await (const event of events.stream) {
+        const events = await this.api.subscribeEvents(signal);
+        await this.refreshStatus(signal);
+        for await (const event of events) {
           if (signal.aborted) break;
-          if (event.type === "server.connected") {
+          const type = eventType(event);
+          if (type === "server.connected") {
             await this.observe("unknown");
-            freshStatus = await this.refreshStatus(signal);
+            await this.refreshStatus(signal);
             failures = 0;
             continue;
           }
           if (eventSessionId(event) !== this.config.sessionId) continue;
-          if (event.type === "session.deleted") {
+          if (type === "session.deleted") {
             await this.observe("closed");
             return;
           }
-          if (!freshStatus) continue;
-          if (event.type === "session.status") {
-            await this.observe(mapStatus(event.properties.status));
+          if (type === "session.execution.started") {
+            await this.observe("busy");
             failures = 0;
-          } else if (event.type === "session.idle") {
+          } else if (
+            type === "session.execution.succeeded" ||
+            type === "session.execution.failed"
+          ) {
+            await this.observe("idle");
+            failures = 0;
+          } else if (type === "session.status") {
+            const statusType = eventStatusType(event);
+            if (statusType === "idle") await this.observe("idle");
+            else if (statusType === "busy") await this.observe("busy");
+            failures = 0;
+          } else if (type === "session.idle") {
             await this.observe("idle");
             failures = 0;
           }
@@ -349,20 +617,16 @@ export type RegisteredOpenCodeAdapter = OpenCodeAdapter & {
 export async function runOpenCodeAdapter(
   config: OpenCodeRunConfig,
   relay: RelayHttpClient,
-  clients?: OpenCodeClientSet,
+  api?: OpenCodeApi,
 ): Promise<RegisteredOpenCodeAdapter> {
-  const authFetch = config.authToken ? openCodeBasicAuthFetch(config.authToken) : undefined;
-  const openCode =
-    clients?.openCode ??
-    (authFetch
-      ? createOpenCodeV2Client({ baseUrl: config.baseUrl, fetch: authFetch })
-      : createOpenCodeV2Client({ baseUrl: config.baseUrl }));
-  const client =
-    clients?.client ??
-    (authFetch
-      ? createOpenCodeClient({ baseUrl: config.baseUrl, fetch: authFetch })
-      : createOpenCodeClient({ baseUrl: config.baseUrl }));
-  const adapter = new OpenCodeAdapter(openCode, client, relay, config);
+  const resolved =
+    api ??
+    createOpenCodeApi(config.baseUrl, {
+      ...(config.authToken !== undefined
+        ? { fetch: openCodeBasicAuthFetch(config.authToken) }
+        : {}),
+    });
+  const adapter = new OpenCodeAdapter(resolved, relay, config);
   const { session } = await relay.registerSession({
     sessionId: config.sessionId,
     protocolVersion: PROTOCOL_VERSION,
