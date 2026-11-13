@@ -378,4 +378,64 @@ describe("SQLiteMessageStore", () => {
       }
     },
   );
+
+  it("reports oldest stored, awaiting ack, and stored counts for status", () => {
+    const store = makeStore();
+    const storedOld = crypto.randomUUID();
+    const storedNew = crypto.randomUUID();
+    const deliveredId = crypto.randomUUID();
+    const ackedId = crypto.randomUUID();
+    createAt(store, storedOld, "2026-11-09T00:00:00.000Z");
+    createAt(store, storedNew, "2026-11-09T00:05:00.000Z");
+    createAt(store, deliveredId, "2026-11-09T00:01:00.000Z");
+    store.setDeliveryState(deliveredId, "delivered");
+    createAt(store, ackedId, "2026-11-09T00:02:00.000Z");
+    store.setDeliveryState(ackedId, "delivered");
+    store.acknowledge(ackedId, "verdicta", "arch");
+
+    expect(store.oldestStoredAt("verdicta", "arch")).toBe("2026-11-09T00:00:00.000Z");
+    expect(store.countStored("verdicta", "arch")).toBe(2);
+    expect(store.awaitingAck("verdicta", "arch")).toEqual({
+      count: 1,
+      oldestAt: "2026-11-09T00:01:00.000Z",
+    });
+    // The acked message is not awaiting anything.
+    expect(store.oldestStoredAt("verdicta", "cto")).toBeUndefined();
+    expect(store.countStored("verdicta", "cto")).toBe(0);
+    expect(store.awaitingAck("verdicta", "cto")).toEqual({ count: 0 });
+  });
+
+  it("counts only stale acked deliveries that still expect a reply", () => {
+    const store = makeStore();
+    const threshold = "2026-11-09T00:30:00.000Z";
+    const answered = crypto.randomUUID();
+    for (const [id, createdAt, expectsReply] of [
+      [crypto.randomUUID(), "2026-11-09T00:00:00.000Z", true], // stale, unanswered → counted
+      [crypto.randomUUID(), "2026-11-09T00:29:00.000Z", true], // stale, unanswered → counted
+      [crypto.randomUUID(), "2026-11-09T00:31:00.000Z", true], // younger than threshold
+      [answered, "2026-11-09T00:01:00.000Z", true], // answered below
+      [crypto.randomUUID(), "2026-11-09T00:02:00.000Z", false], // no reply expected
+    ] as const) {
+      createAt(store, id, createdAt, uniqueInput({ expectsReply }));
+      store.setDeliveryState(id, "delivered");
+      store.acknowledge(id, "verdicta", "arch");
+    }
+    // A reply clears the answered parent.
+    store.create(
+      uniqueInput({ from: "arch", to: "cto", inReplyTo: answered }),
+      crypto.randomUUID(),
+      "2026-11-09T00:04:00.000Z",
+      crypto.randomUUID(),
+    );
+
+    expect(store.unansweredAcked("verdicta", "arch", threshold)).toEqual({
+      count: 2,
+      oldestAt: "2026-11-09T00:00:00.000Z",
+    });
+    // Nothing counts for a fresh threshold.
+    expect(store.unansweredAcked("verdicta", "arch", "2026-11-09T00:00:30.000Z")).toEqual({
+      count: 1,
+      oldestAt: "2026-11-09T00:00:00.000Z",
+    });
+  });
 });

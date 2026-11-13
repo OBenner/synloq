@@ -28,8 +28,10 @@ import {
   rotateTokenCommand,
   sendCommand,
   serveCommand,
+  statusCommand,
 } from "./commands.js";
 import { formatDoctorReport } from "./doctor.js";
+import { formatStatusReport } from "./status.js";
 import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
 
 interface Output {
@@ -65,6 +67,7 @@ const commandNames = [
   "rotate-token",
   "revoke-token",
   "doctor",
+  "status",
 ] as const;
 
 type CommandName = (typeof commandNames)[number];
@@ -95,6 +98,7 @@ const helpText: Record<CommandName, string> = {
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
   doctor: "Usage: synloq doctor --project-root <path>\n",
+  status: "Usage: synloq status --project-root <path> [--json]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file>\n",
   "revoke-token":
@@ -212,6 +216,24 @@ async function execute(
     }
     io.stdout.write(
       `${formatDoctorReport(await doctorCommand({ projectRoot: requiredString(values, "project-root") }))}\n`,
+    );
+    return;
+  }
+
+  if (command === "status") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      json: { type: "boolean" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    const report = await statusCommand({ projectRoot: requiredString(values, "project-root") });
+    io.stdout.write(
+      value(values, "json") === true
+        ? `${JSON.stringify(report, null, 2)}\n`
+        : `${formatStatusReport(report)}\n`,
     );
     return;
   }

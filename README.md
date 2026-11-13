@@ -250,6 +250,20 @@ synloq doctor --project-root /absolute/path/to/project
 synloq doctor --help
 ```
 
+For a human-readable per-role queue view — state, queued count, and why a role
+is waiting (`busy`, stale session, awaiting ack, operator pause) — run:
+
+```bash
+synloq status --project-root /absolute/path/to/project
+synloq status --project-root . --json   # machine-readable for scripting
+```
+
+`synloq status` reads the same local storage as `doctor`, never talks to the
+relay, and always exits 0: failures are reported as rows, not exit codes. It
+also surfaces acked messages that expected a reply but stayed unanswered for
+over 30 minutes. Delivered prompts carry a `+N more pending` hint when the
+recipient's backlog is non-empty.
+
 `unknown`, stale, busy, closed, unsupported, paused, or mismatched sessions fail closed. Message text cannot grant tools, permissions, registration, or capabilities.
 
 ## Runtime paths and external state

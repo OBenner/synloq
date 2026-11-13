@@ -317,6 +317,27 @@ describe("RelayHttpServer sessions and active delivery", () => {
     });
   });
 
+  it("reports the remaining backlog as pendingAfter on a claim", async () => {
+    const binding = await registerArch();
+    const { message: first } = await fixture.cto.send({
+      to: "arch",
+      text: "First queued delivery",
+      expectsReply: false,
+      idempotencyKey: "http-delivery-backlog-1",
+    });
+    const { message: second } = await fixture.cto.send({
+      to: "arch",
+      text: "Second queued delivery",
+      expectsReply: false,
+      idempotencyKey: "http-delivery-backlog-2",
+    });
+
+    await expect(nextArch()).resolves.toEqual({ message: first, ...binding, pendingAfter: 1 });
+    // The FIFO blocker releases only after the earlier claim is delivered.
+    await receiptArch(first.id, { state: "delivered", clientMessageId: first.id });
+    await expect(nextArch()).resolves.toEqual({ message: second, ...binding });
+  });
+
   it("returns an empty delivery after a normal long-poll timeout", async () => {
     const binding = await registerArch();
 

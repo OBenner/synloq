@@ -22,6 +22,8 @@ export interface DeliveryEvidence {
 export interface DeliverySubmissionContext {
   generation: number;
   signal?: AbortSignal;
+  /** Stored deliveries still queued behind this one, for wrapper hints. */
+  pendingAfter?: number;
 }
 
 export interface DeliveryReceipt {

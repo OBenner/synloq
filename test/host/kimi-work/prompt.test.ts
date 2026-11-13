@@ -65,6 +65,15 @@ describe("Kimi Work visible prompt", () => {
     expect(findMatchingVisibleTurns([entry()], framedText)).toEqual([entry()]);
   });
 
+  it("adds the backlog hint only when deliveries remain queued", () => {
+    expect(formatKimiWorkPrompt(message, 3)).not.toContain("more pending");
+    expect(formatKimiWorkPrompt(message, 3, 0)).not.toContain("more pending");
+
+    const prompt = formatKimiWorkPrompt(message, 3, 2);
+    expect(prompt).toContain("+2 more pending");
+    expect(prompt).toContain("synloq_inbox");
+  });
+
   it("rejects assistant, incomplete, unrelated, and duplicate matches", () => {
     const framedText = formatKimiWorkPrompt(message, 3);
     const history = [

@@ -76,12 +76,13 @@ export class HttpAdapterRunner {
     }
     if (this.tracker.get()) return this.completeOutstanding();
 
-    const { message } = await this.relay.nextDelivery({
+    const claimed = await this.relay.nextDelivery({
       ...this.binding,
       waitMs: this.waitMs,
       signal: this.abortController.signal,
     });
-    if (!message) return "empty";
+    if (!claimed.message) return "empty";
+    const { message } = claimed;
 
     try {
       await this.relay.authorizeDelivery(message.id, this.binding);
@@ -104,6 +105,7 @@ export class HttpAdapterRunner {
       receipt = await this.adapter.submit(this.binding.sessionId, message, {
         generation: this.binding.generation,
         signal: this.abortController.signal,
+        ...(claimed.pendingAfter === undefined ? {} : { pendingAfter: claimed.pendingAfter }),
       });
     } catch (error) {
       if (this.abortController.signal.aborted) return "inactive";

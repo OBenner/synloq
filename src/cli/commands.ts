@@ -20,6 +20,7 @@ import {
 } from "../transport/http-client.js";
 import { RelayHttpServer } from "../transport/http-server.js";
 import { createDoctorReport, type DoctorReport } from "./doctor.js";
+import { createStatusReport, type StatusReport } from "./status.js";
 
 export interface ServeOptions {
   projectRoot: string;
@@ -41,6 +42,7 @@ export interface ServeHandle {
 export interface DoctorCommandOptions {
   projectRoot: string;
   clock?: Clock;
+  unansweredThresholdMs?: number;
 }
 
 function manifestProject(participants: Participant[]): string {
@@ -249,6 +251,41 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
     });
   } catch (error) {
     return createDoctorReport({
+      project,
+      participants,
+      databasePath: paths.database,
+      storageError: storageError(error),
+      clock,
+    });
+  } finally {
+    sessions?.close();
+    messages?.close();
+  }
+}
+
+export async function statusCommand(options: DoctorCommandOptions): Promise<StatusReport> {
+  const participants = await loadManifest(options.projectRoot);
+  const project = manifestProject(participants);
+  const paths = await projectPaths(options.projectRoot);
+  const clock = options.clock ?? { now: () => Date.now() };
+  let messages: SQLiteMessageStore | undefined;
+  let sessions: SessionStore | undefined;
+  try {
+    messages = new SQLiteMessageStore(paths.database);
+    sessions = new SessionStore(paths.database, clock);
+    return createStatusReport({
+      project,
+      participants,
+      databasePath: paths.database,
+      messages,
+      sessions,
+      clock,
+      ...(options.unansweredThresholdMs === undefined
+        ? {}
+        : { unansweredThresholdMs: options.unansweredThresholdMs }),
+    });
+  } catch (error) {
+    return createStatusReport({
       project,
       participants,
       databasePath: paths.database,

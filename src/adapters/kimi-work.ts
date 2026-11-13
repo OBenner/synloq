@@ -202,7 +202,7 @@ export class KimiWorkAdapter implements DeliveryAdapter {
       throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");
     }
 
-    const prompt = formatKimiWorkPrompt(message, context?.generation ?? 0);
+    const prompt = formatKimiWorkPrompt(message, context?.generation ?? 0, context?.pendingAfter);
     let existing: ReturnType<typeof findMatchingVisibleTurns>;
     try {
       existing = findMatchingVisibleTurns(await this.control.messages(this.binding, 50), prompt);

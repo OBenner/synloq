@@ -41,6 +41,8 @@ export type PauseScope = "project" | "participant" | "thread";
 
 export interface ClaimedDelivery extends SessionBinding {
   message: Message;
+  /** Stored deliveries still queued behind the claimed one. */
+  pendingAfter?: number;
 }
 
 interface DeliverySessionRow {
@@ -551,6 +553,72 @@ export class SQLiteMessageStore {
         .prepare("DELETE FROM delivery_quarantine WHERE project = ? AND recipient = ?")
         .run(project, recipient);
       return Number(released.changes);
+    });
+  }
+
+  /** Age source for status: oldest still-stored delivery of a recipient. */
+  oldestStoredAt(project: string, recipient: string): string | undefined {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT MIN(created_at) AS oldest FROM messages
+           WHERE project = ? AND recipient = ? AND delivery_state = 'stored'`,
+        )
+        .get(project, recipient) as { oldest: string | null };
+      return row.oldest ?? undefined;
+    });
+  }
+
+  /** Delivered but not yet acknowledged deliveries of a recipient. */
+  awaitingAck(project: string, recipient: string): { count: number; oldestAt?: string } {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM messages
+           WHERE project = ? AND recipient = ? AND delivery_state = 'delivered'`,
+        )
+        .get(project, recipient) as { count: number | bigint; oldest: string | null };
+      const count = Number(row.count);
+      return { count, ...(row.oldest === null ? {} : { oldestAt: row.oldest }) };
+    });
+  }
+
+  /**
+   * Acknowledged deliveries that expected a reply but have none older than
+   * the given ISO timestamp — the objective under-processing signal used by
+   * `synloq status` and the TEAM.md backlog sweep rule.
+   */
+  unansweredAcked(
+    project: string,
+    recipient: string,
+    olderThanIso: string,
+  ): { count: number; oldestAt?: string } {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT COUNT(*) AS count, MIN(m.created_at) AS oldest FROM messages AS m
+           WHERE m.project = ? AND m.recipient = ? AND m.delivery_state = 'acked'
+             AND m.expects_reply = 1 AND m.created_at < ?
+             AND NOT EXISTS (
+               SELECT 1 FROM messages AS r WHERE r.in_reply_to = m.id
+             )`,
+        )
+        .get(project, recipient, olderThanIso) as { count: number | bigint; oldest: string | null };
+      const count = Number(row.count);
+      return { count, ...(row.oldest === null ? {} : { oldestAt: row.oldest }) };
+    });
+  }
+
+  /** Stored deliveries queued for a recipient (for the "+N more pending" hint). */
+  countStored(project: string, recipient: string): number {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM messages
+           WHERE project = ? AND recipient = ? AND delivery_state = 'stored'`,
+        )
+        .get(project, recipient) as { count: number | bigint };
+      return Number(row.count);
     });
   }
 

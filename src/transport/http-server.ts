@@ -442,7 +442,9 @@ export class RelayHttpServer {
       identity.agentId,
       binding,
     );
-    return claimed ?? { message: null, ...binding };
+    if (!claimed) return { message: null, ...binding };
+    const remaining = this.options.messages.countStored(this.options.project, identity.agentId);
+    return { ...claimed, ...(remaining > 0 ? { pendingAfter: remaining } : {}) };
   }
 
   private accepted(message: Message): void {

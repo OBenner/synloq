@@ -74,6 +74,22 @@ describe("HTTP adapter runner", () => {
     expect(adapter.submit).not.toHaveBeenCalled();
   });
 
+  it("forwards the relay backlog count into the submission context", async () => {
+    const relay = relayWith(message);
+    vi.mocked(relay.nextDelivery).mockResolvedValue({ message, ...binding, pendingAfter: 2 });
+    const submit = vi.fn().mockResolvedValue({ state: "delivered" });
+    const adapter = adapterWith(submit);
+
+    await expect(new HttpAdapterRunner(relay, adapter, binding).runOnce()).resolves.toBe(
+      "delivered",
+    );
+    expect(submit).toHaveBeenCalledWith(
+      binding.sessionId,
+      message,
+      expect.objectContaining({ generation: binding.generation, pendingAfter: 2 }),
+    );
+  });
+
   it("reports retryable and uncertain failures with runtime idempotency", async () => {
     const relay = relayWith(message);
     const retryable = adapterWith(
