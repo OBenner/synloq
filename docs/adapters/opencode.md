@@ -33,7 +33,7 @@ Example `/secure/opencode-arch.json`:
 }
 ```
 
-`baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: false`. It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
+`baseUrl` is the existing visible OpenCode server's loopback API, not the Synloq relay. The adapter authenticates to the desktop service with HTTP Basic: the password is read automatically from the service registration file (`<state-home>/opencode/service.json`, legacy `<config-home>` mirror); set the optional `servicePassword` field only to override that resolution. The adapter registers the exact session, subscribes to events, heartbeats fresh state, and submits only with `delivery: "queue"` and `resume: false`. It has no steering path. EOF or reconnect invalidates state until a fresh matching status arrives. Shutdown aborts event/heartbeat/delivery loops and closes the relay session.
 
 See [README.md](README.md) for shared adapter configuration rules and the process topology.
 
