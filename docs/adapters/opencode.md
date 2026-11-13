@@ -3,6 +3,10 @@
 > **Status: UNVERIFIED.** Active delivery has not been verified against a live
 > OpenCode server. It stays disabled until the manual evidence matrix
 > (`test/e2e/real-clients.md`) is executed with an operator.
+>
+> See also `docs/research/2026-11-13-opencode-manual-stand.md`: the manual six-tool
+> MCP path and the session/prompt API primitives this adapter relies on were verified
+> live on 2026-11-13; the adapter itself remains unverified.
 
 The visible OpenCode chat uses the ordinary `synloq mcp` stdio command for the six tools. Run active delivery as a separate, operator-configured process:
 
