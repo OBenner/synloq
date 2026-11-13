@@ -48,6 +48,9 @@ A TASK always carries: scope, definition of done (commit + green `pnpm verify` u
 - Pull fallback: if you expect a message and see no visible delivery for >15 minutes, pull `synloq_inbox` yourself. Do not ask others to check for you.
 - RESULT/BLOCKED always carry `expectsReply=false` (spec §2.1) — the only protection against acknowledgement loops.
 - Receiver-side dedup (spec §5, at-least-once delivery): the same (from, idempotencyKey) twice → do not act twice.
+- Backlog sweep (2026-11-13). When your chat frees up with more than one pending message — or a delivery wrapper reports "+N more pending" — sweep first: read the whole backlog (`synloq_inbox`), triage, then act. Read FIFO, act by dependency, reply in-thread.
+- Triage marks each message: act now / act later / superseded. A superseded TASK/QUERY with `expectsReply=true` still gets a short RESULT in its own thread ("superseded by <message-id>") — never silence (§4).
+- `synloq_ack` keeps its spec §3 meaning ("read"); execution is proven only by the thread reply. `synloq status` (#19) surfaces "acked with expectsReply but no reply older than N minutes" as the objective under-processing signal.
 - Roles never send as `relay`/`operator` (spec §2.2) — those sender ids are reserved.
 - Use only your own MCP channel; never call another role's channel.
 
