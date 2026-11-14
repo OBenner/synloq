@@ -57,6 +57,7 @@ A TASK always carries: scope, definition of done (commit + green `pnpm verify` u
 - `synloq_ack` keeps its spec §3 meaning ("read"); execution is proven only by the thread reply. `synloq status` (#19) surfaces "acked with expectsReply but no reply older than N minutes" as the objective under-processing signal.
 - Roles never send as `relay`/`operator` (spec §2.2) — those sender ids are reserved.
 - Use only your own MCP channel; never call another role's channel.
+- Role memory: each role keeps `docs/local/<role>/` per `docs/conventions/role-memory.md` — read `open-loops.md` at session start and after compaction, append decisions as `D-<date>-<NN>`, promote cross-role decisions to ADRs. Memory files are gitignored; no tokens or message bodies in them.
 
 ## 6. Operator gets a digest, not a drip
 
