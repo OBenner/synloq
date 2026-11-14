@@ -6,8 +6,15 @@ import type { PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 
+export interface SynloqHomeProbe {
+  path: string;
+  writable: boolean;
+  error?: string;
+}
+
 export interface DoctorReport {
   storage: { ok: boolean; path: string; error?: string };
+  home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
   plugin?: PluginFreshness;
   participants: Array<{
@@ -28,6 +35,7 @@ export interface DoctorReportOptions {
   project: string;
   participants: Participant[];
   databasePath: string;
+  home?: SynloqHomeProbe;
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
   clock?: Clock;
@@ -81,6 +89,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
   return {
     storage,
     watchdog,
+    ...(options.home ? { home: options.home } : {}),
     ...(options.plugin ? { plugin: options.plugin } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);

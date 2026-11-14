@@ -268,6 +268,30 @@ describe("synloq status CLI wiring", () => {
     expect(index.stdout).toContain("status");
   });
 
+  it("prints the resolved Synloq home and its writability", async () => {
+    const paths = await projectPaths(fixture.root);
+
+    const human = await capture(["status", "--project-root", fixture.root]);
+    expect(human.code).toBe(0);
+    expect(human.stdout).toContain(`synloq home: ok, writable (${paths.home})`);
+
+    const customHome = await mkdtemp(join(tmpdir(), "synloq-status-custom-home-"));
+    temporaryDirectories.push(customHome);
+    const viaFlag = await capture([
+      "status",
+      "--project-root",
+      fixture.root,
+      "--synloq-home",
+      customHome,
+      "--json",
+    ]);
+    expect(viaFlag.code).toBe(0);
+    const parsed = JSON.parse(viaFlag.stdout) as {
+      home?: { path: string; writable: boolean };
+    };
+    expect(parsed.home).toMatchObject({ path: customHome, writable: true });
+  });
+
   it("never prints issued credentials", async () => {
     const issuedToken = await new CredentialStore(fixture.root).issue(PROJECT, "operator");
     register("arch", "idle");

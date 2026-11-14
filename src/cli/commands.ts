@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
+import { writeTextAtomic } from "../config/atomic-file.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
@@ -22,7 +23,7 @@ import {
   type ReplaceSessionRequest,
 } from "../transport/http-client.js";
 import { RelayHttpServer } from "../transport/http-server.js";
-import { createDoctorReport, type DoctorReport } from "./doctor.js";
+import { createDoctorReport, type DoctorReport, type SynloqHomeProbe } from "./doctor.js";
 import { createStatusReport, type StatusReport } from "./status.js";
 
 export interface ServeOptions {
@@ -44,11 +45,33 @@ export interface ServeHandle {
 
 export interface DoctorCommandOptions {
   projectRoot: string;
+  synloqHome?: string;
   clock?: Clock;
   unansweredThresholdMs?: number;
   // Test/embedding hook: override the Kimi Work installed-plugins registry
   // used by the plugin freshness check (issue #36).
   pluginsRegistryPath?: string;
+}
+
+/**
+ * Reports which Synloq home directory a command resolved and whether the
+ * process can actually write there (sandboxed runners often cannot). The
+ * probe writes and removes a small file; failures degrade to a diagnostic,
+ * never to a thrown error.
+ */
+async function probeSynloqHome(home: string): Promise<SynloqHomeProbe> {
+  const probePath = join(home, `.synloq-write-probe-${process.pid}`);
+  try {
+    await writeTextAtomic(probePath, "");
+    await rm(probePath, { force: true });
+    return { path: home, writable: true };
+  } catch (error) {
+    return {
+      path: home,
+      writable: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function manifestProject(participants: Participant[]): string {
@@ -247,7 +270,8 @@ export async function revokeTokenCommand(options: TokenLifecycleOptions): Promis
 }
 
 function storageError(error: unknown): string {
-  return error instanceof SynloqError && error.code === "STORAGE_FAILURE"
+  return error instanceof SynloqError &&
+    (error.code === "STORAGE_FAILURE" || error.code === "PERMISSION_DENIED")
     ? error.message
     : "storage unavailable";
 }
@@ -255,7 +279,8 @@ function storageError(error: unknown): string {
 export async function doctorCommand(options: DoctorCommandOptions): Promise<DoctorReport> {
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
-  const paths = await projectPaths(options.projectRoot);
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
   // Issue #36 (b): flag a stale installed plugin copy. Local file reads only —
   // doctor stays offline-safe; any failure degrades to a note, not an error.
@@ -279,6 +304,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       project,
       participants,
       databasePath: paths.database,
+      home,
       messages,
       sessions,
       clock,
@@ -289,6 +315,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       project,
       participants,
       databasePath: paths.database,
+      home,
       storageError: storageError(error),
       clock,
       ...(plugin ? { plugin } : {}),
@@ -302,7 +329,8 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
 export async function statusCommand(options: DoctorCommandOptions): Promise<StatusReport> {
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
-  const paths = await projectPaths(options.projectRoot);
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
@@ -313,6 +341,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       project,
       participants,
       databasePath: paths.database,
+      home,
       messages,
       sessions,
       clock,
@@ -325,6 +354,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       project,
       participants,
       databasePath: paths.database,
+      home,
       storageError: storageError(error),
       clock,
     });

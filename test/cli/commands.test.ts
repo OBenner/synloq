@@ -534,4 +534,37 @@ describe("serveCommand", () => {
 
     await expect(fetch(`${handle.baseUrl}/v1/participants`)).rejects.toThrow();
   });
+
+  it("passes --synloq-home from the CLI through to the project paths", async () => {
+    const customHome = await temporaryDirectory("synloq-cli-serve-home-");
+    let stdout = "";
+    let stderr = "";
+
+    const exitCode = await runMain(
+      ["serve", "--project-root", fixture.root, "--synloq-home", customHome, "--port", "0"],
+      {
+        stdout: {
+          write: (chunk) => {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write: (chunk) => {
+            stderr += String(chunk);
+            return true;
+          },
+        },
+      },
+      { waitForShutdown: async () => {} },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toMatchObject({ relayUrl: expect.stringMatching(/^http:/) });
+    // The database landed under the custom home, not under $SYNLOQ_HOME.
+    const paths = await projectPaths(fixture.root, customHome);
+    expect(paths.home).toBe(customHome);
+    await expect(readFile(paths.database)).resolves.toBeInstanceOf(Buffer);
+  });
 });

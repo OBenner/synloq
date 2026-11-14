@@ -82,7 +82,8 @@ const relayOptions: NonNullable<ParseArgsConfig["options"]> = {
 
 const helpText: Record<CommandName, string> = {
   init: "Usage: synloq init [--project-root <path>] [--role <id:title:role> ...] [--non-interactive]\n",
-  serve: "Usage: synloq serve --project-root <path> [--host <127.0.0.1|::1>] [--port <number>]\n",
+  serve:
+    "Usage: synloq serve --project-root <path> [--synloq-home <path>] [--host <127.0.0.1|::1>] [--port <number>]\n",
   mcp: "Usage: synloq mcp --config <path>\n",
   adapter: "Usage: synloq adapter --config <path>\n",
   "claude-hook": "Usage: synloq claude-hook --config <path>\n",
@@ -90,19 +91,19 @@ const helpText: Record<CommandName, string> = {
   list: "Usage: synloq list --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
     "Usage: synloq inbox --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
-  send: "Usage: synloq send --project-root <path> --relay-url <url> (--token <token> | --credential <path>) --to <agent-id> --text <text> --idempotency-key <key> [--expects-reply]\n",
+  send: "Usage: synloq send --project-root <path> --relay-url <url> (--token <token> | --credential <path>) --to <agent-id> --text <text> --idempotency-key <key> [--expects-reply] [--synloq-home <path>]\n",
   pause:
     "Usage: synloq pause --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   resume:
     "Usage: synloq resume --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
-  doctor: "Usage: synloq doctor --project-root <path>\n",
-  status: "Usage: synloq status --project-root <path> [--json]\n",
+  doctor: "Usage: synloq doctor --project-root <path> [--synloq-home <path>]\n",
+  status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
   "rotate-token":
-    "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file>\n",
+    "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
   "revoke-token":
-    "Usage: synloq revoke-token --project-root <path> --agent-id <id> --credential <operator-token-file>\n",
+    "Usage: synloq revoke-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
 };
 
 function invalid(message: string): never {
@@ -128,6 +129,13 @@ function optionalString(values: Values, name: string): string | undefined {
   if (result === undefined) return undefined;
   if (typeof result !== "string" || result === "") invalid(`--${name} must not be empty`);
   return result;
+}
+
+// Every command that touches local Synloq state accepts --synloq-home and
+// resolves it exactly like `synloq init` does (init-cli.ts).
+function synloqHomeOption(values: Values): { synloqHome?: string } {
+  const home = optionalString(values, "synloq-home");
+  return home ? { synloqHome: resolve(home) } : {};
 }
 
 function numberOption(values: Values, name: string, fallback: number, maximum: number): number {
@@ -209,13 +217,21 @@ async function execute(
   }
 
   if (command === "doctor") {
-    const { values } = parse(command, args, { "project-root": { type: "string" } });
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      "synloq-home": { type: "string" },
+    });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
     }
     io.stdout.write(
-      `${formatDoctorReport(await doctorCommand({ projectRoot: requiredString(values, "project-root") }))}\n`,
+      `${formatDoctorReport(
+        await doctorCommand({
+          projectRoot: requiredString(values, "project-root"),
+          ...synloqHomeOption(values),
+        }),
+      )}\n`,
     );
     return;
   }
@@ -223,13 +239,17 @@ async function execute(
   if (command === "status") {
     const { values } = parse(command, args, {
       "project-root": { type: "string" },
+      "synloq-home": { type: "string" },
       json: { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
     }
-    const report = await statusCommand({ projectRoot: requiredString(values, "project-root") });
+    const report = await statusCommand({
+      projectRoot: requiredString(values, "project-root"),
+      ...synloqHomeOption(values),
+    });
     io.stdout.write(
       value(values, "json") === true
         ? `${JSON.stringify(report, null, 2)}\n`
@@ -243,6 +263,7 @@ async function execute(
       "project-root": { type: "string" },
       "agent-id": { type: "string" },
       credential: { type: "string" },
+      "synloq-home": { type: "string" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
@@ -252,6 +273,7 @@ async function execute(
       projectRoot: requiredString(values, "project-root"),
       agentId: requiredString(values, "agent-id"),
       operatorCredentialPath: requiredString(values, "credential"),
+      ...synloqHomeOption(values),
     };
     const operation = command === "rotate-token" ? rotateTokenCommand : revokeTokenCommand;
     writeJson(io, await operation(options));
@@ -308,6 +330,7 @@ async function execute(
   if (command === "serve") {
     const { values } = parse(command, args, {
       "project-root": { type: "string" },
+      "synloq-home": { type: "string" },
       host: { type: "string" },
       port: { type: "string" },
     });
@@ -318,6 +341,7 @@ async function execute(
     const host = optionalString(values, "host");
     const handle = await serveCommand({
       projectRoot: requiredString(values, "project-root"),
+      ...synloqHomeOption(values),
       ...(host ? { host } : {}),
       port: numberOption(values, "port", 0, 65_535),
     });
@@ -365,6 +389,7 @@ async function execute(
     const { values } = parse(command, args, {
       ...relayOptions,
       "project-root": { type: "string" },
+      "synloq-home": { type: "string" },
       to: { type: "string" },
       text: { type: "string" },
       "idempotency-key": { type: "string" },
@@ -375,11 +400,15 @@ async function execute(
       return;
     }
     const projectRoot = requiredString(values, "project-root");
+    const synloqHome = optionalString(values, "synloq-home");
     const participants = await loadManifest(projectRoot);
     const project = participants[0]?.project;
     if (!project) invalid("manifest must declare at least one agent");
     const { client, token } = await clientFrom(values);
-    const identity = await new CredentialStore(projectRoot).authenticate(project, token);
+    const identity = await new CredentialStore(
+      projectRoot,
+      synloqHome ? resolve(synloqHome) : undefined,
+    ).authenticate(project, token);
     writeJson(
       io,
       await sendCommand(

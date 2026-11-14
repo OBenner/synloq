@@ -419,6 +419,30 @@ describe("DoctorReport", () => {
     });
   });
 
+  it("reports the resolved Synloq home as writable", async () => {
+    const paths = await projectPaths(fixture.root);
+
+    const result = await doctorCommand({ projectRoot: fixture.root, clock: fixture.clock });
+
+    expect(result.home).toMatchObject({ path: paths.home, writable: true });
+  });
+
+  it("reports an unwritable Synloq home with a human-readable error", async () => {
+    const blockedHome = join(fixture.home, "blocked-home");
+    await writeFile(blockedHome, "blocks directory creation", "utf8");
+
+    const result = await doctorCommand({
+      projectRoot: fixture.root,
+      synloqHome: blockedHome,
+      clock: fixture.clock,
+    });
+
+    expect(result.home?.path).toBe(blockedHome);
+    expect(result.home?.writable).toBe(false);
+    expect(result.home?.error).toBeTruthy();
+    expect(result.storage.ok).toBe(false);
+  });
+
   it("never prints credentials or message bodies", async () => {
     const issuedToken = await new CredentialStore(fixture.root).issue(PROJECT, "operator");
     const capabilities = {

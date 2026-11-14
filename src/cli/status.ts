@@ -3,7 +3,7 @@ import type { Participant } from "../domain/message.js";
 import type { AdapterSession, SessionState } from "../domain/session.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
-import { createDoctorReport, type DoctorReportOptions } from "./doctor.js";
+import { createDoctorReport, type DoctorReportOptions, type SynloqHomeProbe } from "./doctor.js";
 import type { WatchdogFinding } from "../diagnostics/watchdog.js";
 
 const DEFAULT_UNANSWERED_THRESHOLD_MS = 30 * 60_000;
@@ -28,6 +28,7 @@ export interface StatusReport {
   project: string;
   generatedAt: string;
   storage: { ok: boolean; path: string; error?: string };
+  home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
   participants: StatusParticipant[];
 }
@@ -147,6 +148,7 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
     project: options.project,
     generatedAt: new Date(now).toISOString(),
     storage: doctor.storage,
+    ...(doctor.home ? { home: doctor.home } : {}),
     watchdog: doctor.watchdog,
     participants,
   };
@@ -158,6 +160,13 @@ export function formatStatusReport(report: StatusReport): string {
     : `unavailable (${report.storage.error ?? "unknown error"})`;
   const lines = [
     `project: ${report.project}   relay db: ${storage}`,
+    ...(report.home
+      ? [
+          report.home.writable
+            ? `synloq home: ok, writable (${report.home.path})`
+            : `synloq home: NOT writable (${report.home.path}) — ${report.home.error ?? "unknown error"}`,
+        ]
+      : []),
     `generated: ${report.generatedAt}`,
     "",
   ];
