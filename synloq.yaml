@@ -18,6 +18,10 @@ agents:
   dev:
     title: Developer
     role: Implementation, testing, and day-to-day development
+  dev2:
+    title: Developer 2
+    role: Implementation support on scoped tasks delegated by the Lead Developer;
+      takes tasks from dev only, never directly from the CTO
   tester:
     title: Tester
     role: QA and verification, test and e2e execution, defect reports; never
