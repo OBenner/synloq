@@ -17,6 +17,7 @@ import type {
   KimiWorkConversationSummary,
   KimiWorkListResult,
 } from "../host/kimi-work/control-client.js";
+import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import {
   assertPluginOwnership,
   renderKimiWorkPlugin,
@@ -161,7 +162,11 @@ export async function initializeTeam(
     role: role.role,
   }));
   await writeManifest(projectRoot, participants, language);
-  const credentials = new CredentialStore(projectRoot, paths.home);
+  const credentials = new CredentialStore(
+    projectRoot,
+    paths.home,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
   await credentials.ensureCredential(project, "operator");
 
   const used = new Map<string, string>();

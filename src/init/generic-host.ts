@@ -10,6 +10,7 @@ import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
 import type { Language } from "../i18n/index.js";
+import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
 import type { RoleInput } from "./types.js";
@@ -86,7 +87,11 @@ export async function initializeGenericTeam(
     role: role.role,
   }));
   await writeManifest(projectRoot, participants, language);
-  const credentials = new CredentialStore(projectRoot, paths.home);
+  const credentials = new CredentialStore(
+    projectRoot,
+    paths.home,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
   await credentials.ensureCredential(project, "operator");
 
   const initializedRoles: InitializedGenericRole[] = [];

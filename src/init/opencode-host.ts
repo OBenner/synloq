@@ -14,6 +14,7 @@ import type { Participant } from "../domain/message.js";
 import type { Language } from "../i18n/index.js";
 import { mergeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
+import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
 import { rolePromptOpenCode } from "./role-prompt.js";
@@ -81,7 +82,11 @@ export async function initializeOpenCodeTeam(
     role: role.role,
   }));
   await writeManifest(projectRoot, participants, language);
-  const credentials = new CredentialStore(projectRoot, paths.home);
+  const credentials = new CredentialStore(
+    projectRoot,
+    paths.home,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
   await credentials.ensureCredential(project, "operator");
 
   const host = options.host;

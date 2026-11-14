@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { serveCommand } from "../../src/cli/commands.js";
+import { CredentialStore } from "../../src/config/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
 
 const manifest = `project: verdicta
@@ -59,6 +60,102 @@ describe("serveCommand audit wiring", () => {
       const ok = await fetch(`${handle.baseUrl}/v1/health`);
       expect(ok.status).toBe(200);
       await expect(async () => readFileSync(auditPath, "utf8")).rejects.toThrow();
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("records accepted operator actions: pause and replace-session (M4-min)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-ops-"));
+    dirs.push(root);
+    writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
+    const home = join(root, ".synloq");
+    const operatorToken = await new CredentialStore(root, home).issue("verdicta", "operator");
+    const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
+    try {
+      const headers = {
+        authorization: `Bearer ${operatorToken}`,
+        "content-type": "application/json",
+      };
+      const pause = await fetch(`${handle.baseUrl}/v1/operator/pause`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ scope: "project", scopeId: "" }),
+      });
+      expect(pause.status).toBe(200);
+      const replace = await fetch(`${handle.baseUrl}/v1/operator/replace-session`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          agentId: "cto",
+          sessionId: "ses_replacement",
+          protocolVersion: 1,
+          capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
+        }),
+      });
+      expect(replace.status).toBe(200);
+
+      const paths = await projectPaths(root, home);
+      const auditPath = join(paths.home, "data", `${paths.key}-audit.jsonl`);
+      const events = readFileSync(auditPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          action: "pause",
+          decision: "accept",
+          reasonCode: "PAUSED",
+          agentId: "operator",
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          action: "replaceSession",
+          decision: "accept",
+          reasonCode: "SESSION_REPLACED",
+          agentId: "operator",
+        }),
+      );
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("records a denied replace-session from a non-operator role", async () => {
+    const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-deny-"));
+    dirs.push(root);
+    writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
+    const home = join(root, ".synloq");
+    const roleToken = await new CredentialStore(root, home).issue("verdicta", "cto");
+    const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
+    try {
+      const response = await fetch(`${handle.baseUrl}/v1/operator/replace-session`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${roleToken}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          agentId: "cto",
+          sessionId: "ses_replacement",
+          protocolVersion: 1,
+          capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
+        }),
+      });
+      expect(response.status).toBe(403);
+
+      const paths = await projectPaths(root, home);
+      const auditPath = join(paths.home, "data", `${paths.key}-audit.jsonl`);
+      const events = readFileSync(auditPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          action: "replaceSession",
+          decision: "deny",
+          reasonCode: "UNAUTHORIZED",
+          agentId: "cto",
+        }),
+      );
     } finally {
       await handle.close();
     }

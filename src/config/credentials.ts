@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SynloqError } from "../domain/errors.js";
 import { agentId as agentIdSchema } from "../domain/message.js";
+import type { SecurityAuditLog } from "../relay/audit-log.js";
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-file.js";
 import { projectPaths } from "./paths.js";
 
@@ -37,7 +38,31 @@ export class CredentialStore {
   constructor(
     private readonly projectRoot: string,
     private readonly synloqHome?: string,
+    private readonly audit?: SecurityAuditLog,
   ) {}
+
+  /**
+   * Credential lifecycle audit (issue #3, M4-min): issue/rotate/revoke are
+   * accept events — they are the actions an incident review looks for. The
+   * detail never carries token material, only hash counts.
+   */
+  private record(
+    action: "issue" | "rotate" | "revoke",
+    project: string,
+    agentId: string,
+    reasonCode: string,
+    detail: string,
+  ): void {
+    this.audit?.record({
+      at: new Date().toISOString(),
+      project,
+      agentId,
+      action,
+      decision: "accept",
+      reasonCode,
+      detail,
+    });
+  }
 
   async issue(project: string, agentId: string): Promise<string> {
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
@@ -48,6 +73,7 @@ export class CredentialStore {
     const token = randomBytes(32).toString("base64url");
     credentials.entries.push({ agentId, tokenHash: tokenDigest(token).toString("hex") });
     await writeJsonAtomic(paths.credentials, credentials);
+    this.record("issue", project, agentId, "ISSUED", "credential issued");
     return token;
   }
 
@@ -78,6 +104,13 @@ export class CredentialStore {
     await writeJsonAtomic(paths.credentials, credentials);
     const tokenPath = join(paths.tokens, `${agentId}.token`);
     await writeTextAtomic(tokenPath, `${token}\n`);
+    this.record(
+      "rotate",
+      project,
+      agentId,
+      "ROTATED",
+      `credential rotated; ${replacedHashes} stored hash(es) replaced`,
+    );
     return { token, tokenPath, replacedHashes };
   }
 
@@ -101,6 +134,13 @@ export class CredentialStore {
     await writeJsonAtomic(paths.credentials, credentials);
     const tokenPath = join(paths.tokens, `${agentId}.token`);
     await rm(tokenPath, { force: true });
+    this.record(
+      "revoke",
+      project,
+      agentId,
+      "REVOKED",
+      `credential revoked; ${removedHashes} stored hash(es) removed`,
+    );
     return { removedHashes, tokenPath };
   }
 

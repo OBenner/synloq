@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReferenceAdapter } from "../../src/adapters/reference.js";
 import type { Clock } from "../../src/adapters/types.js";
 import {
+  doctorCommand,
   inboxCommand,
   listCommand,
   pauseCommand,
@@ -478,6 +479,93 @@ describe("token lifecycle CLI", () => {
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(auditHook).not.toHaveBeenCalled();
+  });
+
+  it("persists rotate and revoke to the audit log file (M4-min)", async () => {
+    const credential = await operatorCredentialFile();
+    const rotate = capture();
+    expect(
+      await runMain(
+        [
+          "rotate-token",
+          "--project-root",
+          fixture.root,
+          "--agent-id",
+          "cto",
+          "--credential",
+          credential,
+        ],
+        rotate.io,
+      ),
+    ).toBe(0);
+    const revoke = capture();
+    expect(
+      await runMain(
+        [
+          "revoke-token",
+          "--project-root",
+          fixture.root,
+          "--agent-id",
+          "arch",
+          "--credential",
+          credential,
+        ],
+        revoke.io,
+      ),
+    ).toBe(0);
+
+    const paths = await projectPaths(fixture.root, fixture.home);
+    const events = (await readFile(join(paths.home, "data", `${paths.key}-audit.jsonl`), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: "rotate",
+        decision: "accept",
+        reasonCode: "ROTATED",
+        agentId: "cto",
+        project: PROJECT,
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: "revoke",
+        decision: "accept",
+        reasonCode: "REVOKED",
+        agentId: "arch",
+        project: PROJECT,
+      }),
+    );
+    for (const line of events) {
+      expect(JSON.stringify(line)).not.toContain(fixture.ctoToken);
+      expect(JSON.stringify(line)).not.toContain(fixture.archToken);
+    }
+  });
+
+  it("rotation runbook scenario: a rotation is visible in the doctor audit readout", async () => {
+    const credential = await operatorCredentialFile();
+    const io = capture();
+    expect(
+      await runMain(
+        [
+          "rotate-token",
+          "--project-root",
+          fixture.root,
+          "--agent-id",
+          "cto",
+          "--credential",
+          credential,
+        ],
+        io.io,
+      ),
+    ).toBe(0);
+
+    const report = await doctorCommand({ projectRoot: fixture.root });
+    expect(report.audit?.path).toContain("audit.jsonl");
+    expect(report.audit?.entries).toContainEqual(
+      expect.objectContaining({ action: "rotate", reasonCode: "ROTATED", agentId: "cto" }),
+    );
   });
 });
 

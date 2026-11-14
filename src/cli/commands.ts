@@ -11,7 +11,12 @@ import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
-import { FileSecurityAuditLog, type SecurityAuditLog } from "../relay/audit-log.js";
+import {
+  FileSecurityAuditLog,
+  auditLogPath,
+  readAuditTail,
+  type SecurityAuditLog,
+} from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
@@ -102,7 +107,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
   const messages = new SQLiteMessageStore(paths.database, clock);
-  const audit = new FileSecurityAuditLog(join(paths.home, "data", `${paths.key}-audit.jsonl`));
+  const audit = new FileSecurityAuditLog(auditLogPath(paths.home, paths.key));
   // The participant registry is hot (issue #36): adding a role to
   // synloq.yaml takes effect without a relay restart. A manifest that fails
   // to re-parse degrades to the last good snapshot and is audited.
@@ -242,7 +247,13 @@ async function requireLocalOperator(
 ): Promise<{ project: string; store: CredentialStore }> {
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
-  const store = new CredentialStore(options.projectRoot, options.synloqHome);
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  // Issue #3 (M4-min): rotate/revoke are recorded in the persistent audit log.
+  const store = new CredentialStore(
+    options.projectRoot,
+    options.synloqHome,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
   const operatorToken = (await readFile(options.operatorCredentialPath, "utf8")).trim();
   if (!operatorToken) {
     throw new SynloqError("INVALID_INPUT", "operator credential file is empty");
@@ -334,8 +345,7 @@ export async function claimCommand(options: ClaimCommandOptions): Promise<ClaimR
     throw new SynloqError("INVALID_INPUT", `claim code names a role outside the manifest`);
   }
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
-  const audit =
-    options.audit ?? new FileSecurityAuditLog(join(paths.home, "data", `${paths.key}-audit.jsonl`));
+  const audit = options.audit ?? new FileSecurityAuditLog(auditLogPath(paths.home, paths.key));
   const store = new ClaimCodeStore(
     new TeamStateStore(paths.bindings),
     options.clock ?? { now: () => Date.now() },
@@ -437,6 +447,10 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
+  // Issue #3 (M4-min): doctor surfaces the audit tail so the rotation runbook
+  // scenario is reproducible from audit entries alone. Offline-safe read.
+  const auditPath = auditLogPath(paths.home, paths.key);
+  const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
 
   // Issue #6: repair first so the report reflects the post-repair state.
   let repair: DoctorReport["repair"];
@@ -498,6 +512,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       messages,
       sessions,
       clock,
+      audit,
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -511,6 +526,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       configs: configsHealth,
       storageError: storageError(error),
       clock,
+      audit,
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });

@@ -433,11 +433,36 @@ export class RelayHttpServer {
     }
 
     if (method === "POST" && path === "/v1/operator/replace-session") {
-      this.requireOperator(identity);
-      const input = replaceSchema.parse(await this.readJson(request));
-      const session = this.options.sessions.register({ ...input, project }, true);
-      this.changed(project, input.agentId);
-      this.sendJson(response, 200, { session });
+      // Issue #3 (M4-min): operator session replacement is audited both ways.
+      try {
+        this.requireOperator(identity);
+        const input = replaceSchema.parse(await this.readJson(request));
+        const session = this.options.sessions.register({ ...input, project }, true);
+        this.audit.record({
+          at: new Date().toISOString(),
+          project,
+          agentId: identity.agentId,
+          action: "replaceSession",
+          decision: "accept",
+          reasonCode: "SESSION_REPLACED",
+          detail: `session replaced for role '${input.agentId}'`,
+        });
+        this.changed(project, input.agentId);
+        this.sendJson(response, 200, { session });
+      } catch (error) {
+        if (error instanceof SynloqError) {
+          this.audit.record({
+            at: new Date().toISOString(),
+            project,
+            agentId: identity.agentId,
+            action: "replaceSession",
+            decision: "deny",
+            reasonCode: error.code,
+            detail: error.message,
+          });
+        }
+        throw error;
+      }
       return;
     }
 

@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { writeJsonAtomic } from "../config/atomic-file.js";
+import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { CredentialStore } from "../config/credentials.js";
 import { loadManifestLanguage } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
@@ -92,7 +93,11 @@ export async function repairTeamConfigs(options: {
   const state = await new TeamStateStore(paths.bindings).read();
   if (!state) return { actions: [] };
   const language = await loadManifestLanguage(options.projectRoot);
-  const credentials = new CredentialStore(options.projectRoot, paths.home);
+  const credentials = new CredentialStore(
+    options.projectRoot,
+    paths.home,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
 
   const actions: RepairAction[] = [];
   for (const [agentId, conversation] of Object.entries(state.conversations)) {

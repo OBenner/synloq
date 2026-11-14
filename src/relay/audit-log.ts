@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { isPermissionError, permissionDenied } from "../domain/errors.js";
 
 export type AuditedAction =
@@ -12,7 +13,11 @@ export type AuditedAction =
   | "resume"
   | "authenticate"
   | "directory"
-  | "claim";
+  | "claim"
+  | "issue"
+  | "rotate"
+  | "revoke"
+  | "replaceSession";
 
 export interface SecurityEvent {
   at: string;
@@ -48,4 +53,33 @@ export class FileSecurityAuditLog implements SecurityAuditLog {
       throw error;
     }
   }
+}
+
+/** The conventional audit log location for a project (issue #3). */
+export function auditLogPath(home: string, projectKey: string): string {
+  return join(home, "data", `${projectKey}-audit.jsonl`);
+}
+
+/**
+ * Reads the last `limit` events of an audit log for diagnostics (issue #3,
+ * doctor readout). Offline-safe: a missing/unreadable file yields an empty
+ * list; malformed lines are skipped rather than failing the report.
+ */
+export async function readAuditTail(path: string, limit: number): Promise<SecurityEvent[]> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch {
+    return [];
+  }
+  const events: SecurityEvent[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line) as SecurityEvent);
+    } catch {
+      // skip malformed lines: diagnostics must not fail on a torn write
+    }
+  }
+  return events.slice(-limit);
 }

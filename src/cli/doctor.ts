@@ -3,6 +3,7 @@ import { evaluateWatchdog, type WatchdogFinding } from "../diagnostics/watchdog.
 import type { Participant } from "../domain/message.js";
 import type { AdapterCapabilities, AdapterSession, SessionState } from "../domain/session.js";
 import type { PluginFreshness } from "../host/kimi-work/installed-plugin.js";
+import type { SecurityEvent } from "../relay/audit-log.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import type { ChannelConfigHealthReport } from "./repair.js";
@@ -23,6 +24,8 @@ export interface DoctorReport {
   home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
   plugin?: PluginFreshness;
+  /** Issue #3 (M4-min): tail of the security audit log (path + last events). */
+  audit?: { path: string; entries: SecurityEvent[] };
   repair?: {
     actions: Array<{ agentId: string; token: "reused" | "reissued"; config: string }>;
   };
@@ -56,6 +59,7 @@ export interface DoctorReportOptions {
   storageError?: string;
   watchdogThresholdMs?: number;
   plugin?: PluginFreshness;
+  audit?: DoctorReport["audit"];
 }
 
 function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
@@ -105,6 +109,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
     watchdog,
     ...(options.home ? { home: options.home } : {}),
     ...(options.plugin ? { plugin: options.plugin } : {}),
+    ...(options.audit ? { audit: options.audit } : {}),
     ...(options.repair ? { repair: options.repair } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CredentialStore } from "../../src/config/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
+import type { SecurityAuditLog, SecurityEvent } from "../../src/relay/audit-log.js";
 
 interface PersistedCredentials {
   version: number;
@@ -203,5 +204,55 @@ describe("CredentialStore rotation and revocation", () => {
 
     const second = await store.revoke("verdicta", "cto");
     expect(second.removedHashes).toBe(0);
+  });
+});
+
+describe("CredentialStore audit (issue #3, M4-min)", () => {
+  async function fixture() {
+    const root = await mkdtemp(join(tmpdir(), "synloq-credentials-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-credentials-home-"));
+    const events: SecurityEvent[] = [];
+    const audit: SecurityAuditLog = { record: (event) => events.push(event) };
+    return { store: new CredentialStore(root, home, audit), events };
+  }
+
+  it("records issue, rotate, and revoke as accept events without token material", async () => {
+    const { store, events } = await fixture();
+
+    await store.issue("verdicta", "cto");
+    await store.rotate("verdicta", "cto");
+    await store.revoke("verdicta", "cto");
+
+    expect(events.map((event) => event.action)).toEqual(["issue", "rotate", "revoke"]);
+    for (const event of events) {
+      expect(event).toMatchObject({
+        project: "verdicta",
+        agentId: "cto",
+        decision: "accept",
+      });
+      expect(event.detail).not.toMatch(/[A-Za-z0-9_-]{40,}/);
+    }
+    expect(events[1]).toMatchObject({ reasonCode: "ROTATED" });
+    expect(events[2]).toMatchObject({ reasonCode: "REVOKED" });
+  });
+
+  it("records the fresh issue behind ensureCredential but not a reuse", async () => {
+    const { store, events } = await fixture();
+
+    const first = await store.ensureCredential("verdicta", "arch");
+    const second = await store.ensureCredential("verdicta", "arch");
+
+    expect(first.reused).toBe(false);
+    expect(second.reused).toBe(true);
+    expect(events.map((event) => event.action)).toEqual(["issue"]);
+  });
+
+  it("stays silent by default (no audit sink configured)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-credentials-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-credentials-home-"));
+    const store = new CredentialStore(root, home);
+    await store.issue("verdicta", "cto");
+    await store.rotate("verdicta", "cto");
+    // no throw, no output — nothing to assert beyond completion
   });
 });

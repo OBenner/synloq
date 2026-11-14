@@ -61,6 +61,20 @@ export class RelayService {
     });
   }
 
+  // Issue #3 (M4-min): operator actions are audited on success too — an
+  // incident review needs the pause/resume timeline, not just refusals.
+  private recordAccept(identity: Identity, action: AuditedAction, reasonCode: string): void {
+    this.audit.record({
+      at: new Date(this.clock.now()).toISOString(),
+      project: identity.project,
+      agentId: identity.operator ? "operator" : identity.agentId,
+      action,
+      decision: "accept",
+      reasonCode,
+      detail: `operator action ${action} accepted`,
+    });
+  }
+
   async listParticipants(identity: Identity): Promise<Participant[]> {
     return this.directory.list(identity.project);
   }
@@ -104,6 +118,7 @@ export class RelayService {
     try {
       this.requireOperator(identity, project);
       this.protection.pause(project, scope, scopeId);
+      this.recordAccept(identity, "pause", "PAUSED");
     } catch (error) {
       this.recordDeny(identity, "pause", error);
       throw error;
@@ -114,6 +129,7 @@ export class RelayService {
     try {
       this.requireOperator(identity, project);
       this.protection.resume(project, scope, scopeId);
+      this.recordAccept(identity, "resume", "RESUMED");
     } catch (error) {
       this.recordDeny(identity, "resume", error);
       throw error;
