@@ -9,6 +9,27 @@ coding-agent chats. This file is short on purpose; the authoritative rules live 
 - Node.js 24 or newer
 - pnpm 12.18.0
 
+## Branches, worktrees, and pull requests
+
+`main` is protected: the `Format, typecheck, test, build` CI job must pass, and
+force-push/deletion are disabled. Direct pushes to `main` are over — all code
+changes land via pull requests.
+
+- **Branch per task**: `feat/<issue>-<slug>` or `fix/<issue>-<slug>`, branched
+  from fresh `main`. One issue = one branch = one PR.
+- **Worktree per active task** (several agent roles share this machine — a
+  shared checkout guarantees WIP collisions): `git worktree add
+../synloq-wt/<role>-<issue> -b feat/<issue>-<slug>`. Work only inside your
+  worktree; never commit into someone else's.
+- **Review chain**: dev2 → dev reviews; dev → CTO reviews; architecture,
+  protocol, and process changes also get Architect review. The reviewer merges
+  after CI is green.
+- **Keep branches short-lived**: rebase on `main` before opening the PR; delete
+  the branch and worktree after merge.
+- Docs-only commits (backlog, research notes, ADRs in `proposed`) may still go
+  straight to `main` by the CTO to keep coordination latency low; everything
+  else goes through a PR.
+
 ## Verify before you push
 
 ```bash
