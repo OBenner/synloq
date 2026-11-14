@@ -101,3 +101,17 @@ claim-token design do not depend on the probe outcomes.
 - **Waiting for probe verdicts before writing this ADR** — rejected: the
   three-layer model and claim-token design are stable regardless of which
   identity signal wins; only the signal choice is conditional.
+
+## Implementation status
+
+- 2026-11-14: **layer 3 (universal claim) landed** (issue #42) — CLI
+  `synloq claim` / `synloq claim-issue`, 15-minute consume-once codes stored
+  as SHA-256 hashes in the team state, claim accept/deny events in the
+  security audit log (expired codes are operational noise and are not
+  recorded), token rotation/revocation voids outstanding codes. Runbook:
+  `docs/add-role.md` → "Claiming a role on a host without session
+  provisioning".
+- Layers 1 (per-role `host` in the manifest) and 2 (capability matrix with
+  `canProvisionSessions`) are **not implemented yet** — a separate task.
+  Until they land, claim codes are issued by the generic-host init path
+  (`--host generic`), the only host without session provisioning today.

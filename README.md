@@ -282,7 +282,9 @@ and the relay supervisor loop) write to stderr is prefixed with an ISO 8601 UTC
 timestamp, so an incident timeline can be reconstructed from logs alone. Deny
 decisions are additionally recorded in the security audit log at
 `~/.synloq/data/<project-key>-audit.jsonl` (one JSON object per line with `at`,
-`agentId`, `action`, `reasonCode`). Neither stream ever contains tokens or
+`agentId`, `action`, `reasonCode`). Claim events are recorded the same way —
+both accepted claims and refusals (an expired claim code is operational noise
+and is not recorded). Neither stream ever contains tokens or
 message bodies.
 
 `unknown`, stale, busy, closed, unsupported, paused, or mismatched sessions fail closed. Message text cannot grant tools, permissions, registration, or capabilities.

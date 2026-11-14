@@ -36,6 +36,40 @@ already runs other roles.
    plugin lifecycle, and a channel for a new role can only appear after the
    host reloads the plugin.
 
+## Claiming a role on a host without session provisioning
+
+Hosts without a session-creation API (`synloq init --host generic`) cannot
+bind a chat automatically. Init prepares each role (manifest, credential, MCP
+config) and prints a one-time claim code per role
+(`synloq-claim-<role>-<8 base32>`, valid 15 minutes) plus a next-steps
+checklist.
+
+1. On the machine that holds the Synloq home, run:
+
+   ```bash
+   synloq claim --project-root <path> --code synloq-claim-<role>-xxxxxxxx
+   ```
+
+   The command consumes the code and prints the role's credential path and
+   MCP config path. The credential file is picked up locally and is never
+   transmitted through chat.
+
+2. Wire the printed config path into the host's MCP configuration, approve
+   the host's trust dialogs, and restart the host client so the channel
+   starts.
+3. An expired code is operational noise, not an incident — re-issue one:
+
+   ```bash
+   synloq claim-issue --project-root <path> --role <id>
+   ```
+
+Claiming a role with no outstanding code (already claimed, or re-issued)
+fails with a pointer to `synloq replace-session`. Rotating or revoking the
+role's token (`synloq rotate-token` / `synloq revoke-token`) voids any
+outstanding code. Claim accepts and refusals are recorded in the security
+audit log (`<synloq-home>/data/<project-key>-audit.jsonl`); expired codes are
+not recorded.
+
 ## What does NOT need a restart
 
 - **The relay.** The participant registry is hot-reloaded from `synloq.yaml`:
