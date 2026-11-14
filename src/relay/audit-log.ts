@@ -2,14 +2,22 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 export type AuditedAction =
-  "send" | "reply" | "inbox" | "acknowledge" | "getMessage" | "pause" | "resume" | "authenticate";
+  | "send"
+  | "reply"
+  | "inbox"
+  | "acknowledge"
+  | "getMessage"
+  | "pause"
+  | "resume"
+  | "authenticate"
+  | "directory";
 
 export interface SecurityEvent {
   at: string;
   project: string;
   agentId: string;
   action: AuditedAction;
-  decision: "deny";
+  decision: "deny" | "degraded";
   reasonCode: string;
   detail: string;
 }

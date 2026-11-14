@@ -308,7 +308,7 @@ Operational notes:
 
 - Role tokens are stored as plaintext files under the Synloq home; protect them like any other local credential and never commit them.
 - Database migrations are forward-only: once a newer release migrates the project database, older binaries refuse to open it.
-- The participant registry is loaded when the relay starts; changing role membership in `synloq.yaml` takes effect only after a relay restart.
+- The participant registry is hot-reloaded: adding a role to `synloq.yaml` takes effect on a running relay (the manifest is re-read when it changes and when an unknown recipient is addressed). A manifest that fails to re-parse is ignored — the relay keeps serving the last good snapshot and records a `directory`/`degraded` event in the security audit log. Removing a role still warrants a relay restart to drop its in-memory state.
 
 ## Verification
 

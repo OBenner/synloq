@@ -10,6 +10,7 @@ import {
 import type { PauseScope, SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import { NullSecurityAuditLog, type AuditedAction, type SecurityAuditLog } from "./audit-log.js";
+import { StaticParticipantDirectory, type ParticipantDirectory } from "./participant-directory.js";
 import type { ProtectionPolicy } from "./protection.js";
 
 export type SendRequest = Omit<SendMessageInput, "project" | "from">;
@@ -30,15 +31,21 @@ export interface InboxResult {
 }
 
 export class RelayService {
+  private readonly directory: ParticipantDirectory;
+
   constructor(
-    private readonly participants: Participant[],
+    participants: Participant[] | ParticipantDirectory,
     private readonly messages: SQLiteMessageStore,
     private readonly sessions: SessionStore,
     private readonly protection: ProtectionPolicy,
     private readonly ids: () => string = () => crypto.randomUUID(),
     private readonly clock: Clock = { now: () => Date.now() },
     private readonly audit: SecurityAuditLog = new NullSecurityAuditLog(),
-  ) {}
+  ) {
+    this.directory = Array.isArray(participants)
+      ? new StaticParticipantDirectory(participants)
+      : participants;
+  }
 
   private recordDeny(identity: Identity, action: AuditedAction, error: unknown): void {
     if (!(error instanceof SynloqError)) return;
@@ -54,7 +61,7 @@ export class RelayService {
   }
 
   async listParticipants(identity: Identity): Promise<Participant[]> {
-    return this.participants.filter((participant) => participant.project === identity.project);
+    return this.directory.list(identity.project);
   }
 
   async send(identity: Identity, raw: SendRequest): Promise<Message> {
@@ -72,7 +79,7 @@ export class RelayService {
       project: identity.project,
       from: identity.operator ? "operator" : identity.agentId,
     });
-    this.requireParticipant(input.project, input.to);
+    await this.requireParticipant(input.project, input.to);
     const parent = input.inReplyTo ? this.messages.getMessage(input.inReplyTo) : undefined;
     if (
       input.inReplyTo &&
@@ -184,13 +191,12 @@ export class RelayService {
     }
   }
 
-  private requireParticipant(project: string, agentId: string): void {
-    if (
-      !this.participants.some(
-        (participant) => participant.project === project && participant.agentId === agentId,
-      )
-    ) {
-      throw new SynloqError("UNKNOWN_RECIPIENT", "recipient is not a project participant");
-    }
+  private async requireParticipant(project: string, agentId: string): Promise<void> {
+    if (await this.directory.isParticipant(project, agentId)) return;
+    // The registry may have changed since this relay started (issue #36):
+    // force one manifest re-read before rejecting the recipient.
+    await this.directory.refresh();
+    if (await this.directory.isParticipant(project, agentId)) return;
+    throw new SynloqError("UNKNOWN_RECIPIENT", "recipient is not a project participant");
   }
 }

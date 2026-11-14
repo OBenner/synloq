@@ -6,6 +6,7 @@ import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
+import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
 import { FileSecurityAuditLog } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
 import { ProtectionPolicy } from "../relay/protection.js";
@@ -60,6 +61,21 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   const clock = options.clock ?? { now: () => Date.now() };
   const messages = new SQLiteMessageStore(paths.database, clock);
   const audit = new FileSecurityAuditLog(join(paths.home, "data", `${paths.key}-audit.jsonl`));
+  // The participant registry is hot (issue #36): adding a role to
+  // synloq.yaml takes effect without a relay restart. A manifest that fails
+  // to re-parse degrades to the last good snapshot and is audited.
+  const directory = await ManifestParticipantDirectory.load(options.projectRoot, {
+    onDegraded: (error) =>
+      audit.record({
+        at: new Date(clock.now()).toISOString(),
+        project,
+        agentId: "relay",
+        action: "directory",
+        decision: "degraded",
+        reasonCode: error instanceof SynloqError ? error.code : "STORAGE_FAILURE",
+        detail: error instanceof Error ? error.message : String(error),
+      }),
+  });
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
   try {
@@ -69,7 +85,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     server = new RelayHttpServer({
       project,
       relay: new RelayService(
-        participants,
+        directory,
         messages,
         sessions,
         new ProtectionPolicy(messages, undefined, undefined, clock),
