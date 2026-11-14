@@ -5,11 +5,26 @@
 SQLite, the files, and the OpenCode server API. Self-reports are not evidence;
 saved raw outputs are.
 
+## Path conventions
+
+Commands use variables instead of absolute local paths. Set them before running:
+
+```powershell
+$SynloqRepo = "<path to this repository checkout>"   # the Synloq repo
+$NewStand   = "<path to the fresh test project>"     # project name: open-code-synloq-new
+$Stand      = "<path to the adopted stand project>"  # project name: open-code-synloq
+$SynloqHome = "$env:USERPROFILE\.synloq"
+```
+
+`<projectKey>` below means the relay project key (the subdirectory name under
+`$SynloqHome\state\` created by init). Never commit real absolute paths or OS
+user names — see the evidence hygiene rules in `CONTRIBUTING.md`.
+
 ## Hard rules (read first)
 
-1. Work only in `I:\git\open-code-synloq-new`, `I:\git\open-code-synloq`, and
-   evidence files. The Synloq repo `I:\git\Synloq` is **read-only except
-   `pnpm build`** — do not edit, commit, or delete anything there.
+1. Work only in `$NewStand`, `$Stand`, and evidence files. The Synloq repo
+   `$SynloqRepo` is **read-only except `pnpm build`** — do not edit, commit, or
+   delete anything there.
 2. **Never call any `synloq_*` MCP tool yourself.** Drive everything through
    shell commands and HTTP calls. The role sessions own their tools.
 3. On any unexpected error: **STOP, save the full output to the evidence
@@ -23,15 +38,15 @@ saved raw outputs are.
 
 ## Part A — fresh project DoD (`open-code-synloq-new`)
 
-Evidence directory: `I:\git\open-code-synloq-new\evidence\`
+Evidence directory: `$NewStand\evidence\`
 
 ### A0. Preconditions
 
 ```powershell
-node --version 2>&1 | Tee-Object -FilePath I:\git\open-code-synloq-new\evidence\a0-node.txt
-cd I:\git\Synloq
-git log --oneline -1 2>&1 | Tee-Object I:\git\open-code-synloq-new\evidence\a0-synloq-head.txt
-pnpm build 2>&1 | Tee-Object I:\git\open-code-synloq-new\evidence\a0-build.txt
+node --version 2>&1 | Tee-Object -FilePath $NewStand\evidence\a0-node.txt
+cd $SynloqRepo
+git log --oneline -1 2>&1 | Tee-Object $NewStand\evidence\a0-synloq-head.txt
+pnpm build 2>&1 | Tee-Object $NewStand\evidence\a0-build.txt
 ```
 
 Expect: build exits 0. Record the HEAD commit — the auditor compares it.
@@ -39,13 +54,13 @@ Expect: build exits 0. Record the HEAD commit — the auditor compares it.
 ### A1. Init
 
 ```powershell
-New-Item -ItemType Directory -Force I:\git\open-code-synloq-new | Out-Null
-node I:\git\Synloq\dist\cli\main.js init --host opencode `
-  --project-root I:\git\open-code-synloq-new --project open-code-synloq-new `
+New-Item -ItemType Directory -Force $NewStand | Out-Null
+node $SynloqRepo\dist\cli\main.js init --host opencode `
+  --project-root $NewStand --project open-code-synloq-new `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `
   --relay-url http://127.0.0.1:4201 --non-interactive `
-  2>&1 | Tee-Object I:\git\open-code-synloq-new\evidence\a1-init.json
+  2>&1 | Tee-Object $NewStand\evidence\a1-init.json
 ```
 
 Expect: JSON with `roles[*].sessionId` filled (`ses_...`). Save the two
@@ -55,14 +70,14 @@ record it (known fail-soft, not a failure).
 ### A2. File checks
 
 ```powershell
-Get-Content I:\git\open-code-synloq-new\opencode.json | Tee-Object I:\git\open-code-synloq-new\evidence\a2-opencode.json
-Get-Content I:\git\open-code-synloq-new\synloq.yaml | Tee-Object I:\git\open-code-synloq-new\evidence\a2-manifest.yaml
+Get-Content $NewStand\opencode.json | Tee-Object $NewStand\evidence\a2-opencode.json
+Get-Content $NewStand\synloq.yaml | Tee-Object $NewStand\evidence\a2-manifest.yaml
 ```
 
 ### A3. Relay up
 
 ```powershell
-Start-Process node -ArgumentList 'I:\git\Synloq\dist\cli\main.js serve --project-root I:\git\open-code-synloq-new --host 127.0.0.1 --port 4201' -RedirectStandardOutput I:\git\open-code-synloq-new\evidence\a3-relay.log -RedirectStandardError I:\git\open-code-synloq-new\evidence\a3-relay.err
+Start-Process node -ArgumentList "$SynloqRepo\dist\cli\main.js serve --project-root $NewStand --host 127.0.0.1 --port 4201" -RedirectStandardOutput $NewStand\evidence\a3-relay.log -RedirectStandardError $NewStand\evidence\a3-relay.err
 Start-Sleep 3
 ```
 
@@ -89,7 +104,7 @@ Repeat the A1 command exactly → `a5-init-rerun.json`.
 Expect: identical `sessionId` values for both roles. Then:
 
 ```powershell
-Get-FileHash I:\git\open-code-synloq-new\opencode.json | Tee-Object I:\git\open-code-synloq-new\evidence\a5-opencode-hash.txt
+Get-FileHash $NewStand\opencode.json | Tee-Object $NewStand\evidence\a5-opencode-hash.txt
 ```
 
 ### A6. Wrap-up Part A
@@ -100,7 +115,7 @@ message id from A4, and "Part A done" or BLOCKED with evidence.
 
 ## Part B — adopt the existing manual stand (`open-code-synloq`)
 
-Evidence directory: `I:\git\open-code-synloq\evidence-dod\`
+Evidence directory: `$Stand\evidence-dod\`
 Known existing sessions (from the manual stand, 2026-11-13):
 
 - CTO: `ses_e2be1a966ffe1Dkracq6CTDWgH`
@@ -109,12 +124,12 @@ Known existing sessions (from the manual stand, 2026-11-13):
 ### B0. Pre-checks
 
 ```powershell
-Get-FileHash I:\git\open-code-synloq\opencode.json | Tee-Object I:\git\open-code-synloq\evidence-dod\b0-opencode-before.txt
+Get-FileHash $Stand\opencode.json | Tee-Object $Stand\evidence-dod\b0-opencode-before.txt
 ```
 
 If a relay is already listening on 4101 (`Test-NetConnection 127.0.0.1 -Port 4101`),
 leave it running; otherwise start one like A3 but with
-`--project-root I:\git\open-code-synloq --port 4101` and log to
+`--project-root $Stand --port 4101` and log to
 `evidence-dod\b0-relay.log`.
 
 Verify the two known sessions still exist via the API (`GET /api/session/ses_...`),
@@ -125,14 +140,14 @@ sessions; record that this happened).
 ### B1. Adopting init
 
 ```powershell
-node I:\git\Synloq\dist\cli\main.js init --host opencode `
-  --project-root I:\git\open-code-synloq --project open-code-synloq `
+node $SynloqRepo\dist\cli\main.js init --host opencode `
+  --project-root $Stand --project open-code-synloq `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `
   --conversation cto:ses_e2be1a966ffe1Dkracq6CTDWgH `
   --conversation arch:ses_e2be1a8f4ffeeZo5ERRJjJUx9r `
   --relay-url http://127.0.0.1:4101 --non-interactive `
-  2>&1 | Tee-Object I:\git\open-code-synloq\evidence-dod\b1-init.json
+  2>&1 | Tee-Object $Stand\evidence-dod\b1-init.json
 ```
 
 Expect: JSON with `sessionId` equal to the two known ids (bind, not create).
@@ -142,9 +157,9 @@ STOP and report BLOCKED.
 ### B2. Post-checks
 
 ```powershell
-Get-Content I:\git\open-code-synloq\opencode.json | Tee-Object I:\git\open-code-synloq\evidence-dod\b2-opencode-after.json
-Get-Content C:\Users\omyag\.synloq\state\40c048bcf8b11fe1.json | Tee-Object I:\git\open-code-synloq\evidence-dod\b2-team-state.json
-Get-Item C:\Users\omyag\.synloq\credentials\40c048bcf8b11fe1\*.token | Select-Object Name,LastWriteTime | Tee-Object I:\git\open-code-synloq\evidence-dod\b2-credentials.txt
+Get-Content $Stand\opencode.json | Tee-Object $Stand\evidence-dod\b2-opencode-after.json
+Get-Content $SynloqHome\state\<projectKey>.json | Tee-Object $Stand\evidence-dod\b2-team-state.json
+Get-Item $SynloqHome\credentials\<projectKey>\*.token | Select-Object Name,LastWriteTime | Tee-Object $Stand\evidence-dod\b2-credentials.txt
 ```
 
 Expect: opencode.json `synloq-*` entries now use the generated command shape;

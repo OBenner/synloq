@@ -8,5 +8,6 @@ coverage/
 .env*
 *.log
 .tmp/
+.tmp-*
 .tmp-pack/
 docs/superpowers/

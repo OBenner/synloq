@@ -1,11 +1,25 @@
 # Live runbook: OpenCode sidecar adapter evidence matrix (#31)
 
 **Executor:** an agent running inside OpenCode on this machine (Windows).
-**Stand:** the adopted project `I:\git\open-code-synloq` (relay on
+**Stand:** the adopted project `open-code-synloq` (relay on
 `http://127.0.0.1:4101`, roles `cto` + `arch`, sessions already bound).
 **Goal:** execute the OpenCode rows of `test/e2e/real-clients.md` on the live
 stand and collect evidence; the auditor (Synloq dev) validates everything
 against the relay SQLite and the OpenCode server API afterwards.
+
+## Path conventions
+
+Commands use variables instead of absolute local paths. Set them before running:
+
+```powershell
+$SynloqRepo = "<path to this repository checkout>"  # the Synloq repo
+$Stand      = "<path to the adopted stand project>" # project name: open-code-synloq
+$SynloqHome = "$env:USERPROFILE\.synloq"
+```
+
+`<projectKey>` below means the relay project key (the subdirectory name under
+`$SynloqHome\state\` created by init). Never commit real absolute paths or OS
+user names — see the evidence hygiene rules in `CONTRIBUTING.md`.
 
 ## Hard rules
 
@@ -14,29 +28,29 @@ Same as `2026-11-13-opencode-live-dod.md`: Synloq repo read-only except
 to the evidence directory; unexpected error → STOP, save, report BLOCKED;
 no deletions, no improvisation, no retries beyond what a step says.
 
-Evidence directory: `I:\git\open-code-synloq\evidence-matrix\`
+Evidence directory: `$Stand\evidence-matrix\`
 
 Known facts (verify, do not assume):
 
 - cto session: `ses_e2be1a966ffe1Dkracq6CTDWgH` ("Synloq CTO")
 - arch session: `ses_e2be1a8f4ffeeZo5ERRJjJUx9r` ("Synloq Architect")
-- arch credential: `C:\Users\omyag\.synloq\credentials\40c048bcf8b11fe1\arch.token`
+- arch credential: `$SynloqHome\credentials\<projectKey>\arch.token`
 - OpenCode service URL + password:
-  `C:\Users\omyag\.local\state\opencode\service.json` (`url`, `password` fields)
+  `~/.local/state/opencode/service.json` (`url`, `password` fields)
 
 ## M0. Preconditions and versions
 
 ```powershell
-Test-NetConnection 127.0.0.1 -Port 4101 2>&1 | Tee-Object I:\git\open-code-synloq\evidence-matrix\m0-relay.txt
-cd I:\git\Synloq
-git log --oneline -1 2>&1 | Tee-Object I:\git\open-code-synloq\evidence-matrix\m0-head.txt
-pnpm build 2>&1 | Tee-Object I:\git\open-code-synloq\evidence-matrix\m0-build.txt
-& "$env:APPDATA\ai.opencode.desktop\cli\2.2.7-x64\opencode-cli.exe" --version 2>&1 | Tee-Object I:\git\open-code-synloq\evidence-matrix\m0-opencode-version.txt
-node -p "require('I:/git/Synloq/node_modules/@opencode-ai/sdk/package.json').version" 2>&1 | Tee-Object I:\git\open-code-synloq\evidence-matrix\m0-sdk-version.txt
+Test-NetConnection 127.0.0.1 -Port 4101 2>&1 | Tee-Object $Stand\evidence-matrix\m0-relay.txt
+cd $SynloqRepo
+git log --oneline -1 2>&1 | Tee-Object $Stand\evidence-matrix\m0-head.txt
+pnpm build 2>&1 | Tee-Object $Stand\evidence-matrix\m0-build.txt
+& "$env:APPDATA\ai.opencode.desktop\cli\2.2.7-x64\opencode-cli.exe" --version 2>&1 | Tee-Object $Stand\evidence-matrix\m0-opencode-version.txt
+node -p "require('./node_modules/@opencode-ai/sdk/package.json').version" 2>&1 | Tee-Object $Stand\evidence-matrix\m0-sdk-version.txt
 ```
 
 If the relay on 4101 is not listening, start it:
-`node I:\git\Synloq\dist\cli\main.js serve --project-root I:\git\open-code-synloq --host 127.0.0.1 --port 4101`
+`node $SynloqRepo\dist\cli\main.js serve --project-root $Stand --host 127.0.0.1 --port 4101`
 (log to `m0-relay.log`), wait 3 s.
 
 If the bundled CLI path differs, discover it: list
@@ -44,8 +58,9 @@ If the bundled CLI path differs, discover it: list
 
 ## M1. Start the sidecar adapter for arch
 
-Create `I:\git\open-code-synloq\opencode-arch.json` (exactly this, note
-`projectRoot: "."` — it resolves relative to the config file):
+Create `$Stand\opencode-arch.json` (exactly this shape, note
+`projectRoot: "."` — it resolves relative to the config file; substitute
+`<synloqHome>`/`<projectKey>` with real values, do not commit the result):
 
 ```json
 {
@@ -56,7 +71,7 @@ Create `I:\git\open-code-synloq\opencode-arch.json` (exactly this, note
   "agentId": "arch",
   "sessionId": "ses_e2be1a8f4ffeeZo5ERRJjJUx9r",
   "relayUrl": "http://127.0.0.1:4101",
-  "credentialPath": "C:\\Users\\omyag\\.synloq\\credentials\\40c048bcf8b11fe1\\arch.token",
+  "credentialPath": "<synloqHome>/credentials/<projectKey>/arch.token",
   "protocolVersion": 1,
   "baseUrl": "<url from service.json>",
   "heartbeatIntervalMs": 1000
@@ -66,7 +81,7 @@ Create `I:\git\open-code-synloq\opencode-arch.json` (exactly this, note
 Start it (a visible console window is expected — that is the adapter):
 
 ```powershell
-Start-Process node -ArgumentList 'I:\git\Synloq\dist\cli\main.js adapter --config I:\git\open-code-synloq\opencode-arch.json' -RedirectStandardOutput I:\git\open-code-synloq\evidence-matrix\m1-adapter.log -RedirectStandardError I:\git\open-code-synloq\evidence-matrix\m1-adapter.err
+Start-Process node -ArgumentList "$SynloqRepo\dist\cli\main.js adapter --config $Stand\opencode-arch.json" -RedirectStandardOutput $Stand\evidence-matrix\m1-adapter.log -RedirectStandardError $Stand\evidence-matrix\m1-adapter.err
 Start-Sleep 5
 ```
 
@@ -121,7 +136,7 @@ outcomes, the adapter log tails, and "done" or BLOCKED per row.
 
 ## Auditor checklist (not the executor's job)
 
-- relay SQLite `40c048bcf8b11fe1`: every reported message id exists,
+- relay SQLite `<projectKey>`: every reported message id exists,
   `delivery_state=acked`, exactly one claim per message, empty quarantine;
 - adapter log shows `delivery:"queue"` + `resume:true` admissions, none while
   busy, no duplicates after restart;

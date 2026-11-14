@@ -47,7 +47,10 @@ constants is a **protocol change**:
 Never commit tokens, credential files, SQLite databases, message bodies, logs, or
 real `conversationKey`/`kernelSessionId` values. Tests and docs use synthetic
 identifiers. Evidence documents reference participants by role id and messages by
-ID only. The full pre-publication audit rationale is in
+ID only. Committed docs, runbooks, and scripts must not contain absolute local
+paths, machine names, or OS user names — use repo-relative paths, home-relative
+paths (`~/.synloq`), or documented variables/placeholders (`$Stand`,
+`<projectKey>`). The full pre-publication audit rationale is in
 `docs/security/audit-2026-11-12-publication.md`.
 
 ## Tests
