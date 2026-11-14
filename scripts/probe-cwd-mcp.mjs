@@ -23,7 +23,10 @@ const logPath = process.env.SYNLOQ_CWD_PROBE_LOG ?? join(tmpdir(), "synloq-cwd-p
 mkdirSync(dirname(logPath), { recursive: true });
 
 function log(kind, data) {
-  appendFileSync(logPath, JSON.stringify({ at: new Date().toISOString(), pid: process.pid, kind, ...data }) + "\n");
+  appendFileSync(
+    logPath,
+    JSON.stringify({ at: new Date().toISOString(), pid: process.pid, kind, ...data }) + "\n",
+  );
 }
 
 // Env: names always, values only for a small allowlist (never tokens).
