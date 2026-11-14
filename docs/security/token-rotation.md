@@ -7,7 +7,8 @@
 This runbook covers role/operator credential lifecycle for a Synloq project:
 rotation, revocation, and diagnosing authentication failures. It follows the
 `synloq rotate-token` / `synloq revoke-token` CLI contract confirmed by the
-implementer; the audit-log steps assume the M4-min audit scope (see notes below).
+implementer; the audit-log steps use the M4-min audit scope (issue #3, landed
+2026-11-14).
 
 ## Concepts
 
@@ -50,9 +51,11 @@ Behavior:
    are invalid from this moment).
 3. Atomically rewrites the role's token file.
 4. Prints the token **file path** only — never the token itself.
-5. Calls the audit hook (credential rotation, actor, timestamp). The persistent
-   `audit_log` table ships with the M4-min audit scope; until then the call is a
-   no-op behind the interface.
+5. Records the rotation in the persistent security audit log
+   (`<synloqHome>/data/<project-key>-audit.jsonl`): an `accept` event with
+   `action: "rotate"`, the role, and the timestamp (M4-min, issue #3). The
+   last events are readable via `synloq doctor --project-root <path>` under
+   the `audit` section.
 
 Afterwards: restart the role's MCP channels. Generated Kimi Work channels re-read
 the token file on process start, so restarting the channel (or letting the host
@@ -99,8 +102,10 @@ doctor --repair` fixes both by re-issuing the token file and re-rendering
 4. If all roles fail at once, check that `--synloq-home` (or `SYNLOQ_HOME`) resolves
    to the same home the credentials were issued into; a moved project root also
    changes the project key and orphans the old state.
-5. Check the audit log for rotation/revocation events affecting the role (available
-   once M4-min lands).
+5. Check the audit log for rotation/revocation events affecting the role:
+   `synloq doctor --project-root <path>` prints the `audit` section (the last
+   events from `<synloqHome>/data/<project-key>-audit.jsonl`); `issue`,
+   `rotate`, and `revoke` entries carry the role and the timestamp.
 
 ## If tokens reached the git history
 
@@ -109,8 +114,8 @@ doctor --repair` fixes both by re-issuing the token file and re-rendering
 2. Purge the history (force-push is a publication-time decision of the operator —
    see the production plan), but treat rotation, not history rewriting, as the
    actual containment.
-3. Review the audit log (once M4-min lands) and the message traffic of the
-   affected window for misuse.
+3. Review the audit log (`synloq doctor` → `audit` section, or the jsonl file
+   directly) and the message traffic of the affected window for misuse.
 
 ## What rotation does not protect against
 
