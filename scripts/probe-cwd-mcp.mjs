@@ -39,6 +39,17 @@ rl.on("line", (line) => {
     return;
   }
   if (msg.method === "initialize" && msg.id !== undefined) {
+    // Probe B: log whatever session/project identity the host passes us
+    // (clientInfo, capabilities, roots, _meta) — looking for a per-chat id.
+    appendFileSync(
+      logPath,
+      JSON.stringify({
+        at: new Date().toISOString(),
+        pid: process.pid,
+        event: "initialize",
+        params: msg.params ?? null,
+      }) + "\n",
+    );
     const reply = {
       jsonrpc: "2.0",
       id: msg.id,
