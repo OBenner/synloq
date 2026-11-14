@@ -57,7 +57,7 @@ Expect: build exits 0. Record the HEAD commit and the Claude Code version.
 
 ```powershell
 New-Item -ItemType Directory -Force $Stand | Out-Null
-node $SynloqRepo\dist\cli\main.js init `
+node $SynloqRepo\dist\cli\main.js init --host generic `
   --project-root $Stand --project claude-code-synloq `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `

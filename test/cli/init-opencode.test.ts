@@ -90,6 +90,6 @@ describe("synloq init --host opencode", () => {
       { initHost: vi.fn() },
     );
     expect(exitCode).not.toBe(0);
-    expect(stderr).toContain("--host must be kimi-work or opencode");
+    expect(stderr).toContain("--host must be kimi-work, opencode, or generic");
   });
 });

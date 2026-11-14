@@ -52,7 +52,7 @@ Record whether the surface is CLI or Desktop; record it in the evidence.
 
 ```powershell
 New-Item -ItemType Directory -Force $Stand | Out-Null
-node $SynloqRepo\dist\cli\main.js init `
+node $SynloqRepo\dist\cli\main.js init --host generic `
   --project-root $Stand --project codex-code-synloq `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `
@@ -66,6 +66,12 @@ curl http://127.0.0.1:4302/v1/health 2>&1 | Tee-Object $Secure\d1-health.json
 
 Save from the init JSON: `roles[*].configPath` (under
 `$SynloqHome\runtime\<projectKey>\mcp\`).
+
+Note: `--host generic` is required. Without `--host`, init defaults to
+`kimi-work` and fails on a machine without the Kimi Work local control API
+(`synloq: Kimi Work local-control status is unavailable`). The `generic` mode
+writes only the manifest, credentials, and runtime MCP configs — no host
+bindings, no visible chats, `registrationRequired: false`.
 
 ## D2. Wire the visible Codex sessions (per role)
 

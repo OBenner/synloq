@@ -9,6 +9,7 @@ import { SynloqError } from "../domain/errors.js";
 import { languageSchema, SUPPORTED_LANGUAGES } from "../i18n/index.js";
 import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
 import { discoverOpenCodeHost } from "../host/opencode/discovery.js";
+import { initializeGenericTeam } from "../init/generic-host.js";
 import { initializeTeam } from "../init/initialize-team.js";
 import { createKimiWorkInitHost } from "../init/kimi-work-host.js";
 import { initializeOpenCodeTeam } from "../init/opencode-host.js";
@@ -20,6 +21,9 @@ export interface GenericInitDependencies {
   initializeOpenCode?: (
     options: Parameters<typeof initializeOpenCodeTeam>[0],
   ) => ReturnType<typeof initializeOpenCodeTeam>;
+  initializeGeneric?: (
+    options: Parameters<typeof initializeGenericTeam>[0],
+  ) => ReturnType<typeof initializeGenericTeam>;
   initHost?: () => Promise<KimiWorkInitHost>;
   openCodeHost?: () => Promise<OpenCodeSessionHost>;
   initWizard?: () => Promise<InitWizardResult>;
@@ -145,14 +149,14 @@ export async function runGenericInit(
   });
   if (values.help) {
     io.stdout.write(
-      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--language en|ru] [--non-interactive]\n",
+      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode|generic] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--language en|ru] [--non-interactive]\n",
     );
     return;
   }
 
   const hostName = values.host ?? "kimi-work";
-  if (hostName !== "kimi-work" && hostName !== "opencode") {
-    invalid("--host must be kimi-work or opencode");
+  if (hostName !== "kimi-work" && hostName !== "opencode" && hostName !== "generic") {
+    invalid("--host must be kimi-work, opencode, or generic");
   }
   const languageResult = languageSchema.safeParse(values.language ?? "en");
   if (!languageResult.success) {
@@ -196,6 +200,22 @@ export async function runGenericInit(
 
   const runtimeEntrypoint =
     dependencies.runtimeEntrypoint ?? fileURLToPath(new URL("../mcp/stdio.js", import.meta.url));
+
+  if (hostName === "generic") {
+    if (values["plugin-source"])
+      invalid("--plugin-source is only meaningful with --host kimi-work");
+    const initializeGeneric = dependencies.initializeGeneric ?? initializeGenericTeam;
+    const result = await initializeGeneric({
+      projectRoot,
+      project: project ?? basename(projectRoot),
+      roles,
+      ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
+      ...(values["relay-url"] ? { relayUrl: values["relay-url"] } : {}),
+      ...(language ? { language } : {}),
+    });
+    io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
 
   if (hostName === "opencode") {
     const openCodeHost = await (dependencies.openCodeHost ?? defaultOpenCodeHost)();

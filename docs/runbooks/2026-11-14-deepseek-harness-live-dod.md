@@ -59,7 +59,7 @@ installed `@deepseek-ai/dsh-mcp-client` version once added in H2.
 
 ```powershell
 New-Item -ItemType Directory -Force $Stand | Out-Null
-node $SynloqRepo\dist\cli\main.js init `
+node $SynloqRepo\dist\cli\main.js init --host generic `
   --project-root $Stand --project deepseek-harness-synloq `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `
