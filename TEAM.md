@@ -11,6 +11,7 @@ The authoritative registration of participants lives in the project's `synloq.ya
 
 | Role       | Title     | Domain                                                                                                |
 | ---------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `ceo`      | CEO       | Strategic priorities, roadmap, final arbitration of cross-role conflicts.                             |
 | `cto`      | CTO       | Technical strategy, task decomposition, coordination. Owns README/CHANGELOG/charter; accepts RESULTs. |
 | `arch`     | Architect | Architecture review, risks, verification. Co-owns the protocol spec (dual approval with CTO).         |
 | `security` | Security  | Security review, threat modeling, risk assessment, hardening. Owns the security documents.            |
@@ -20,7 +21,7 @@ The authoritative registration of participants lives in the project's `synloq.ya
 
 Every role messages any other role directly — the CTO is a coordinator, not a router.
 
-- Address the role that owns the domain: implementation → Developer, architecture/protocol → Architect, threats/hygiene → Security, priorities/decomposition/acceptance → CTO.
+- Address the role that owns the domain: implementation → Developer, architecture/protocol → Architect, threats/hygiene → Security, priorities/decomposition/acceptance → CTO, strategy/roadmap/deadlocks → CEO.
 - Cross-domain decisions get a NOTICE copy to the CTO, not a request to relay.
 - Never ask the operator to relay a message between roles. The relay exists; use it.
 - Escalation NOTICE to the protocol-level `operator` (spec §2.3) is a protocol mechanism, not asking the human operator to relay; the human operator reads the digest (§6).
@@ -31,9 +32,10 @@ Every role messages any other role directly — the CTO is a coordinator, not a 
 | -------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Role     | Everything inside its own scope  | implementation details (dev), severity assessment (security), design within the accepted spec (arch)                                                        |
 | CTO      | Cross-role coordination          | priorities, task decomposition, work assignment, acceptance of RESULTs; spec changes need CTO + Architect dual approval                                     |
+| CEO      | Strategy and deadlocks           | roadmap, strategic priorities, final arbitration when roles conflict or a cross-role decision deadlocks; day-to-day coordination stays with the CTO         |
 | Operator | Irreversible or external actions | publishing/releases, repository settings, destructive operations (history rewrite, deletions outside task scope), external requests, anything costing money |
 
-When unsure which level owns a decision, ask the CTO — not the operator. The CTO escalates to the operator when (and only when) the decision is operator-level.
+When unsure which level owns a decision, ask the CTO — not the operator. The CTO escalates to the CEO for strategy/roadmap/priority deadlocks and to the operator when (and only when) the decision is operator-level.
 
 ## 4. Task contract
 
