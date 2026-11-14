@@ -18,6 +18,16 @@ Synloq is not an orchestrator. It does not hide work in replacement chats, run o
 3. In a project chat, ask the agent to **Initialize Synloq for this project** and confirm each role's name and responsibilities.
 4. The role chats appear in the project and coordinate through the local relay automatically — no separate server or manual MCP configuration is required.
 
+## Clone and run your own stand
+
+A clone of a project that commits a `synloq.yaml` is an **independent stand**, not a node of someone else's team. The committed manifest declares the default role roster and travels with the repository; credentials, session bindings, and the relay database are always machine-local under the Synloq home and are never committed.
+
+1. Clone the repository.
+2. Run `synloq init` against your checkout — it reconciles the manifest into _your_ hosts: your own role sessions, per-role tokens, and your own loopback relay.
+3. The role chats appear in your client and coordinate through your local relay. Two clones never see each other: identical role names are different identities on different stands.
+
+The project key is derived deterministically from the canonical project root path, so two clones at the same absolute path on different machines share a key value. This is harmless because the relay is loopback-only per machine; revisit this assumption if remote relays are ever introduced.
+
 ## Support status
 
 **Supported (verified live):**
