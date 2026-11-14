@@ -1,6 +1,7 @@
 # ADR 0004: Declarative role placement with a universal claim layer
 
-- Status: proposed (identity signal for layer 3 to be fixed at acceptance — see Condition)
+- Status: accepted (2026-11-14 — probe A/B verdicts received; identity signal
+  recorded in Acceptance record)
 - Date: 2026-11-14
 - Deciders: Architect (proposal), CTO (convergence), operator (direction)
 - Related: ADR 0001 (project boundaries); ADR 0003 (one relay per project);
@@ -19,10 +20,11 @@ Hosts differ fundamentally in what tooling can do:
 
 - **Kimi Work, OpenCode** expose APIs to create the visible session — init can
   fully provision the role (proven live: tester role, 2026-11-14).
-- **Codex Desktop, ZCode** offer no programmatic chat creation. A live probe
-  (2026-11-14) confirmed Codex Desktop spawns per-conversation stdio MCP
-  processes with `cwd` set to the thread's project directory, but provides no
-  session-ID environment binding. ZCode API-created chats do not load the
+- **Codex Desktop, ZCode** offer no programmatic chat creation. Live probes
+  (2026-11-14) confirmed Codex Desktop loads project-scope MCP configuration
+  from a trusted project's `.codex/config.toml` (Desktop 0.169.0-alpha.11.1)
+  and provides no chat identity to spawned MCP processes (no thread/session
+  env, empty `roots/list`). ZCode API-created chats do not load the
   workspace MCP configuration at all (blocked on the vendor).
 
 The operator asked for two capabilities: declaring each role's target host in
@@ -62,16 +64,26 @@ type, reason-code, or constant changes):
      scope.
    - Every claim event goes to the security audit log.
 
-## Condition for acceptance
+## Acceptance record
 
-The identity signal used by layer 3 on Codex Desktop is chosen by the outcome
-of probes A/B (scripts/probe-cwd-mcp.mjs): if project-scope MCP configuration
-loads in the current Desktop version → per-role project config; else if
-`roots/list` carries the per-thread project directory → roots-based binding;
-else → exact-match `cwd` binding with the D-11 requirements (no upward
-search, realpath + case-fold, resolve-once-at-start, fail-closed). This ADR
-moves to Accepted with the chosen signal recorded; the layer model and the
-claim-token design do not depend on the probe outcomes.
+The condition set at proposal time is fulfilled. Probes A/B
+(`scripts/probe-cwd-mcp.mjs`, evidence `docs/local/codex-desktop-probe-2.jsonl`,
+18 records) on Codex Desktop 0.169.0-alpha.11.1 returned:
+
+- **Probe A: project-scope MCP configuration works.** A server declared in a
+  trusted project's `.codex/config.toml` spawned (cwd = the project directory)
+  with no user-scope entry present. openai/codex#13025 is an outdated report.
+- **Probe B: no chat identity exists.** `initialize.params` carries only
+  protocolVersion/capabilities/clientInfo; `roots/list` succeeds but is empty;
+  the environment has no THREAD/SESSION/CHAT/CONVERSATION variable.
+
+Chosen identity signal for Codex Desktop: **per-role project config** — a
+per-role trusted project directory whose `.codex/config.toml` declares the
+Synloq MCP server with that role's credential in args, plus AGENTS.md
+instructions. Roots-based and cwd-based binding are closed as unnecessary.
+Codex Desktop is therefore a provisionable host (init can write the project
+config directly, including a next-steps checklist for trust dialogs); the
+claim layer (#42) remains for hosts without config provisioning.
 
 ## Consequences
 
@@ -95,9 +107,11 @@ claim-token design do not depend on the probe outcomes.
   degradation (rejected together with "best-effort" wording).
 - **Pure self-claim without a manifest** — no reproducibility, no reviewable
   desired state, no validation at init time.
-- **Session/thread-ID env binding on Codex Desktop** — disproven by the live
-  probe: no `CODEX_THREAD_ID`/`CODEX_HOME` is visible to spawned MCP
-  processes.
+- **Session/thread-ID env binding on Codex Desktop** — disproven by probe B:
+  no thread/session identity is visible to spawned MCP processes.
+- **Roots-based or cwd-based binding on Codex Desktop** — closed as
+  unnecessary by probe A: project-scope MCP configuration loads, so the role
+  is bound by its project config instead of by resolving a location signal.
 - **Waiting for probe verdicts before writing this ADR** — rejected: the
   three-layer model and claim-token design are stable regardless of which
   identity signal wins; only the signal choice is conditional.

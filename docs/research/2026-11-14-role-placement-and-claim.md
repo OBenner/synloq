@@ -2,7 +2,7 @@
 
 - Date: 2026-11-14
 - Author: Architect
-- Status: captured; layer model promoted to ADR 0004 (proposed)
+- Status: captured; layer model promoted to ADR 0004 (accepted 2026-11-14)
 - Related: ADR 0004; issue #32 (W5 add-role); issue #36; probe evidence from
   `scripts/probe-cwd-mcp.mjs` runs (2026-11-14)
 
@@ -16,13 +16,13 @@ role.
 
 ## Host capability matrix (verified 2026-11-14)
 
-| Host          | Programmatic session creation | Per-chat MCP scope            | Identity signal available to the MCP process                |
-| ------------- | ----------------------------- | ----------------------------- | ----------------------------------------------------------- |
-| Kimi Work     | yes (client API)              | per-channel via plugin config | conversation binding at init                                |
-| OpenCode      | yes (server API)              | project config merge          | session id from API                                         |
-| Codex CLI     | n/a (terminal)                | project config (trusted)      | hooks + per-role CODEX_HOME                                 |
-| Codex Desktop | no                            | user scope only (#13025)      | cwd = thread project dir (probe-verified); no thread env id |
-| ZCode         | partial (API sessions exist)  | not loaded for API chats      | none confirmed (blocked, awaits manual UI retry)            |
+| Host          | Programmatic session creation | Per-chat MCP scope                                                                                   | Identity signal available to the MCP process                       |
+| ------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Kimi Work     | yes (client API)              | per-channel via plugin config                                                                        | conversation binding at init                                       |
+| OpenCode      | yes (server API)              | project config merge                                                                                 | session id from API                                                |
+| Codex CLI     | n/a (terminal)                | project config (trusted)                                                                             | hooks + per-role CODEX_HOME                                        |
+| Codex Desktop | no                            | project scope works on Desktop 0.169.0-alpha.11.1 (probe A, 2026-11-14; openai/codex#13025 outdated) | no chat identity (probe B); role bound via per-role project config |
+| ZCode         | partial (API sessions exist)  | not loaded for API chats                                                                             | none confirmed (blocked, awaits manual UI retry)                   |
 
 ## Decision tree
 
@@ -32,11 +32,13 @@ For a role with target host H:
    init creates the visible session, binds it, issues the credential, done.
    Fully automatic.
 2. **Claim by marker** — H has no session API but the MCP process receives a
-   trustworthy per-thread location signal (Codex Desktop: cwd; possibly
-   `roots/list`): init stages an unclaimed role record plus a marker file
-   (`.synloq/role.json`) in a per-role directory; the MCP process resolves
-   its role from that signal at startup (exact match, realpath + case-fold,
-   resolve-once, fail-closed — ADR 0004 / D-11 requirements).
+   trustworthy per-thread location signal: init stages an unclaimed role
+   record plus a marker file (`.synloq/role.json`) in a per-role directory;
+   the MCP process resolves its role from that signal at startup (exact
+   match, realpath + case-fold, resolve-once, fail-closed — ADR 0004 / D-11
+   requirements). _Designed for Codex Desktop (cwd signal); superseded there
+   by probe A (2026-11-14): project-scope MCP config loads, so Codex Desktop
+   uses per-role project config instead and needs no marker resolution._
 3. **Claim by code** — no usable signal at all (ZCode today): init issues a
    one-time human-readable claim code (`synloq-claim-<role>-XXXXXX`,
    TTL 15 min, consume-once, audited); the operator pastes it into the chat;
@@ -63,6 +65,8 @@ desired-state declaration regardless of which layer provisions the role.
 
 ## Status
 
-Layer model and claim-token design: promoted to ADR 0004 (proposed), pending
-probe A/B verdicts only for the identity-signal choice in layer 2. This note
-keeps the broader context and the host matrix for backlog planning.
+Layer model and claim-token design: promoted to ADR 0004, **accepted
+2026-11-14** after probe A/B verdicts — identity signal for Codex Desktop is
+the per-role project config (probe A: project-scope MCP loads on Desktop
+0.169.0-alpha.11.1; probe B: no chat identity exists). This note keeps the
+broader context and the host matrix for backlog planning.
