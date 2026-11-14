@@ -8,6 +8,7 @@ import { z } from "zod";
 import { runKimiWorkAdapter, type KimiWorkAdapter } from "../adapters/kimi-work.js";
 import { HttpAdapterRunner, OutstandingTracker } from "../adapters/http-runner.js";
 import { loadManifest } from "../config/manifest.js";
+import { formatDiagnostic } from "../diagnostics.js";
 import { SynloqError } from "../domain/errors.js";
 import { languageSchema, type Language } from "../i18n/index.js";
 import {
@@ -212,7 +213,7 @@ function createKimiWorkLifecycle(
     const raw = `${error.code}: ${error.message}`;
     const detail = token === "" ? raw : raw.split(token).join("[redacted]");
     diagnostics.write(
-      `Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}\n`,
+      `${formatDiagnostic(`Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}`)}\n`,
     );
     void (async () => {
       try {
@@ -223,7 +224,7 @@ function createKimiWorkLifecycle(
         recoveryTimestamps.push(now);
         if (recoveryTimestamps.length > recoveryLimit) {
           diagnostics.write(
-            `Synloq Kimi Work recovery throttled for ${binding.conversationKey}: ${recoveryTimestamps.length} recoveries within ${recoveryWindowMs}ms, cooling down for ${recoveryCooldownMs}ms\n`,
+            `${formatDiagnostic(`Synloq Kimi Work recovery throttled for ${binding.conversationKey}: ${recoveryTimestamps.length} recoveries within ${recoveryWindowMs}ms, cooling down for ${recoveryCooldownMs}ms`)}\n`,
           );
           await abortableSleep(recoveryCooldownMs, new AbortController().signal);
           recoveryTimestamps.length = 0;
@@ -280,11 +281,11 @@ function createKimiWorkLifecycle(
                 : String(error);
           const detail = token === "" ? raw : raw.split(token).join("[redacted]");
           diagnostics.write(
-            `Synloq Kimi Work startup attempt ${attempt}/${attempts} failed for ${binding.conversationKey}: ${detail}\n`,
+            `${formatDiagnostic(`Synloq Kimi Work startup attempt ${attempt}/${attempts} failed for ${binding.conversationKey}: ${detail}`)}\n`,
           );
           if (attempt === attempts) {
             diagnostics.write(
-              `Synloq Kimi Work visible delivery unavailable for ${binding.conversationKey}\n`,
+              `${formatDiagnostic(`Synloq Kimi Work visible delivery unavailable for ${binding.conversationKey}`)}\n`,
             );
             return;
           }
@@ -347,7 +348,7 @@ export async function startMcpStdio(
       synloqHome: configuration.synloqHome,
       onOwnerLost: async () => lifecycle?.stop(),
       onRecovered: () => lifecycle?.start(),
-      onDiagnostic: (message) => diagnostics.write(`${message}\n`),
+      onDiagnostic: (message) => diagnostics.write(`${formatDiagnostic(message)}\n`),
     });
   }
 
@@ -379,7 +380,7 @@ export async function startMcpStdio(
       await supervisor?.close();
     })();
   };
-  diagnostics.write("Synloq MCP stdio bridge ready\n");
+  diagnostics.write(`${formatDiagnostic("Synloq MCP stdio bridge ready")}\n`);
   return server;
 }
 
@@ -400,7 +401,9 @@ async function main(): Promise<void> {
         : error instanceof Error
           ? error.message
           : String(error);
-    process.stderr.write(`Synloq MCP stdio bridge failed to start: ${detail}\n`);
+    process.stderr.write(
+      `${formatDiagnostic(`Synloq MCP stdio bridge failed to start: ${detail}`)}\n`,
+    );
     process.exitCode = 1;
   }
 }

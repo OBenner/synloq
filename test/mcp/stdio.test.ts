@@ -103,6 +103,10 @@ describe("Synloq MCP stdio bridge", () => {
         "synloq_wait",
       ]);
       expect(diagnostics).toContain("ready");
+      // Every diagnostic line carries an ISO 8601 UTC timestamp (issue #24).
+      expect(diagnostics).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z Synloq MCP stdio bridge ready$/m,
+      );
       expect(diagnostics).not.toContain(token);
       expect(protocolOutput).not.toContain(token);
     } finally {
@@ -194,6 +198,14 @@ describe("Synloq MCP stdio bridge", () => {
       await vi.waitFor(() => expect(diagnostics).toContain("visible delivery unavailable"));
       expect(diagnostics).not.toContain(token);
       expect(diagnostics.match(/visible delivery unavailable/g)).toHaveLength(1);
+      // The failure trail is timestamped: startup failure and the final
+      // unavailability line both carry ISO 8601 UTC prefixes (issue #24).
+      expect(diagnostics).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z Synloq Kimi Work startup attempt 1\/1 failed/m,
+      );
+      expect(diagnostics).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z Synloq Kimi Work visible delivery unavailable/m,
+      );
     } finally {
       await client.close();
       await server.close();
