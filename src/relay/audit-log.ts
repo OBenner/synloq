@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { isPermissionError, permissionDenied } from "../domain/errors.js";
 
 export type AuditedAction =
   | "send"
@@ -36,7 +37,14 @@ export class FileSecurityAuditLog implements SecurityAuditLog {
   constructor(private readonly path: string) {}
 
   record(event: SecurityEvent): void {
-    mkdirSync(dirname(this.path), { recursive: true });
-    appendFileSync(this.path, `${JSON.stringify(event)}\n`, "utf8");
+    try {
+      mkdirSync(dirname(this.path), { recursive: true });
+      appendFileSync(this.path, `${JSON.stringify(event)}\n`, "utf8");
+    } catch (error) {
+      if (isPermissionError(error)) {
+        throw permissionDenied("appending to the security audit log", this.path, error);
+      }
+      throw error;
+    }
   }
 }

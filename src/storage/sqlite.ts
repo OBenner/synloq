@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { SynloqError } from "../domain/errors.js";
+import { isPermissionError, permissionDenied, SynloqError } from "../domain/errors.js";
 
 const schema = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -130,6 +130,9 @@ export function openDatabase(path: string): DatabaseSync {
       }
     }
     if (error instanceof SynloqError) throw error;
+    if (isPermissionError(error)) {
+      throw permissionDenied("opening the SQLite storage", path, error);
+    }
     throw storageFailure("failed to open or migrate SQLite storage", error);
   }
 }

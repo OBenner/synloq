@@ -569,6 +569,9 @@ export class RelayHttpServer {
       case "QUEUE_FULL":
         return { status: 429, error };
       case "STORAGE_FAILURE":
+      case "PERMISSION_DENIED":
+        // A local filesystem condition of the relay host; the client cannot
+        // fix it, so it stays a 500 — but with an explicit code and path.
         return { status: 500, error };
     }
   }
