@@ -107,10 +107,28 @@ async function metadata(
   return { codexVersion, appServerHelp, appServerSchema };
 }
 
-const sensitiveInitializeKey = /prompt|text|turns|token|secret|account|auth/i;
+/**
+ * Key blocklist for the initialize response. Broad on purpose: the response
+ * comes from a binary outside our control, so over-blocking is safe. Covers
+ * content-bearing keys (prompt/text/turns) and credential-bearing keys
+ * (token/secret/account/auth/credential/password/apiKey variants).
+ */
+const sensitiveInitializeKey =
+  /prompt|text|turns|token|secret|account|auth|credential|password|api[-_]?key|cookie/i;
+
+/**
+ * Value-level defense for secrets hiding under innocuous keys: common token
+ * shapes (sk-..., Bearer ..., JWT, long hex/base64 blobs) are redacted even
+ * when the key does not match the blocklist.
+ */
+const sensitiveInitializeValue =
+  /^(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+\S+|[A-Fa-f0-9]{40,}|[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})$/;
 
 function sanitizeInitialize(value: unknown, depth = 0): unknown {
-  if (typeof value === "string") return value.slice(0, 256);
+  if (typeof value === "string") {
+    if (sensitiveInitializeValue.test(value.trim())) return "[redacted]";
+    return value.slice(0, 256);
+  }
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (depth >= 8) return "[depth-limit]";

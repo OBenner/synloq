@@ -7,6 +7,17 @@ import { PROTOCOL_VERSION } from "../domain/session.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
 
 const MAX_HOOK_BYTES = 64 * 1024;
+
+/**
+ * Interrupt and SessionEnd hooks are configured with a 3-second host-side
+ * timeout (docs/adapters/codex.md). That budget covers process startup, stdin
+ * read, and the relay call — so these events get a shorter relay timeout than
+ * the client default (5 s), otherwise the host could kill the hook mid-write
+ * and the `unknown`/`closed` state would never reach the relay. The value
+ * must stay below the configured hook timeout with room for Node startup.
+ */
+const QUICK_HOOK_EVENTS = new Set(["Interrupt", "SessionEnd"]);
+const QUICK_HOOK_RELAY_TIMEOUT_MS = 2_000;
 const hookSchema = z
   .object({
     session_id: z.string().min(1),
@@ -61,16 +72,22 @@ export async function runCodexHook(
   }
 
   const state = mapCodexHook(hook.hook_event_name, hook.source);
+  const relayTimeoutMs = QUICK_HOOK_EVENTS.has(hook.hook_event_name)
+    ? QUICK_HOOK_RELAY_TIMEOUT_MS
+    : undefined;
   if (hook.hook_event_name === "SessionStart") {
-    const { session } = await client.registerSession({
-      sessionId: hook.session_id,
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: {
-        activeDelivery: false,
-        stateReporting: true,
-        clientIdempotency: false,
+    const { session } = await client.registerSession(
+      {
+        sessionId: hook.session_id,
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          activeDelivery: false,
+          stateReporting: true,
+          clientIdempotency: false,
+        },
       },
-    });
+      relayTimeoutMs,
+    );
     if (
       session.project !== config.project ||
       session.agentId !== config.agentId ||
@@ -79,5 +96,5 @@ export async function runCodexHook(
       throw new SynloqError("UNAUTHORIZED", "registered session does not match Codex binding");
     }
   }
-  await client.heartbeat({ sessionId: hook.session_id, state });
+  await client.heartbeat({ sessionId: hook.session_id, state }, relayTimeoutMs);
 }

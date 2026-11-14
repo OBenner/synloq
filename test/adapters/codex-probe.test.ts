@@ -363,6 +363,48 @@ describe("Codex read-only app-server probe", () => {
     expect(serialized).not.toContain(schema);
   });
 
+  it("drops credential-shaped keys and redacts secret-shaped values under innocuous keys", async () => {
+    const harness = fakeProbe({
+      initialize: {
+        serverInfo: { name: "codex", version: "0.169.0" },
+        apiKey: "sk-live-key-material",
+        "x-api-key": "another-key",
+        credential: { kind: "oauth", value: "oauth-secret" },
+        password: "hunter2",
+        cookie: "session-cookie-value",
+        metadata: {
+          note: "sk-abc123def456ghi",
+          hint: "Bearer opaque-token-value",
+          tracing: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+          jwtish:
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c",
+          description: "plain human-readable description",
+        },
+      },
+    });
+
+    const report = await probeCodexAppServer(harness.options);
+    expect(report.initialize).toEqual({
+      serverInfo: { name: "codex", version: "0.169.0" },
+      metadata: {
+        note: "[redacted]",
+        hint: "[redacted]",
+        tracing: "[redacted]",
+        jwtish: "[redacted]",
+        description: "plain human-readable description",
+      },
+    });
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain("sk-live-key-material");
+    expect(serialized).not.toContain("another-key");
+    expect(serialized).not.toContain("oauth-secret");
+    expect(serialized).not.toContain("hunter2");
+    expect(serialized).not.toContain("session-cookie-value");
+    expect(serialized).not.toContain("sk-abc123def456ghi");
+    expect(serialized).not.toContain("opaque-token-value");
+    expect(serialized).not.toContain("SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c");
+  });
+
   it("runs directly with Node 24 TypeScript module resolution", async () => {
     const scriptPath = fileURLToPath(
       new URL("../../scripts/probe-codex-app-server.ts", import.meta.url),

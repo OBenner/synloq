@@ -47,16 +47,22 @@ describe("Codex hook", () => {
       source: "startup",
     });
 
-    expect(registerSession).toHaveBeenCalledWith({
-      sessionId: config.sessionId,
-      protocolVersion: PROTOCOL_VERSION,
-      capabilities: {
-        activeDelivery: false,
-        stateReporting: true,
-        clientIdempotency: false,
+    expect(registerSession).toHaveBeenCalledWith(
+      {
+        sessionId: config.sessionId,
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          activeDelivery: false,
+          stateReporting: true,
+          clientIdempotency: false,
+        },
       },
-    });
-    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "idle" });
+      undefined,
+    );
+    expect(heartbeat).toHaveBeenCalledWith(
+      { sessionId: config.sessionId, state: "idle" },
+      undefined,
+    );
     expect(stdout).toBe("");
   });
 
@@ -67,7 +73,25 @@ describe("Codex hook", () => {
       hook_event_name: "PreModelRequest",
     });
     expect(registerSession).not.toHaveBeenCalled();
-    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "busy" });
+    expect(heartbeat).toHaveBeenCalledWith(
+      { sessionId: config.sessionId, state: "busy" },
+      undefined,
+    );
+  });
+
+  it("fits the Interrupt and SessionEnd relay calls into the 3-second hook budget", async () => {
+    const { client, heartbeat } = fakeClient();
+    await invoke(client, {
+      session_id: config.sessionId,
+      hook_event_name: "Interrupt",
+    });
+    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "unknown" }, 2000);
+
+    await invoke(client, {
+      session_id: config.sessionId,
+      hook_event_name: "SessionEnd",
+    });
+    expect(heartbeat).toHaveBeenCalledWith({ sessionId: config.sessionId, state: "closed" }, 2000);
   });
 
   it("rejects another visible session before any relay mutation", async () => {

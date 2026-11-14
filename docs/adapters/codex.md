@@ -115,6 +115,8 @@ Configure these events in the same scope's `hooks.json`. Project-local hooks req
 
 Every handler reads one hook JSON object, limited to 64 KiB, from stdin. Synloq writes no protocol output, `additionalContext`, continuation, permission decision, or message content to stdout. `SessionStart` registers `activeDelivery:false`, `stateReporting:true`, and `clientIdempotency:false`; subsequent events heartbeat state. A different `session_id` fails before relay mutation.
 
+The 3-second caps for `Interrupt` and `SessionEnd` are matched inside the handler: those events carry a 2-second relay request budget (the RelayHttpClient default is 5 s), so the host timeout cannot kill the hook mid-write and the `unknown`/`closed` states still reach the relay. If you raise the hook timeouts, keep at least ~1 s of headroom above the relay budget for process startup and stdin.
+
 The read-only compatibility probe uses the installed executable without creating a chat or submitting work:
 
 ```bash

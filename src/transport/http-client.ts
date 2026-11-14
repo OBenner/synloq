@@ -141,12 +141,15 @@ export class RelayHttpClient {
     return this.request("POST", "/v1/ack", { messageId });
   }
 
-  registerSession(input: SessionRegistrationRequest): Promise<{ session: AdapterSession }> {
-    return this.request("POST", "/v1/sessions/register", input);
+  registerSession(
+    input: SessionRegistrationRequest,
+    timeoutMs?: number,
+  ): Promise<{ session: AdapterSession }> {
+    return this.request("POST", "/v1/sessions/register", input, timeoutMs);
   }
 
-  heartbeat(input: HeartbeatRequest): Promise<{ session: AdapterSession }> {
-    return this.request("POST", "/v1/sessions/heartbeat", input);
+  heartbeat(input: HeartbeatRequest, timeoutMs?: number): Promise<{ session: AdapterSession }> {
+    return this.request("POST", "/v1/sessions/heartbeat", input, timeoutMs);
   }
 
   closeSession(input: CloseSessionRequest): Promise<{ session: AdapterSession }> {
