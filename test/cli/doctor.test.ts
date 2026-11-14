@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Clock } from "../../src/adapters/types.js";
@@ -102,6 +102,65 @@ async function captureDoctor(): Promise<string> {
 }
 
 describe("DoctorReport", () => {
+  it("flags a stale installed plugin copy from the team state source (issue #36)", async () => {
+    const paths = await projectPaths(fixture.root);
+    const source = join(fixture.home, "plugin-source");
+    const installed = join(fixture.home, "installed", "synloq");
+    await mkdir(source, { recursive: true });
+    await mkdir(installed, { recursive: true });
+    await writeFile(
+      join(source, "kimi.plugin.json"),
+      JSON.stringify({ version: "0.1.0+local.abc.222222222222" }),
+    );
+    await writeFile(
+      join(installed, "kimi.plugin.json"),
+      JSON.stringify({ version: "0.1.0+local.abc.111111111111" }),
+    );
+    const registryPath = join(fixture.home, "installed.json");
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        version: 1,
+        plugins: [{ id: "synloq", root: installed, originalSource: source }],
+      }),
+    );
+    await mkdir(dirname(paths.bindings), { recursive: true });
+    await writeFile(
+      paths.bindings,
+      JSON.stringify({
+        version: 1,
+        project: PROJECT,
+        projectRoot: fixture.root,
+        pluginSourcePath: source,
+        conversations: {},
+      }),
+    );
+
+    const stale = await doctorCommand({
+      projectRoot: fixture.root,
+      clock: fixture.clock,
+      pluginsRegistryPath: registryPath,
+    });
+    expect(stale.plugin?.stale).toBe(true);
+    expect(stale.plugin?.installedVersion).toBe("0.1.0+local.abc.111111111111");
+
+    await writeFile(
+      join(installed, "kimi.plugin.json"),
+      JSON.stringify({ version: "0.1.0+local.abc.222222222222" }),
+    );
+    const fresh = await doctorCommand({
+      projectRoot: fixture.root,
+      clock: fixture.clock,
+      pluginsRegistryPath: registryPath,
+    });
+    expect(fresh.plugin?.stale).toBe(false);
+  });
+
+  it("omits the plugin section when the project has no plugin source", async () => {
+    const result = await doctorCommand({ projectRoot: fixture.root, clock: fixture.clock });
+    expect(result.plugin).toBeUndefined();
+  });
+
   it("surfaces a watchdog finding when an idle session holds an old stored message (issue #11)", () => {
     fixture.sessions.register(
       {

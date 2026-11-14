@@ -2,12 +2,14 @@ import { inactiveReason, type Clock } from "../adapters/types.js";
 import { evaluateWatchdog, type WatchdogFinding } from "../diagnostics/watchdog.js";
 import type { Participant } from "../domain/message.js";
 import type { AdapterCapabilities, AdapterSession, SessionState } from "../domain/session.js";
+import type { PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 
 export interface DoctorReport {
   storage: { ok: boolean; path: string; error?: string };
   watchdog: WatchdogFinding[];
+  plugin?: PluginFreshness;
   participants: Array<{
     agentId: string;
     sessionId?: string;
@@ -31,6 +33,7 @@ export interface DoctorReportOptions {
   clock?: Clock;
   storageError?: string;
   watchdogThresholdMs?: number;
+  plugin?: PluginFreshness;
 }
 
 function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
@@ -78,6 +81,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
   return {
     storage,
     watchdog,
+    ...(options.plugin ? { plugin: options.plugin } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);
       const state =

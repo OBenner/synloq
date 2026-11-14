@@ -4,8 +4,10 @@ import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
+import { TeamStateStore } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
+import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
 import { FileSecurityAuditLog } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
@@ -44,6 +46,9 @@ export interface DoctorCommandOptions {
   projectRoot: string;
   clock?: Clock;
   unansweredThresholdMs?: number;
+  // Test/embedding hook: override the Kimi Work installed-plugins registry
+  // used by the plugin freshness check (issue #36).
+  pluginsRegistryPath?: string;
 }
 
 function manifestProject(participants: Participant[]): string {
@@ -252,6 +257,19 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot);
   const clock = options.clock ?? { now: () => Date.now() };
+  // Issue #36 (b): flag a stale installed plugin copy. Local file reads only —
+  // doctor stays offline-safe; any failure degrades to a note, not an error.
+  let plugin: PluginFreshness | undefined;
+  try {
+    const state = await new TeamStateStore(paths.bindings).read();
+    if (state?.pluginSourcePath) {
+      plugin = await checkPluginFreshness(state.pluginSourcePath, {
+        ...(options.pluginsRegistryPath ? { registryPath: options.pluginsRegistryPath } : {}),
+      });
+    }
+  } catch {
+    plugin = { sourcePath: "", stale: false, note: "registry-unreadable" };
+  }
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
@@ -264,6 +282,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       messages,
       sessions,
       clock,
+      ...(plugin ? { plugin } : {}),
     });
   } catch (error) {
     return createDoctorReport({
@@ -272,6 +291,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       databasePath: paths.database,
       storageError: storageError(error),
       clock,
+      ...(plugin ? { plugin } : {}),
     });
   } finally {
     sessions?.close();
