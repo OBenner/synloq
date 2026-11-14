@@ -213,8 +213,12 @@ export class KimiWorkAdapter implements DeliveryAdapter {
     let existing: ReturnType<typeof findMatchingVisibleTurns>;
     try {
       existing = findMatchingVisibleTurns(await this.control.messages(this.binding, 50), prompt);
-    } catch {
-      throw new SynloqError("INVALID_INPUT", "Kimi Work history is unavailable before admission");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new SynloqError(
+        "INVALID_INPUT",
+        `Kimi Work history is unavailable before admission: ${detail}`,
+      );
     }
     if (existing.length > 1) throw this.deliveryUncertain(message.id);
     const previous = existing[0];
@@ -224,7 +228,11 @@ export class KimiWorkAdapter implements DeliveryAdapter {
       await this.refresh();
     } catch (error) {
       if (error instanceof SynloqError && error.code === "UNAUTHORIZED") throw error;
-      throw new SynloqError("INVALID_INPUT", "Kimi Work state is unavailable before admission");
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new SynloqError(
+        "INVALID_INPUT",
+        `Kimi Work state is unavailable before admission: ${detail}`,
+      );
     }
     if (this.currentState() !== "idle") {
       throw new SynloqError("INVALID_INPUT", "visible session is not freshly idle");

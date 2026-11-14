@@ -33,7 +33,11 @@ export class KimiWorkJsonRpcConnection {
     this.timeoutMs = options.timeoutMs ?? 5_000;
     this.socket = new WebSocket(endpoint.url, {
       headers: { Authorization: `Bearer ${endpoint.token}` },
-      maxPayload: 1_048_576,
+      // Visible-chat histories carry full turn payloads (prompts, tool output);
+      // the last-50-messages frame of an active role exceeds 1 MiB in practice
+      // (observed 1.1-2.5 MiB on 2026-11-14: the ws library dropped the
+      // connection mid-delivery and visible delivery stalled for that role).
+      maxPayload: 64 * 1_048_576,
     });
     let markOpen!: () => void;
     let failOpen!: (error: Error) => void;

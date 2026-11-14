@@ -125,6 +125,21 @@ describe("Kimi Work WebSocket JSON-RPC", () => {
     expect(received).toHaveLength(0);
   });
 
+  it("accepts result frames larger than 1 MiB (visible-chat history frames)", async () => {
+    const big = "x".repeat(2 * 1_048_576);
+    const { endpoint } = await harness((socket) => {
+      socket.on("message", (data) => {
+        const request = JSON.parse(String(data));
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { big } }));
+      });
+    });
+    const connection = connect(endpoint, 5_000);
+
+    await expect(
+      connection.request("conversations.getMessages", {}, z.object({ big: z.string() })),
+    ).resolves.toEqual({ big });
+  });
+
   it("rejects malformed success payloads and pending requests on close", async () => {
     const { endpoint } = await harness((socket) => {
       socket.on("message", (data) => {
