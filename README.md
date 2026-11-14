@@ -101,7 +101,7 @@ Initialization creates ordinary visible Kimi Work client chats without activatin
 
 The JSON result contains role bindings and generated file paths, but no plaintext tokens. Per-role token files are reused from the explicit Synloq home and never copied into plugin source. Do not commit token files, MCP configuration, SQLite files, logs, evidence containing message bodies, or IDE state.
 
-When the result contains `registrationRequired: true`, use the client's single **Install/Update** action for the generated personal plugin. Source registration, plugin installation, channel availability, and end-to-end readiness are different states: do not claim readiness until both generated role channels have been checked.
+When the result contains `registrationRequired: true`, use the client's single **Install/Update** action for the generated personal plugin. The result also carries `channelsChanged` and a human-readable `nextStep`: when a re-init did not change the channel set, no Install/Update is needed; when it did, the next step says so explicitly (relay and role tokens need no restart). Source registration, plugin installation, channel availability, and end-to-end readiness are different states: do not claim readiness until both generated role channels have been checked. Adding a role to a live project is covered by [docs/add-role.md](docs/add-role.md).
 
 An existing `synloq.yaml` can supply the same role declarations without `--role` arguments:
 
