@@ -60,6 +60,12 @@ Open work after the 2026-11-12 acceptance. Sources: `docs/security/review-2026-1
 | OpenCode UX: role prompt template renderer, `add-role`/`remove-role`, `doctor` session-liveness checks — issue #32, arch decomposition + dev implementation; source: docs/research/2026-11-13-opencode-manual-stand.md (W4–W6)                                                                                 | P2       | open                                      |
 | OpenCode adapter: freshness decay leaked `unknown` into heartbeats — turned out delivery-blocking (relay idle-gate closed 5s after the last SSE event), not just cosmetic; fixed as heartbeat reports raw observedState, decay kept only for admission                                                         | P3       | DONE (349c6e6, live-validated 2026-11-13) |
 
+## Other hosts
+
+| Item                                                                                                                                                                                                                                                                                                    | Priority | Status         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------- |
+| `synloq init --host generic`: adapter-less init for stands without a host adapter (Codex, ZCode, DeepSeek Harness, manual wiring) — manifest + credentials + runtime MCP configs only, no host bindings; unblocks the 2026-11-14 live verification runbooks (Codex D1 blocked on the kimi-work default) | P1       | DONE (b1402c0) |
+
 ## Working rules for this backlog
 
 - An item is closed by a commit referencing its row in this table; the status changes in the same commit.
