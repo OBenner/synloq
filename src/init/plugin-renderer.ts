@@ -80,10 +80,27 @@ export async function assertPluginOwnership(
   }
 }
 
-export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promise<void> {
+export interface RenderPluginResult {
+  version: string;
+  previousVersion?: string;
+}
+
+export async function renderKimiWorkPlugin(
+  options: RenderPluginOptions,
+): Promise<RenderPluginResult> {
   const projectRoot = resolve(options.projectRoot);
   const language = options.language ?? DEFAULT_LANGUAGE;
   await assertPluginOwnership(options.pluginSourcePath, options.project, projectRoot);
+  const manifestPath = join(options.pluginSourcePath, "kimi.plugin.json");
+  // Issue #36 (a): capture the previously rendered version so init can tell
+  // the operator whether the channel set actually changed.
+  let previousVersion: string | undefined;
+  try {
+    const existing = JSON.parse(await readFile(manifestPath, "utf8")) as { version?: unknown };
+    if (typeof existing.version === "string") previousVersion = existing.version;
+  } catch {
+    // First render (or an unreadable manifest) — no previous version.
+  }
   const templatePath = options.templatePath ?? defaultTemplatePath();
   await cp(templatePath, options.pluginSourcePath, {
     recursive: true,
@@ -132,7 +149,7 @@ export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promis
   manifest.interface.mcpOverrides = overrides;
   manifest.mcpServers = servers;
 
-  await writeJsonAtomic(join(options.pluginSourcePath, "kimi.plugin.json"), manifest, 0o644);
+  await writeJsonAtomic(manifestPath, manifest, 0o644);
   const locale = JSON.parse(
     await readFile(join(templatePath, "locales", "zh-CN.json"), "utf8"),
   ) as { mcpOverrides?: Record<string, unknown> };
@@ -161,4 +178,5 @@ export async function renderKimiWorkPlugin(options: RenderPluginOptions): Promis
       0o644,
     );
   }
+  return { version: manifest.version, ...(previousVersion ? { previousVersion } : {}) };
 }

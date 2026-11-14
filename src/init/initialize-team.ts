@@ -273,7 +273,7 @@ export async function initializeTeam(
     });
   }
 
-  await renderKimiWorkPlugin({
+  const rendered = await renderKimiWorkPlugin({
     ...(options.templatePath ? { templatePath: options.templatePath } : {}),
     pluginSourcePath: resolve(options.pluginSourcePath),
     project,
@@ -283,12 +283,27 @@ export async function initializeTeam(
     roles: renderedRoles,
     language,
   });
+  const channelsChanged =
+    rendered.previousVersion !== undefined && rendered.previousVersion !== rendered.version;
+  // Fail-loud operator guidance (issue #36 a): say exactly what changed and
+  // what to press, instead of a bare registrationRequired flag.
+  const digestOf = (version: string) => version.split(".").pop() ?? version;
+  const nextStep =
+    rendered.previousVersion === undefined
+      ? "Press Install/Update in Kimi Work to install the generated plugin, then restart the client so the role channels start."
+      : channelsChanged
+        ? `Channels changed (plugin digest ${digestOf(rendered.previousVersion)} -> ${digestOf(rendered.version)}). Press Install/Update in Kimi Work; the updated channels start automatically. The relay and role tokens need no restart.`
+        : "Channel set unchanged — the installed plugin already matches; no Install/Update is needed.";
   return {
     project,
     manifestPath: join(projectRoot, "synloq.yaml"),
     statePath: paths.bindings,
     pluginSourcePath: resolve(options.pluginSourcePath),
     registrationRequired: true,
+    pluginVersion: rendered.version,
+    ...(rendered.previousVersion ? { previousPluginVersion: rendered.previousVersion } : {}),
+    channelsChanged,
+    nextStep,
     roles: initializedRoles,
   };
 }

@@ -46,6 +46,12 @@ export interface InitializeTeamResult {
   statePath: string;
   pluginSourcePath: string;
   registrationRequired: boolean;
+  // Issue #36 (a): deterministic plugin version and change detection, so the
+  // operator sees whether an Install/Update is actually needed.
+  pluginVersion: string;
+  previousPluginVersion?: string;
+  channelsChanged: boolean;
+  nextStep: string;
   roles: InitializedRole[];
 }
 

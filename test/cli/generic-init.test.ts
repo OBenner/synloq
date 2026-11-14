@@ -16,6 +16,9 @@ function result(root: string, options: InitializeTeamOptions): InitializeTeamRes
     statePath: join(options.synloqHome ?? root, "state.json"),
     pluginSourcePath: options.pluginSourcePath,
     registrationRequired: true,
+    pluginVersion: "0.1.0+local.test.000000000000",
+    channelsChanged: false,
+    nextStep: "Press Install/Update in Kimi Work to install the generated plugin.",
     roles: options.roles.map((role) => ({
       agentId: role.agentId,
       conversationKey: `created-${role.agentId}`,

@@ -104,6 +104,13 @@ describe("initializeTeam", () => {
     expect(first.roles.map((role) => role.conversationKey)).toEqual(["created-1", "created-2"]);
     expect(second.roles).toEqual(first.roles);
     expect(second.registrationRequired).toBe(true);
+    // Issue #36 (a): init reports whether the channel set actually changed.
+    expect(first.previousPluginVersion).toBeUndefined();
+    expect(first.channelsChanged).toBe(false);
+    expect(first.nextStep).toContain("Install/Update");
+    expect(second.previousPluginVersion).toBe(first.pluginVersion);
+    expect(second.channelsChanged).toBe(false);
+    expect(second.nextStep).toContain("unchanged");
     expect(JSON.stringify(second)).not.toContain(firstToken.trim());
     expect(await readFile(firstTokenPath, "utf8")).toBe(firstToken);
 
@@ -124,6 +131,24 @@ describe("initializeTeam", () => {
     expect(JSON.stringify(plugin)).not.toContain(firstToken.trim());
     expect(JSON.stringify(plugin)).not.toContain("CTO");
     expect(JSON.stringify(plugin)).not.toContain("Architect");
+  });
+
+  it("flags a channel-set change with an explicit Install/Update next step", async () => {
+    const { root, home, pluginSourcePath } = await fixture();
+    const host = new FakeHost();
+
+    const first = await initializeTeam(options(root, home, pluginSourcePath, host));
+    const extended = options(root, home, pluginSourcePath, host);
+    extended.roles = [...extended.roles, { agentId: "qa", title: "QA", role: "Verify outcomes" }];
+    const second = await initializeTeam(extended);
+
+    expect(second.channelsChanged).toBe(true);
+    expect(second.previousPluginVersion).toBe(first.pluginVersion);
+    expect(second.pluginVersion).not.toBe(first.pluginVersion);
+    expect(second.nextStep).toContain("Channels changed");
+    expect(second.nextStep).toContain("Install/Update");
+    // The operator must learn that relay and tokens survive the update.
+    expect(second.nextStep).toContain("relay");
   });
 
   it("persists each chat immediately and resumes without duplicating the first", async () => {
