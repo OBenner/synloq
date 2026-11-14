@@ -98,7 +98,7 @@ const helpText: Record<CommandName, string> = {
     "Usage: synloq resume --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
-  doctor: "Usage: synloq doctor --project-root <path> [--synloq-home <path>]\n",
+  doctor: "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair]\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
@@ -220,6 +220,7 @@ async function execute(
     const { values } = parse(command, args, {
       "project-root": { type: "string" },
       "synloq-home": { type: "string" },
+      repair: { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
@@ -229,6 +230,7 @@ async function execute(
       `${formatDoctorReport(
         await doctorCommand({
           projectRoot: requiredString(values, "project-root"),
+          ...(value(values, "repair") === true ? { repair: true } : {}),
           ...synloqHomeOption(values),
         }),
       )}\n`,

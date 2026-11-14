@@ -5,7 +5,7 @@ import { writeTextAtomic } from "../config/atomic-file.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
-import { TeamStateStore } from "../config/team-state.js";
+import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
@@ -23,7 +23,13 @@ import {
   type ReplaceSessionRequest,
 } from "../transport/http-client.js";
 import { RelayHttpServer } from "../transport/http-server.js";
-import { createDoctorReport, type DoctorReport, type SynloqHomeProbe } from "./doctor.js";
+import {
+  createDoctorReport,
+  type CredentialHealth,
+  type DoctorReport,
+  type SynloqHomeProbe,
+} from "./doctor.js";
+import { repairTeamConfigs } from "./repair.js";
 import { createStatusReport, type StatusReport } from "./status.js";
 
 export interface ServeOptions {
@@ -48,6 +54,9 @@ export interface DoctorCommandOptions {
   synloqHome?: string;
   clock?: Clock;
   unansweredThresholdMs?: number;
+  // Issue #6: re-render generated role configs and re-issue stale/missing
+  // token files from the saved team state before reporting.
+  repair?: boolean;
   // Test/embedding hook: override the Kimi Work installed-plugins registry
   // used by the plugin freshness check (issue #36).
   pluginsRegistryPath?: string;
@@ -110,13 +119,16 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
     const dispatcher = new Dispatcher(messages, sessions, new Map(options.adapters), clock);
+    // One policy instance feeds both the relay service (send-side limits) and
+    // the HTTP layer (per-identity long-poll cap, security M2).
+    const protection = new ProtectionPolicy(messages, undefined, undefined, clock);
     server = new RelayHttpServer({
       project,
       relay: new RelayService(
         directory,
         messages,
         sessions,
-        new ProtectionPolicy(messages, undefined, undefined, clock),
+        protection,
         undefined,
         undefined,
         audit,
@@ -126,6 +138,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       dispatcher,
       messages,
       audit,
+      protection,
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
     const openSessions = sessions;
@@ -282,19 +295,45 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
+
+  // Issue #6: repair first so the report reflects the post-repair state.
+  let repair: DoctorReport["repair"];
+  if (options.repair) {
+    const result = await repairTeamConfigs({
+      projectRoot: options.projectRoot,
+      ...(options.synloqHome ? { synloqHome: options.synloqHome } : {}),
+    });
+    repair = { actions: result.actions };
+  }
+
   // Issue #36 (b): flag a stale installed plugin copy. Local file reads only —
   // doctor stays offline-safe; any failure degrades to a note, not an error.
   let plugin: PluginFreshness | undefined;
+  let teamState: TeamState | undefined;
   try {
-    const state = await new TeamStateStore(paths.bindings).read();
-    if (state?.pluginSourcePath) {
-      plugin = await checkPluginFreshness(state.pluginSourcePath, {
+    teamState = await new TeamStateStore(paths.bindings).read();
+    if (teamState?.pluginSourcePath) {
+      plugin = await checkPluginFreshness(teamState.pluginSourcePath, {
         ...(options.pluginsRegistryPath ? { registryPath: options.pluginsRegistryPath } : {}),
       });
     }
   } catch {
     plugin = { sourcePath: "", stale: false, note: "registry-unreadable" };
   }
+
+  // Issue #6: offline credential health per Kimi Work-bound role — a stale
+  // token file is exactly the state a rotation elsewhere leaves behind.
+  const credentialStore = new CredentialStore(options.projectRoot, options.synloqHome);
+  const credentialsHealth = new Map<string, CredentialHealth>();
+  for (const participant of participants) {
+    const binding = teamState?.conversations[participant.agentId];
+    if (!binding || binding.kind === "opencode") continue;
+    credentialsHealth.set(
+      participant.agentId,
+      await credentialStore.inspect(project, participant.agentId),
+    );
+  }
+
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
@@ -305,10 +344,12 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       participants,
       databasePath: paths.database,
       home,
+      credentials: credentialsHealth,
       messages,
       sessions,
       clock,
       ...(plugin ? { plugin } : {}),
+      ...(repair ? { repair } : {}),
     });
   } catch (error) {
     return createDoctorReport({
@@ -316,9 +357,11 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       participants,
       databasePath: paths.database,
       home,
+      credentials: credentialsHealth,
       storageError: storageError(error),
       clock,
       ...(plugin ? { plugin } : {}),
+      ...(repair ? { repair } : {}),
     });
   } finally {
     sessions?.close();

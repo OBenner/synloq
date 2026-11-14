@@ -12,16 +12,25 @@ export interface SynloqHomeProbe {
   error?: string;
 }
 
+export interface CredentialHealth {
+  tokenPath: string;
+  status: "ok" | "missing" | "stale";
+}
+
 export interface DoctorReport {
   storage: { ok: boolean; path: string; error?: string };
   home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
   plugin?: PluginFreshness;
+  repair?: {
+    actions: Array<{ agentId: string; token: "reused" | "reissued"; config: string }>;
+  };
   participants: Array<{
     agentId: string;
     sessionId?: string;
     state: SessionState;
     adapterConnected: boolean;
+    credential?: CredentialHealth;
     protocolVersion?: number;
     capabilities?: AdapterCapabilities;
     lastHeartbeatAt?: string;
@@ -36,6 +45,8 @@ export interface DoctorReportOptions {
   participants: Participant[];
   databasePath: string;
   home?: SynloqHomeProbe;
+  credentials?: Map<string, CredentialHealth>;
+  repair?: DoctorReport["repair"];
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
   clock?: Clock;
@@ -91,6 +102,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
     watchdog,
     ...(options.home ? { home: options.home } : {}),
     ...(options.plugin ? { plugin: options.plugin } : {}),
+    ...(options.repair ? { repair: options.repair } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);
       const state =
@@ -99,11 +111,13 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
         count: 0,
         bytes: 0,
       };
+      const credential = options.credentials?.get(participant.agentId);
       return {
         agentId: participant.agentId,
         ...(session ? { sessionId: session.sessionId } : {}),
         state,
         adapterConnected: storage.ok && hasUnexpiredLease(session, now),
+        ...(credential ? { credential } : {}),
         ...(session
           ? {
               protocolVersion: session.protocolVersion,

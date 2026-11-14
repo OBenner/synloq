@@ -104,6 +104,40 @@ export class CredentialStore {
     return { removedHashes, tokenPath };
   }
 
+  /**
+   * Offline credential health check for doctor (issue #6): "ok" when the
+   * token file authenticates as the same agent, "missing" when the file is
+   * absent or empty, "stale" when the token no longer authenticates (e.g.
+   * after a rotation elsewhere) or belongs to a different agent.
+   */
+  async inspect(
+    project: string,
+    agentId: string,
+  ): Promise<{ tokenPath: string; status: "ok" | "missing" | "stale" }> {
+    agentIdSchema.parse(agentId);
+    const paths = await projectPaths(this.projectRoot, this.synloqHome);
+    const tokenPath = join(paths.tokens, `${agentId}.token`);
+    let token: string;
+    try {
+      token = (await readFile(tokenPath, "utf8")).trim();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { tokenPath, status: "missing" };
+      }
+      throw error;
+    }
+    if (!token) return { tokenPath, status: "missing" };
+    try {
+      const identity = await this.authenticate(project, token);
+      return { tokenPath, status: identity.agentId === agentId ? "ok" : "stale" };
+    } catch (error) {
+      if (error instanceof SynloqError && error.code === "UNAUTHORIZED") {
+        return { tokenPath, status: "stale" };
+      }
+      throw error;
+    }
+  }
+
   async ensureCredential(project: string, agentId: string): Promise<EnsuredCredential> {
     agentIdSchema.parse(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);

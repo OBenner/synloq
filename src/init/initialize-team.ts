@@ -22,6 +22,7 @@ import {
   renderKimiWorkPlugin,
   roleInstructions,
 } from "./plugin-renderer.js";
+import { DEFAULT_RELAY_URL, roleRuntimeConfig } from "./runtime-config.js";
 import type {
   InitializeTeamOptions,
   InitializeTeamResult,
@@ -251,19 +252,18 @@ export async function initializeTeam(
     if (!roleBinding) throw new SynloqError("INVALID_INPUT", "role binding was not initialized");
     const credential = await credentials.ensureCredential(project, role.agentId);
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
-    await writeJsonAtomic(configPath, {
-      relayUrl: "http://127.0.0.1:4100",
-      credentialPath: credential.tokenPath,
-      synloqHome: paths.home,
-      language,
-      kimiWork: {
+    await writeJsonAtomic(
+      configPath,
+      roleRuntimeConfig({
+        relayUrl: DEFAULT_RELAY_URL,
+        tokenPath: credential.tokenPath,
+        synloqHome: paths.home,
+        language,
         projectRoot,
         agentId: role.agentId,
-        conversationKey: roleBinding.conversationKey,
-        workAgentId: roleBinding.workAgentId,
-        ...(roleBinding.kernelSessionId ? { kernelSessionId: roleBinding.kernelSessionId } : {}),
-      },
-    });
+        binding: roleBinding,
+      }),
+    );
     renderedRoles.push({ role, binding: roleBinding, configPath });
     initializedRoles.push({
       agentId: role.agentId,

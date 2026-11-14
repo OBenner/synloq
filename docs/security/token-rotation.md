@@ -72,13 +72,23 @@ node dist/cli/main.js revoke-token \
 
 Removes the role's hashes without issuing a new token: the role is locked out
 until the next `init` (`ensureCredential` re-issues a token for a hash-less
-role). Note that `rotate-token` refuses a role with no stored hashes ("no
+role) or a `synloq doctor --repair` run, which re-issues missing or stale
+token files and re-renders the generated channel configs from the saved team
+state. Note that `rotate-token` refuses a role with no stored hashes ("no
 existing credential to rotate"), so rotation alone cannot recover a revoked
 role. Use `revoke-token` when a leak is suspected and the replacement channel
 is not ready yet.
 
 ## Diagnosing 401 / UNAUTHORIZED after init or rotation
 
+0. Run `synloq doctor --project-root <path>` first: every Kimi Work-bound role
+   carries a `credential` section (`ok` / `missing` / `stale`) — a `stale` or
+   `missing` status is exactly the post-rotation/post-revoke state. `synloq
+doctor --repair` fixes both by re-issuing the token file and re-rendering
+   the role's channel config from the saved team state; it is idempotent and
+   changes nothing on a healthy setup. Repair does not update the installed
+   plugin copy — a `plugin.stale` flag still requires Install/Update in the
+   host.
 1. If this follows a rotation: restart the role's MCP channels first — running
    channels hold the old token in memory, and the relay already rejects it.
 2. Confirm which token file the channel's MCP configuration points to
