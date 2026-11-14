@@ -26,8 +26,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "format:check": "prettier --check .",
+    "check:imports": "node scripts/check-no-dependency-examples.mjs",
     "prepublishOnly": "pnpm verify",
-    "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build"
+    "verify": "pnpm format:check && pnpm check:imports && pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
