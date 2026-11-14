@@ -16,7 +16,7 @@ import { mergeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
-import { roleInstructions } from "./plugin-renderer.js";
+import { rolePromptOpenCode } from "./role-prompt.js";
 import type { RoleInput } from "./types.js";
 
 export interface InitializeOpenCodeTeamOptions {
@@ -133,7 +133,7 @@ export async function initializeOpenCodeTeam(
         });
         sessionId = created.id;
         permissionsApplied = created.permissionsApplied;
-        await host.postPrompt(sessionId, roleInstructions(role, language));
+        await host.postPrompt(sessionId, rolePromptOpenCode(role, language));
       }
       const conversation: OpenCodeTeamConversation = {
         kind: "opencode",

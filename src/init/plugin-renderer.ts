@@ -7,6 +7,7 @@ import { writeJsonAtomic, writeTextAtomic } from "../config/atomic-file.js";
 import { SynloqError } from "../domain/errors.js";
 import { DEFAULT_LANGUAGE, translate, type Language } from "../i18n/index.js";
 import { en } from "../i18n/locales/en.js";
+import { roleInstructionsKimi } from "./role-prompt.js";
 import type { RoleInput, RenderPluginOptions } from "./types.js";
 
 const OWNER_FILE = ".synloq-owner.json";
@@ -31,25 +32,11 @@ function defaultTemplatePath(): string {
 // from the dictionaries; this export stays as the single English source.
 export const TEAM_CHARTER_SUMMARY: string = en["role.charter"];
 
+// Kimi Work role instructions — the shared core rules (src/init/role-prompt.ts,
+// issue #32 W4) with no host-specific additions: Kimi delivers them as
+// clientInstructions, so no delivery mechanics are needed in the text.
 export function roleInstructions(role: RoleInput, language: Language = DEFAULT_LANGUAGE): string {
-  return [
-    translate(language, "role.intro"),
-    translate(language, "role.id", { agentId: role.agentId }),
-    translate(language, "role.displayName", { title: role.title }),
-    translate(language, "role.responsibilities", { role: role.role }),
-    role.instructions
-      ? translate(language, "role.confirmedAdditions", { instructions: role.instructions })
-      : undefined,
-    translate(language, "role.ownChannel"),
-    translate(language, "role.prefixes"),
-    translate(language, "role.ackRule"),
-    translate(language, "role.resultRule"),
-    translate(language, "role.approvalRule"),
-    translate(language, "role.hopLimit"),
-    translate(language, "role.charter"),
-  ]
-    .filter((line): line is string => line !== undefined)
-    .join("\n");
+  return roleInstructionsKimi(role, language);
 }
 
 export async function assertPluginOwnership(
