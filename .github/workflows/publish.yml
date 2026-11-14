@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: write # GitHub Release
-  id-token: write # npm provenance attestation
+  id-token: write # npm OIDC (Trusted Publishing) + provenance attestation
 
 jobs:
   publish:
@@ -21,12 +21,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+      - name: Ensure npm CLI >= 11.5.1 (required for Trusted Publishing)
+        run: npm install --global npm@latest
       - run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: gh release create "${{ github.ref_name }}" --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
