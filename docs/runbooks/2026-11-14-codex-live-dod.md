@@ -99,6 +99,12 @@ Create the per-role homes FIRST — `codex mcp add` fails with
 New-Item -ItemType Directory -Force $Secure\codex-home-cto, $Secure\codex-home-arch | Out-Null
 ```
 
+The freshly installed CLI has no login state under a new `CODEX_HOME`. Copy
+`$env:USERPROFILE\.codex\auth.json` (from the signed-in Desktop install) into
+each role home before launching, or run `codex login` once per home.
+`auth.json` is a credential: it stays stand-local under `$Secure`, never
+enters the Synloq repo, and must not appear in evidence dumps.
+
 For EACH role (`cto`, then `arch`), with the role's own `CODEX_HOME`
 (`$Secure\codex-home-cto` / `$Secure\codex-home-arch` — set
 `$env:CODEX_HOME` to the role's home before that role's commands):
