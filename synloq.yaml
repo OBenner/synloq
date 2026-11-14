@@ -16,8 +16,9 @@ agents:
     title: Security
     role: Security review, threat modeling, risk assessment, and hardening
   dev:
-    title: Developer
-    role: Implementation, testing, and day-to-day development
+    title: Lead Developer
+    role: Code ownership, implementation task decomposition, delegation to and review
+      of dev2, final responsibility for pnpm verify
   dev2:
     title: Developer 2
     role: Implementation support on scoped tasks delegated by the Lead Developer;

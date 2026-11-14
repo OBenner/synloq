@@ -16,7 +16,7 @@ The authoritative registration of participants lives in the project's `synloq.ya
 | `arch`     | Architect      | Architecture review, risks, verification. Co-owns the protocol spec (dual approval with CTO).                                                                              |
 | `security` | Security       | Security review, threat modeling, risk assessment, hardening. Owns the security documents.                                                                                 |
 | `dev`      | Lead Developer | Code ownership, implementation task decomposition, delegation to and review of `dev2`, final responsibility for `pnpm verify`.                                             |
-| `dev2`     | Developer      | Implementation support on scoped tasks delegated by the Lead Developer. Takes tasks from `dev` only — never directly from the CTO (single source of truth for priorities). |
+| `dev2`     | Developer 2    | Implementation support on scoped tasks delegated by the Lead Developer. Takes tasks from `dev` only — never directly from the CTO (single source of truth for priorities). |
 
 ## 2. Direct communication by default
 
