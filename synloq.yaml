@@ -18,3 +18,7 @@ agents:
   dev:
     title: Developer
     role: Implementation, testing, and day-to-day development
+  tester:
+    title: Tester
+    role: QA and verification, test and e2e execution, defect reports; never
+      modifies production code, never commits to main
