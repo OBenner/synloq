@@ -7,6 +7,7 @@ import { agentId, type Message } from "../domain/message.js";
 import { PROTOCOL_VERSION, type SessionBinding } from "../domain/session.js";
 import { NullSecurityAuditLog, type SecurityAuditLog } from "../relay/audit-log.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
+import type { ProtectionPolicy } from "../relay/protection.js";
 import type { RelayService } from "../relay/relay-service.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
@@ -115,6 +116,9 @@ export interface RelayHttpServerOptions {
   dispatcher: Dispatcher;
   messages: SQLiteMessageStore;
   audit?: SecurityAuditLog;
+  // When present, long-poll routes (waitMs > 0) acquire a per-identity slot
+  // from this policy and release it when the request ends (security M2).
+  protection?: ProtectionPolicy;
 }
 
 interface ErrorResponse {
@@ -248,21 +252,26 @@ export class RelayHttpServer {
 
     if (method === "GET" && path === "/v1/inbox") {
       const query = inboxQuerySchema.parse(Object.fromEntries(url.searchParams));
-      const result = await this.waitFor(
-        this.workEvent(project, identity.agentId),
-        query.waitMs,
-        response,
-        () =>
-          this.options.relay.inbox(identity, {
-            project,
-            agentId: identity.agentId,
-            ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
-            limit: query.limit,
-            ...(query.unread === undefined ? {} : { unread: true }),
-          }),
-        (value) => value.messages.length > 0,
-      );
-      this.sendJson(response, 200, result);
+      const release = this.acquireLongPollSlot(identity, query.waitMs);
+      try {
+        const result = await this.waitFor(
+          this.workEvent(project, identity.agentId),
+          query.waitMs,
+          response,
+          () =>
+            this.options.relay.inbox(identity, {
+              project,
+              agentId: identity.agentId,
+              ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+              limit: query.limit,
+              ...(query.unread === undefined ? {} : { unread: true }),
+            }),
+          (value) => value.messages.length > 0,
+        );
+        this.sendJson(response, 200, result);
+      } finally {
+        release?.();
+      }
       return;
     }
 
@@ -317,18 +326,23 @@ export class RelayHttpServer {
 
     if (method === "GET" && path === "/v1/deliveries/next") {
       const query = deliveryQuerySchema.parse(Object.fromEntries(url.searchParams));
-      const result = await this.waitFor(
-        this.workEvent(project, identity.agentId),
-        query.waitMs,
-        response,
-        () =>
-          this.nextDelivery(identity, {
-            sessionId: query.sessionId,
-            generation: query.generation,
-          }),
-        (value) => value.message !== null,
-      );
-      this.sendJson(response, 200, result);
+      const release = this.acquireLongPollSlot(identity, query.waitMs);
+      try {
+        const result = await this.waitFor(
+          this.workEvent(project, identity.agentId),
+          query.waitMs,
+          response,
+          () =>
+            this.nextDelivery(identity, {
+              sessionId: query.sessionId,
+              generation: query.generation,
+            }),
+          (value) => value.message !== null,
+        );
+        this.sendJson(response, 200, result);
+      } finally {
+        release?.();
+      }
       return;
     }
 
@@ -462,6 +476,15 @@ export class RelayHttpServer {
 
   private workEvent(project: string, agentId: string): string {
     return `work:${project}:${agentId}`;
+  }
+
+  // Instant polls (waitMs = 0) never hold a slot: they do not park a
+  // connection. Long polls acquire before the first read so the cap also
+  // covers the initial wait; the release runs in the caller's finally, which
+  // includes client aborts (response close resolves the wait).
+  private acquireLongPollSlot(identity: Identity, waitMs: number): (() => void) | undefined {
+    if (waitMs <= 0 || !this.options.protection) return undefined;
+    return this.options.protection.acquireLongPoll(this.options.project, identity.agentId);
   }
 
   private requireOperator(identity: Identity): void {

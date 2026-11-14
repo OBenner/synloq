@@ -53,7 +53,8 @@ beforeEach(async () => {
   const database = join(root, "synloq.sqlite");
   const messages = new SQLiteMessageStore(database);
   const sessions = new SessionStore(database);
-  const relay = new RelayService(participants, messages, sessions, new ProtectionPolicy(messages));
+  const protection = new ProtectionPolicy(messages);
+  const relay = new RelayService(participants, messages, sessions, protection);
   const dispatcher = new Dispatcher(messages, sessions, new Map());
   const server = new RelayHttpServer({
     project: PROJECT,
@@ -62,6 +63,7 @@ beforeEach(async () => {
     sessions,
     dispatcher,
     messages,
+    protection,
   });
   const baseUrl = await server.listen("127.0.0.1", 0);
   fixture = {
@@ -654,6 +656,80 @@ describe("RelayHttpClient resource behavior", () => {
       messages: [],
       nextCursor: undefined,
     });
+  });
+});
+
+describe("RelayHttpServer long-poll concurrency cap (security M2)", () => {
+  const settle = (ms = 50) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function wakeArch(key: string) {
+    await fixture.cto.send({
+      to: "arch",
+      text: "Wake the waiters",
+      expectsReply: false,
+      idempotencyKey: key,
+    });
+  }
+
+  it("rejects a third concurrent inbox long poll with RATE_LIMITED and frees slots on resolve", async () => {
+    const first = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    const second = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    await settle();
+
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 25_000 })).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+
+    // A wake resolves both waiters; their slots are free for the next poll.
+    await wakeArch("m2-wake-inbox-1");
+    await Promise.all([first, second]);
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 5 })).resolves.toBeDefined();
+  });
+
+  it("releases the slot when a long-poll connection aborts", async () => {
+    const controller = new AbortController();
+    const aborted = fetch(`${fixture.baseUrl}/v1/inbox?waitMs=25000`, {
+      headers: authorized(fixture.archToken),
+      signal: controller.signal,
+    });
+    const pending = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    await settle();
+
+    controller.abort();
+    await expect(aborted).rejects.toThrow();
+    await settle(100); // let the server observe the connection close
+
+    // One slot is still held by `pending`; the aborted one must be free.
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 5 })).resolves.toBeDefined();
+
+    await wakeArch("m2-wake-inbox-2");
+    await pending;
+  });
+
+  it("does not occupy a slot for instant polls (waitMs = 0)", async () => {
+    const first = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    const second = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    await settle();
+
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 0 })).resolves.toBeDefined();
+    await expect(fixture.arch.inbox({ limit: 50, waitMs: 0, unread: true })).resolves.toBeDefined();
+
+    await wakeArch("m2-wake-inbox-3");
+    await Promise.all([first, second]);
+  });
+
+  it("caps delivery long polls per identity as well", async () => {
+    await registerArch();
+    const first = nextArch(500);
+    const second = nextArch(500);
+    await settle();
+
+    await expect(nextArch(500)).rejects.toMatchObject({ code: "RATE_LIMITED" });
+
+    // Delivery claims are exclusive, so message wakes cannot fan out here;
+    // let both waiters time out normally — their slots must be free again.
+    await Promise.all([first, second]);
+    await expect(nextArch(500)).resolves.toMatchObject({ message: null });
   });
 });
 

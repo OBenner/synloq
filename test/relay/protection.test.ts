@@ -33,6 +33,7 @@ const testLimits: ProtectionLimits = {
   maxPendingBytes: 1024,
   maxThreadMessagesPerWindow: 3,
   threadWindowMs: 120_000,
+  maxConcurrentLongPollsPerIdentity: 2,
 };
 
 function makeStore(): SQLiteMessageStore {
@@ -170,6 +171,29 @@ describe("ProtectionPolicy", () => {
       store.create(input(), crypto.randomUUID(), new Date(now).toISOString(), threadId).message,
     );
     expect(store.isPaused("verdicta", "thread", threadId)).toBe(true);
+  });
+
+  it("caps concurrent long-poll slots per identity and releases them", () => {
+    const store = makeStore();
+    const protection = new ProtectionPolicy(store, testLimits, new Map(), clock);
+
+    const first = protection.acquireLongPoll("verdicta", "arch");
+    const second = protection.acquireLongPoll("verdicta", "arch");
+    expect(() => protection.acquireLongPoll("verdicta", "arch")).toThrow(
+      expect.objectContaining({ code: "RATE_LIMITED" }),
+    );
+
+    // Other identities and other projects are unaffected.
+    expect(() => protection.acquireLongPoll("verdicta", "cto")).not.toThrow();
+    expect(() => protection.acquireLongPoll("another-project", "arch")).not.toThrow();
+
+    first();
+    expect(() => protection.acquireLongPoll("verdicta", "arch")).not.toThrow();
+
+    // Release is idempotent: a double release must not free an extra slot.
+    second();
+    second();
+    expect(() => protection.acquireLongPoll("verdicta", "arch")).not.toThrow();
   });
 });
 
