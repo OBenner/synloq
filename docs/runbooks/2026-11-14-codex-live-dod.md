@@ -41,6 +41,15 @@ absolute paths or OS user names — see `CONTRIBUTING.md` evidence hygiene.
    escalation prompt for these commands). Found live 2026-11-14 (D1 BLOCKED);
    a fail-loud error + full `--synloq-home` support in `serve` is tracked
    separately — until it lands, escalation is the supported path.
+8. **Use the packaged npm CLI, not the Desktop shim.** The `codex.exe`
+   bundled inside Codex Desktop (`...\WindowsApps\OpenAI.Codex_*\app\resources\codex.exe`)
+   is a shim: without the desktop daemon it fails with `this CLI has no
+complete local package` (found live 2026-11-14, D2 BLOCKED). The visible
+   role chats must run under per-role `CODEX_HOME`, which only the standalone
+   CLI honors reliably. Install: `npm i -g @openai/codex`; verify
+   `codex --version` resolves to the npm package (check `Get-Command codex`
+   — the path must NOT be under WindowsApps) before D2. Do not use
+   `--no-daemon` on the shim: hooks/MCP behavior in that mode is unverified.
 
 ## D0. Preconditions
 
