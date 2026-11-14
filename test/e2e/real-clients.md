@@ -8,6 +8,8 @@ This is an operator-executed acceptance procedure, not an automated test. Record
 
 Use the evidence template at the end for a later run. A client missing from any required step leaves that client's status UNVERIFIED.
 
+**2026-11-14 — Codex and ZCode stands (runbooks `docs/runbooks/2026-11-14-*.md`).** Codex: run in progress — D0/D1 PASS (`init --host generic` after b1402c0; Codex CLI sandbox blocks writes outside the workspace, escalation required), D2 in progress. ZCode: **BLOCKED at Z2 — MCP inbox NOT VERIFIED.** Root cause (evidence in the stand): sessions created via the ZCode session-API structurally do not load workspace `.zcode/config.json` MCP servers (`runtimeMcpServerCount: 0` with `configSourceProject: true` on every session create; the wiring file itself is valid). The only untried legitimate path is manually opening the two role chats in the ZCode UI, which loads workspace MCP at session start — a human step, then Z3–Z5 proceed unchanged. Until that run, ZCode stays UNVERIFIED; active delivery remains UNSUPPORTED by design.
+
 ## 1. Safety and evidence boundaries
 
 - Use existing visible chats only. Never create a hidden replacement chat or use `opencode run`, Claude `-p`, or another one-shot model subprocess as acceptance evidence.
