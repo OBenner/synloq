@@ -1,6 +1,6 @@
 # ADR 0005: Platform-independent role execution
 
-- Status: proposed
+- Status: accepted (operator, 2026-11-14)
 - Date: 2026-11-14
 - Deciders: Architect (proposal), CTO (convergence), operator (direction)
 - Related: ADR 0001 (project boundaries, replace-session); ADR 0003 (one
