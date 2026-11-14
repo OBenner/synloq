@@ -82,8 +82,17 @@ bindings, no visible chats, `registrationRequired: false`.
 
 ## D2. Wire the visible Codex sessions (per role)
 
+Create the per-role homes FIRST — `codex mcp add` fails with
+`failed to resolve CODEX_HOME` if the directory does not exist (found live
+2026-11-14, D2 BLOCKED on arch):
+
+```powershell
+New-Item -ItemType Directory -Force $Secure\codex-home-cto, $Secure\codex-home-arch | Out-Null
+```
+
 For EACH role (`cto`, then `arch`), with the role's own `CODEX_HOME`
-(`$Secure\codex-home-cto` / `$Secure\codex-home-arch`):
+(`$Secure\codex-home-cto` / `$Secure\codex-home-arch` — set
+`$env:CODEX_HOME` to the role's home before that role's commands):
 
 1. Register the MCP server (uses the role config written by init):
 
