@@ -335,11 +335,40 @@ export async function startMcpStdio(
 ): Promise<McpServer> {
   const configuration = await readConfiguration(configPath);
   const diagnostics = options.stderr ?? process.stderr;
+  const hostWorkspace =
+    configuration.kimiWork?.workspacePath ?? configuration.opencode?.workspacePath;
+  let restoreCwd: (() => void) | undefined;
+  if (hostWorkspace !== undefined && process.cwd() !== hostWorkspace) {
+    // Hosts spawn channel processes with a cwd inside the installed plugin
+    // directory; on Windows that locks the directory and breaks plugin
+    // updates with EBUSY (issue #36). All our paths are absolute, so moving
+    // the working directory to the project root is safe. The relay owner
+    // branch below runs in this same process, so this covers it too.
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(hostWorkspace);
+      // Restoring on close keeps the function embeddable (tests, future
+      // in-process callers); a real channel exits right after close anyway.
+      restoreCwd = () => {
+        try {
+          process.chdir(previousCwd);
+        } catch {
+          // The previous directory may be gone; nothing sensible to do.
+        }
+      };
+    } catch (error) {
+      diagnostics.write(
+        `${formatDiagnostic(
+          `Synloq could not move the process working directory to the project root: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        )}\n`,
+      );
+    }
+  }
   let lifecycle: KimiWorkLifecycle | undefined;
   let supervisor: RelaySupervisorLoop | undefined;
   let watchdogTimer: ReturnType<typeof setInterval> | undefined;
-  const hostWorkspace =
-    configuration.kimiWork?.workspacePath ?? configuration.opencode?.workspacePath;
   if (configuration.synloqHome && hostWorkspace) {
     const participants = await loadManifest(hostWorkspace);
     const project = participants[0]?.project;
@@ -378,6 +407,7 @@ export async function startMcpStdio(
     await server.connect(new StdioServerTransport(options.stdin, options.stdout));
   } catch (error) {
     await supervisor?.close();
+    restoreCwd?.();
     throw error;
   }
   if (configuration.kimiWork) {
@@ -397,6 +427,7 @@ export async function startMcpStdio(
     void (async () => {
       await lifecycle?.close();
       await supervisor?.close();
+      restoreCwd?.();
     })();
   };
   diagnostics.write(`${formatDiagnostic("Synloq MCP stdio bridge ready")}\n`);
