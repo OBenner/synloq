@@ -204,6 +204,33 @@ describe("Synloq agent-facing MCP tools", () => {
     );
   });
 
+  it("never returns an acknowledged message from synloq_wait without a cursor (#41)", async () => {
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "Read and acknowledged long ago",
+      expectsReply: false,
+      idempotencyKey: "mcp-wait-unread-1",
+    });
+    const ack = await fixture.mcpClient.callTool({
+      name: "synloq_ack",
+      arguments: { messageId: message.id },
+    });
+    expect(ack.isError).toBeFalsy();
+
+    const waited = await fixture.mcpClient.callTool({
+      name: "synloq_wait",
+      arguments: { waitMs: 0 },
+    });
+    expect(waited.isError).toBeFalsy();
+    expect(waited.structuredContent).toMatchObject({ messages: [] });
+
+    // synloq_inbox keeps the full history for auditability.
+    const history = await fixture.mcpClient.callTool({ name: "synloq_inbox", arguments: {} });
+    expect(history.structuredContent).toMatchObject({
+      messages: [{ id: message.id, deliveryState: "acked" }],
+    });
+  });
+
   it("acknowledges an inbox message without an active delivery adapter", async () => {
     const { message } = await fixture.cto.send({
       to: "arch",

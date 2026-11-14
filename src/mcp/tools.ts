@@ -103,7 +103,7 @@ export function registerSynloqTools(server: McpServer, client: RelayHttpClient):
       description: "Wait for an incoming message; timeout is normal",
       inputSchema: waitInputSchema,
     },
-    async (input) => invoke(() => client.inbox({ limit: 1, waitMs: input.waitMs })),
+    async (input) => invoke(() => client.inbox({ limit: 1, waitMs: input.waitMs, unread: true })),
   );
 
   server.registerTool(

@@ -23,6 +23,7 @@ export interface InboxRequest {
   agentId: string;
   cursor?: string;
   limit: number;
+  unread?: boolean;
 }
 
 export interface InboxResult {
@@ -149,7 +150,7 @@ export class RelayService {
         );
       }
 
-      return this.messages.listInbox(raw.project, raw.agentId, raw.cursor, raw.limit);
+      return this.messages.listInbox(raw.project, raw.agentId, raw.cursor, raw.limit, raw.unread);
     } catch (error) {
       this.recordDeny(identity, "inbox", error);
       throw error;

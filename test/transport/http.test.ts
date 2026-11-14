@@ -229,6 +229,32 @@ describe("RelayHttpServer authentication and participant routes", () => {
     expect(response).toEqual({ messages: [], nextCursor: undefined });
   });
 
+  it("filters acked messages from the unread inbox only (#41)", async () => {
+    const { message: acked } = await fixture.cto.send({
+      to: "arch",
+      text: "Already read",
+      expectsReply: false,
+      idempotencyKey: "http-unread-acked-1",
+    });
+    fixture.messages.setDeliveryState(acked.id, "delivered");
+    await fixture.arch.acknowledge(acked.id);
+
+    const { message: fresh } = await fixture.cto.send({
+      to: "arch",
+      text: "Still unread",
+      expectsReply: false,
+      idempotencyKey: "http-unread-fresh-1",
+    });
+
+    // Default inbox keeps full history for auditability.
+    const full = await fixture.arch.inbox({ limit: 50, waitMs: 0 });
+    expect(full.messages.map((message) => message.id)).toEqual([acked.id, fresh.id]);
+
+    // unread=1 (the synloq_wait path) never returns the acked message.
+    const unread = await fixture.arch.inbox({ limit: 50, waitMs: 0, unread: true });
+    expect(unread.messages.map((message) => message.id)).toEqual([fresh.id]);
+  });
+
   it("wakes an inbox long poll when a message is accepted", async () => {
     const waiting = fixture.arch.inbox({ limit: 1, waitMs: 5_000 });
     await new Promise((resolve) => setTimeout(resolve, 20));

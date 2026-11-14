@@ -48,6 +48,7 @@ const inboxQuerySchema = z
     cursor: z.string().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(100).default(50),
     waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
+    unread: z.literal("1").optional(),
   })
   .strict();
 const bindingFields = {
@@ -257,6 +258,7 @@ export class RelayHttpServer {
             agentId: identity.agentId,
             ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
             limit: query.limit,
+            ...(query.unread === undefined ? {} : { unread: true }),
           }),
         (value) => value.messages.length > 0,
       );

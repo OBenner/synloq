@@ -226,6 +226,39 @@ describe("SQLiteMessageStore", () => {
     expect(store.listInbox("verdicta", "arch", secondPage.nextCursor, 50).messages).toHaveLength(3);
   });
 
+  it("filters the unread inbox to messages awaiting acknowledgement (#41)", () => {
+    const store = makeStore();
+    const stored = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:00.000Z");
+    const delivered = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:01.000Z");
+    store.setDeliveryState(delivered.id, "delivered");
+    const submitted = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:02.000Z");
+    store.setDeliveryState(submitted.id, "submitted", { sessionId: "session-1", generation: 1 });
+    const acked = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:03.000Z");
+    store.acknowledge(acked.id, "verdicta", "arch");
+
+    const unread = store.listInbox("verdicta", "arch", undefined, 50, true);
+    expect(unread.messages.map((message) => message.id)).toEqual([stored.id, delivered.id]);
+
+    // Full history stays the default for auditability.
+    expect(store.listInbox("verdicta", "arch", undefined, 50).messages).toHaveLength(4);
+  });
+
+  it("paginates the unread inbox with the same cursor", () => {
+    const store = makeStore();
+    const first = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:00.000Z");
+    const acked = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:01.000Z");
+    store.acknowledge(acked.id, "verdicta", "arch");
+    const second = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:02.000Z");
+
+    const page = store.listInbox("verdicta", "arch", undefined, 1, true);
+    expect(page.messages.map((message) => message.id)).toEqual([first.id]);
+    expect(page.nextCursor).toEqual(expect.any(String));
+
+    const rest = store.listInbox("verdicta", "arch", page.nextCursor, 50, true);
+    expect(rest.messages.map((message) => message.id)).toEqual([second.id]);
+    expect(rest.nextCursor).toBeUndefined();
+  });
+
   it.each([0, 101, 1.5])("rejects an invalid inbox limit of %s", (limit) => {
     const store = makeStore();
     expect(() => store.listInbox("verdicta", "arch", undefined, limit)).toThrow(

@@ -212,11 +212,16 @@ export class SQLiteMessageStore {
     recipient: string,
     cursor: string | undefined,
     limit: number,
+    unread = false,
   ): InboxPage {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw new SynloqError("INVALID_INPUT", "inbox limit must be an integer from 1 to 100");
     }
     const position = cursor === undefined ? undefined : decodeCursor(cursor);
+    // Unread = not yet acknowledged by the role. 'submitted' is excluded on
+    // purpose: it is claimed by a live session mid-delivery, and a dead claim
+    // resets to 'stored' (issue #41).
+    const unreadPredicate = unread ? "AND delivery_state IN ('stored', 'delivered')" : "";
 
     return this.read(() => {
       const rows = (position
@@ -225,6 +230,7 @@ export class SQLiteMessageStore {
               `SELECT ${messageColumns} FROM messages
                  WHERE project = ? AND recipient = ?
                    AND (created_at > ? OR (created_at = ? AND id > ?))
+                   ${unreadPredicate}
                  ORDER BY created_at, id LIMIT ?`,
             )
             .all(project, recipient, position.createdAt, position.createdAt, position.id, limit + 1)
@@ -232,6 +238,7 @@ export class SQLiteMessageStore {
             .prepare(
               `SELECT ${messageColumns} FROM messages
                  WHERE project = ? AND recipient = ?
+                 ${unreadPredicate}
                  ORDER BY created_at, id LIMIT ?`,
             )
             .all(project, recipient, limit + 1)) as unknown as MessageRow[];

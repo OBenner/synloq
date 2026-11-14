@@ -39,6 +39,7 @@ export interface InboxOptions {
   cursor?: string;
   limit?: number;
   waitMs?: number;
+  unread?: boolean;
 }
 
 export interface WaitOptions {
@@ -128,6 +129,7 @@ export class RelayHttpClient {
     if (options.cursor !== undefined) query.set("cursor", options.cursor);
     if (options.limit !== undefined) query.set("limit", String(options.limit));
     if (options.waitMs !== undefined) query.set("waitMs", String(options.waitMs));
+    if (options.unread) query.set("unread", "1");
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request(
       "GET",
