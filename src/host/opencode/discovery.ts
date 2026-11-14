@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { z } from "zod";
 import { SynloqError } from "../../domain/errors.js";
 
@@ -150,7 +150,7 @@ async function bundledCli(
   if (platform !== "win32") return undefined;
   const appData = environment.APPDATA;
   if (!appData) return undefined;
-  const cliRoot = join(appData, "ai.opencode.desktop", "cli");
+  const cliRoot = win32.join(appData, "ai.opencode.desktop", "cli");
   let entries: string[];
   try {
     entries = await read(cliRoot);
@@ -158,7 +158,7 @@ async function bundledCli(
     return undefined;
   }
   const newest = newestVersionedEntry(entries);
-  return newest ? join(cliRoot, newest, "opencode-cli.exe") : undefined;
+  return newest ? win32.join(cliRoot, newest, "opencode-cli.exe") : undefined;
 }
 
 async function pathCli(
