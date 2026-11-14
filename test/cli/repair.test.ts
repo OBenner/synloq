@@ -134,11 +134,15 @@ describe("doctor --repair (issue #6)", () => {
     expect(result.actions.find((a) => a.agentId === "arch")?.config).toBe("written");
     const config = JSON.parse(await readFile(configPath("arch"), "utf8")) as {
       credentialPath: string;
+      synloqHome: string;
       kimiWork: { agentId: string; conversationKey: string };
     };
     expect(config.kimiWork.agentId).toBe("arch");
     expect(config.kimiWork.conversationKey).toContain("conversation:arch");
-    expect(config.credentialPath).toBe(join(fixture.paths.tokens, "arch.token"));
+    // Issue #7: paths inside the Synloq home are rendered relative to the
+    // config file, so moving the home keeps channels valid.
+    expect(config.credentialPath).toBe(`../../../credentials/${fixture.paths.key}/arch.token`);
+    expect(config.synloqHome).toBe("../../..");
   });
 
   it("reports nothing to repair when the project was never initialized", async () => {
@@ -149,5 +153,44 @@ describe("doctor --repair (issue #6)", () => {
     const result = await repairTeamConfigs({ projectRoot: orphan });
 
     expect(result.actions).toEqual([]);
+  });
+
+  it("doctor flags a config whose embedded project root no longer resolves (#7)", async () => {
+    await repairTeamConfigs({ projectRoot: fixture.root });
+
+    const healthy = await doctorCommand({ projectRoot: fixture.root });
+    expect(healthy.participants.find((p) => p.agentId === "arch")?.config).toMatchObject({
+      ok: true,
+    });
+
+    // Simulate a relocated repository: the recorded projectRoot is gone.
+    const config = JSON.parse(await readFile(configPath("arch"), "utf8")) as {
+      kimiWork: { projectRoot: string };
+    };
+    config.kimiWork.projectRoot = join(fixture.root, "moved-away");
+    await writeFile(configPath("arch"), JSON.stringify(config), "utf8");
+
+    const flagged = await doctorCommand({ projectRoot: fixture.root });
+    const arch = flagged.participants.find((p) => p.agentId === "arch");
+    expect(arch?.config?.ok).toBe(false);
+    expect(arch?.config?.issue).toContain("project root does not resolve");
+    expect(arch?.config?.issue).toContain("moved-away");
+    // The other role stays healthy — the report names the exact broken entry.
+    expect(flagged.participants.find((p) => p.agentId === "cto")?.config?.ok).toBe(true);
+  });
+
+  it("doctor flags a config whose credential file does not resolve (#7)", async () => {
+    await repairTeamConfigs({ projectRoot: fixture.root });
+    const config = JSON.parse(await readFile(configPath("cto"), "utf8")) as {
+      credentialPath: string;
+    };
+    config.credentialPath = "../../credentials/nowhere/cto.token";
+    await writeFile(configPath("cto"), JSON.stringify(config), "utf8");
+
+    const flagged = await doctorCommand({ projectRoot: fixture.root });
+
+    expect(flagged.participants.find((p) => p.agentId === "cto")?.config?.issue).toContain(
+      "credential file does not resolve",
+    );
   });
 });

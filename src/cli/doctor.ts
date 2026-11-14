@@ -5,6 +5,7 @@ import type { AdapterCapabilities, AdapterSession, SessionState } from "../domai
 import type { PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
+import type { ChannelConfigHealthReport } from "./repair.js";
 
 export interface SynloqHomeProbe {
   path: string;
@@ -31,6 +32,7 @@ export interface DoctorReport {
     state: SessionState;
     adapterConnected: boolean;
     credential?: CredentialHealth;
+    config?: ChannelConfigHealthReport;
     protocolVersion?: number;
     capabilities?: AdapterCapabilities;
     lastHeartbeatAt?: string;
@@ -46,6 +48,7 @@ export interface DoctorReportOptions {
   databasePath: string;
   home?: SynloqHomeProbe;
   credentials?: Map<string, CredentialHealth>;
+  configs?: Map<string, ChannelConfigHealthReport>;
   repair?: DoctorReport["repair"];
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
@@ -112,12 +115,14 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
         bytes: 0,
       };
       const credential = options.credentials?.get(participant.agentId);
+      const config = options.configs?.get(participant.agentId);
       return {
         agentId: participant.agentId,
         ...(session ? { sessionId: session.sessionId } : {}),
         state,
         adapterConnected: storage.ok && hasUnexpiredLease(session, now),
         ...(credential ? { credential } : {}),
+        ...(config ? { config } : {}),
         ...(session
           ? {
               protocolVersion: session.protocolVersion,

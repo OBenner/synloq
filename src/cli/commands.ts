@@ -29,7 +29,11 @@ import {
   type DoctorReport,
   type SynloqHomeProbe,
 } from "./doctor.js";
-import { repairTeamConfigs } from "./repair.js";
+import {
+  inspectChannelConfig,
+  repairTeamConfigs,
+  type ChannelConfigHealthReport,
+} from "./repair.js";
 import { createStatusReport, type StatusReport } from "./status.js";
 
 export interface ServeOptions {
@@ -323,14 +327,21 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
 
   // Issue #6: offline credential health per Kimi Work-bound role — a stale
   // token file is exactly the state a rotation elsewhere leaves behind.
+  // Issue #7: the generated channel config must still resolve every embedded
+  // path (credential file, bound project root).
   const credentialStore = new CredentialStore(options.projectRoot, options.synloqHome);
   const credentialsHealth = new Map<string, CredentialHealth>();
+  const configsHealth = new Map<string, ChannelConfigHealthReport>();
   for (const participant of participants) {
     const binding = teamState?.conversations[participant.agentId];
     if (!binding || binding.kind === "opencode") continue;
     credentialsHealth.set(
       participant.agentId,
       await credentialStore.inspect(project, participant.agentId),
+    );
+    configsHealth.set(
+      participant.agentId,
+      await inspectChannelConfig(join(paths.runtime, "mcp", `${participant.agentId}.json`)),
     );
   }
 
@@ -345,6 +356,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       databasePath: paths.database,
       home,
       credentials: credentialsHealth,
+      configs: configsHealth,
       messages,
       sessions,
       clock,
@@ -358,6 +370,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       databasePath: paths.database,
       home,
       credentials: credentialsHealth,
+      configs: configsHealth,
       storageError: storageError(error),
       clock,
       ...(plugin ? { plugin } : {}),

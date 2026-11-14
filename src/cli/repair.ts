@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { loadManifestLanguage } from "../config/manifest.js";
@@ -16,6 +16,59 @@ export interface RepairAction {
 
 export interface RepairResult {
   actions: RepairAction[];
+}
+
+export interface ChannelConfigHealthReport {
+  path: string;
+  ok: boolean;
+  issue?: string;
+}
+
+/**
+ * Offline health check of one generated channel config (issue #7): the
+ * config parses, and every embedded path still resolves — the credential
+ * file (relative paths resolve against the config directory, as the stdio
+ * loader does) and the bound project root. Reports the exact broken entry.
+ */
+export async function inspectChannelConfig(configPath: string): Promise<ChannelConfigHealthReport> {
+  let parsed: { credentialPath?: unknown; kimiWork?: { projectRoot?: unknown } };
+  try {
+    parsed = JSON.parse(await readFile(configPath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { path: configPath, ok: false, issue: "config file is missing" };
+    }
+    return { path: configPath, ok: false, issue: "config file is unreadable or malformed" };
+  }
+  if (typeof parsed.credentialPath === "string") {
+    const credential = resolve(dirname(configPath), parsed.credentialPath);
+    if (!(await pathExists(credential))) {
+      return {
+        path: configPath,
+        ok: false,
+        issue: `credential file does not resolve: ${credential}`,
+      };
+    }
+  }
+  if (typeof parsed.kimiWork?.projectRoot === "string") {
+    if (!(await pathExists(parsed.kimiWork.projectRoot))) {
+      return {
+        path: configPath,
+        ok: false,
+        issue: `project root does not resolve: ${parsed.kimiWork.projectRoot}`,
+      };
+    }
+  }
+  return { path: configPath, ok: true };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 interface ExistingChannelConfig {
@@ -53,8 +106,7 @@ export async function repairTeamConfigs(options: {
       // Preserve operator-set values when the existing config is readable;
       // otherwise fall back to the same defaults init uses.
       relayUrl: typeof existing?.relayUrl === "string" ? existing.relayUrl : DEFAULT_RELAY_URL,
-      tokenPath: credential.tokenPath,
-      synloqHome: paths.home,
+      projectKey: paths.key,
       language: preservedLanguage(existing, language),
       projectRoot: state.projectRoot,
       agentId,

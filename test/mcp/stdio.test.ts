@@ -158,6 +158,41 @@ describe("Synloq MCP stdio bridge", () => {
     });
   });
 
+  it("resolves a relative credentialPath against the config directory (#7)", async () => {
+    const { root, configPath } = await configuration();
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://127.0.0.1:49152",
+        // Relative path, as rendered after issue #7: resolved against the
+        // config file's directory.
+        credentialPath: "agent.token",
+        kimiWork: {
+          projectRoot: root,
+          agentId: "arch",
+          conversationKey: "agent:main:main:conversation:d7be2b2c-edfc-4fc7-a010-1e7af6465138",
+          workAgentId: "main",
+        },
+      }),
+    );
+    const bridge = {
+      runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined) },
+    };
+    const kimiWorkFactory = vi.fn(async () => bridge);
+    const server = await startMcpStdio(configPath, {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new Writable({ write: (_chunk, _encoding, callback) => callback() }),
+      kimiWorkFactory,
+    });
+
+    // The bridge starts only if the token was read through the relative path.
+    await vi.waitFor(() => expect(bridge.runner.start).toHaveBeenCalledTimes(1));
+    expect(kimiWorkFactory).toHaveBeenCalledTimes(1);
+    await server.close();
+  });
+
   it("keeps MCP available after sanitized host startup failure", async () => {
     const { root, configPath, token } = await configuration();
     await writeFile(

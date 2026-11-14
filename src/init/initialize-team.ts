@@ -256,8 +256,7 @@ export async function initializeTeam(
       configPath,
       roleRuntimeConfig({
         relayUrl: DEFAULT_RELAY_URL,
-        tokenPath: credential.tokenPath,
-        synloqHome: paths.home,
+        projectKey: paths.key,
         language,
         projectRoot,
         agentId: role.agentId,
