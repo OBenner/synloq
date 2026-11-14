@@ -4,6 +4,7 @@ import type { AdapterSession, SessionState } from "../domain/session.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import { createDoctorReport, type DoctorReportOptions } from "./doctor.js";
+import type { WatchdogFinding } from "../diagnostics/watchdog.js";
 
 const DEFAULT_UNANSWERED_THRESHOLD_MS = 30 * 60_000;
 
@@ -27,6 +28,7 @@ export interface StatusReport {
   project: string;
   generatedAt: string;
   storage: { ok: boolean; path: string; error?: string };
+  watchdog: WatchdogFinding[];
   participants: StatusParticipant[];
 }
 
@@ -124,6 +126,10 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
       const oldest = ageOf(now, unansweredAcked.oldestAt);
       reason += `; ${unansweredAcked.count} acked without reply${oldest === undefined ? "" : ` (oldest ${oldest})`}`;
     }
+    const finding = doctor.watchdog.find((entry) => entry.agentId === participant.agentId);
+    if (finding) {
+      reason += `; WATCHDOG ${finding.kind}: ${finding.detail}`;
+    }
     const entry: StatusParticipant = {
       agentId: participant.agentId,
       state,
@@ -141,6 +147,7 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
     project: options.project,
     generatedAt: new Date(now).toISOString(),
     storage: doctor.storage,
+    watchdog: doctor.watchdog,
     participants,
   };
 }

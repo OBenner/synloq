@@ -1,4 +1,5 @@
 import { inactiveReason, type Clock } from "../adapters/types.js";
+import { evaluateWatchdog, type WatchdogFinding } from "../diagnostics/watchdog.js";
 import type { Participant } from "../domain/message.js";
 import type { AdapterCapabilities, AdapterSession, SessionState } from "../domain/session.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
@@ -6,6 +7,7 @@ import type { SessionStore } from "../storage/session-store.js";
 
 export interface DoctorReport {
   storage: { ok: boolean; path: string; error?: string };
+  watchdog: WatchdogFinding[];
   participants: Array<{
     agentId: string;
     sessionId?: string;
@@ -28,6 +30,7 @@ export interface DoctorReportOptions {
   sessions?: SessionStore;
   clock?: Clock;
   storageError?: string;
+  watchdogThresholdMs?: number;
 }
 
 function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
@@ -61,9 +64,20 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
     path: options.databasePath,
     ...(options.storageError === undefined ? {} : { error: options.storageError }),
   };
+  const watchdog = evaluateWatchdog({
+    project: options.project,
+    participants: options.participants,
+    messages: options.messages,
+    sessions: options.sessions,
+    clock: options.clock,
+    ...(options.watchdogThresholdMs === undefined
+      ? {}
+      : { thresholdMs: options.watchdogThresholdMs }),
+  });
 
   return {
     storage,
+    watchdog,
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);
       const state =

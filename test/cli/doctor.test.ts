@@ -102,6 +102,45 @@ async function captureDoctor(): Promise<string> {
 }
 
 describe("DoctorReport", () => {
+  it("surfaces a watchdog finding when an idle session holds an old stored message (issue #11)", () => {
+    fixture.sessions.register(
+      {
+        project: PROJECT,
+        agentId: "arch",
+        sessionId: "arch-wedged-session",
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: {
+          activeDelivery: true,
+          stateReporting: true,
+          clientIdempotency: true,
+        },
+      },
+      false,
+    );
+    fixture.sessions.heartbeat(PROJECT, "arch", "arch-wedged-session", "idle");
+    fixture.messages.create(
+      {
+        project: PROJECT,
+        from: "operator",
+        to: "arch",
+        text: secretMessageBody,
+        expectsReply: false,
+        idempotencyKey: "doctor-watchdog-1",
+      },
+      crypto.randomUUID(),
+      "2026-11-09T22:00:00.000Z",
+      crypto.randomUUID(),
+    );
+
+    const result = report();
+    expect(result.watchdog).toHaveLength(1);
+    expect(result.watchdog[0]).toMatchObject({
+      agentId: "arch",
+      kind: "stored-without-delivery",
+    });
+    expect(result.watchdog[0]!.detail).not.toContain(secretMessageBody);
+  });
+
   it("reports storage, session negotiation, heartbeat, queue usage, and exact inactivity", async () => {
     const capabilities = {
       activeDelivery: false,
@@ -136,6 +175,7 @@ describe("DoctorReport", () => {
     const result = report();
     expect(result).toEqual({
       storage: { ok: true, path: fixture.databasePath },
+      watchdog: [],
       participants: [
         {
           agentId: "cto",

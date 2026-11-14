@@ -8,6 +8,7 @@ import { z } from "zod";
 import { runKimiWorkAdapter, type KimiWorkAdapter } from "../adapters/kimi-work.js";
 import { HttpAdapterRunner, OutstandingTracker } from "../adapters/http-runner.js";
 import { loadManifest } from "../config/manifest.js";
+import { projectPaths } from "../config/paths.js";
 import { formatDiagnostic } from "../diagnostics.js";
 import { SynloqError } from "../domain/errors.js";
 import { languageSchema, type Language } from "../i18n/index.js";
@@ -25,6 +26,9 @@ import { startRelaySupervisor, type RelaySupervisorLoop } from "../relay/supervi
 import { RelayHttpClient } from "../transport/http-client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { registerSynloqTools } from "./tools.js";
+import { createWatchdogDiagnostic } from "./watchdog-diagnostic.js";
+
+const WATCHDOG_INTERVAL_MS = 60_000;
 
 const configurationSchema = z
   .object({
@@ -333,6 +337,7 @@ export async function startMcpStdio(
   const diagnostics = options.stderr ?? process.stderr;
   let lifecycle: KimiWorkLifecycle | undefined;
   let supervisor: RelaySupervisorLoop | undefined;
+  let watchdogTimer: ReturnType<typeof setInterval> | undefined;
   const hostWorkspace =
     configuration.kimiWork?.workspacePath ?? configuration.opencode?.workspacePath;
   if (configuration.synloqHome && hostWorkspace) {
@@ -350,6 +355,19 @@ export async function startMcpStdio(
       onRecovered: () => lifecycle?.start(),
       onDiagnostic: (message) => diagnostics.write(`${formatDiagnostic(message)}\n`),
     });
+    const agentId = configuration.kimiWork?.agentId ?? configuration.opencode?.agentId;
+    if (agentId) {
+      const paths = await projectPaths(hostWorkspace, configuration.synloqHome);
+      const watchdog = createWatchdogDiagnostic({
+        project,
+        agentId,
+        participants,
+        databasePath: paths.database,
+        diagnostics,
+      });
+      watchdogTimer = setInterval(() => watchdog.check(), WATCHDOG_INTERVAL_MS);
+      watchdogTimer.unref?.();
+    }
   }
 
   const client =
@@ -375,6 +393,7 @@ export async function startMcpStdio(
   const previousClose = server.server.onclose;
   server.server.onclose = () => {
     previousClose?.();
+    if (watchdogTimer) clearInterval(watchdogTimer);
     void (async () => {
       await lifecycle?.close();
       await supervisor?.close();
