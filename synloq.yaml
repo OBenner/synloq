@@ -1,6 +1,11 @@
 version: 1
 project: synloq
+language: en
 agents:
+  ceo:
+    title: CEO
+    role: Strategic priorities, product roadmap, and final arbitration of cross-role
+      decisions
   cto:
     title: CTO
     role: Technical strategy, task decomposition, and coordination
