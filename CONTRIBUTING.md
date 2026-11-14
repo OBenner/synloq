@@ -19,6 +19,12 @@ pnpm verify
 `pnpm verify` runs format check, typecheck, the full test suite, and the build.
 A change is not done until it is green.
 
+**Coordinated build window.** `pnpm build` overwrites `dist/`, which kills live
+host-spawned MCP channel processes (they run from `dist/`). On a machine with a
+live stand (relay + role channels up), agree a window with the operator before
+building, and expect channels to need a restart afterwards. Test/verification
+executors on live stands skip `pnpm build` deliberately (see the live runbooks).
+
 ## Commits
 
 - Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `refactor:`.
