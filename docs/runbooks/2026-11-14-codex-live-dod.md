@@ -34,6 +34,13 @@ absolute paths or OS user names — see `CONTRIBUTING.md` evidence hygiene.
 5. On unexpected error: STOP, save output to `$Secure`, report BLOCKED. No
    improvised fixes, at most one retry.
 6. Every command's full output goes to `$Secure` (`2>&1 | Tee-Object`).
+7. **Codex sandbox.** The Codex CLI sandbox denies writes outside the
+   workspace — `init`/`serve` write state under `$SynloqHome` and fail with
+   `EPERM: ... .synloq\credentials\...tmp` otherwise. Run the shell with
+   escalated sandbox (`codex --sandbox danger-full-access`, or approve the
+   escalation prompt for these commands). Found live 2026-11-14 (D1 BLOCKED);
+   a fail-loud error + full `--synloq-home` support in `serve` is tracked
+   separately — until it lands, escalation is the supported path.
 
 ## D0. Preconditions
 
