@@ -31,6 +31,16 @@ const opencodeConversationSchema = z
 // carry kind: "opencode".
 const conversationSchema = z.union([kimiWorkConversationSchema, opencodeConversationSchema]);
 
+// Issue #42: outstanding one-time claim codes for roles on hosts without
+// session provisioning. Only the code hash is persisted — never the code.
+const claimCodeSchema = z
+  .object({
+    codeHash: z.string().min(1),
+    issuedAt: z.string().min(1),
+    expiresAt: z.string().min(1),
+  })
+  .strict();
+
 const teamStateSchema = z
   .object({
     version: z.literal(1),
@@ -38,6 +48,7 @@ const teamStateSchema = z
     projectRoot: z.string().min(1),
     pluginSourcePath: z.string().min(1).optional(),
     conversations: z.record(agentId, conversationSchema),
+    claims: z.record(agentId, claimCodeSchema).optional(),
   })
   .strict();
 

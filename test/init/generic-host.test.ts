@@ -2,6 +2,7 @@ import { mkdtemp, readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ClaimCodeStore } from "../../src/config/claim-codes.js";
 import { projectPaths } from "../../src/config/paths.js";
 import { TeamStateStore } from "../../src/config/team-state.js";
 import { initializeGenericTeam } from "../../src/init/generic-host.js";
@@ -48,6 +49,51 @@ describe("initializeGenericTeam", () => {
 
     const state = await new TeamStateStore(paths.bindings).read();
     expect(state).toMatchObject({ project: "stand", projectRoot: root, conversations: {} });
+  });
+
+  it("issues a consumable one-time claim code per role (issue #42)", async () => {
+    const { root, home } = await setup();
+    const result = await initializeGenericTeam({
+      projectRoot: root,
+      project: "stand",
+      roles,
+      synloqHome: home,
+    });
+
+    expect(result.claimCodeTtlMinutes).toBe(15);
+    expect(result.nextSteps.join("\n")).toContain("synloq claim");
+    for (const role of result.roles) {
+      expect(role.claimCode).toMatch(new RegExp(`^synloq-claim-${role.agentId}-[a-z2-7]{8}$`));
+      expect(Date.parse(role.claimCodeExpiresAt)).toBeGreaterThan(Date.now());
+    }
+
+    const paths = await projectPaths(root, home);
+    const persisted = await readFile(paths.bindings, "utf8");
+    for (const role of result.roles) expect(persisted).not.toContain(role.claimCode);
+
+    const codes = new ClaimCodeStore(new TeamStateStore(paths.bindings));
+    await expect(codes.consume("cto", result.roles[0]!.claimCode)).resolves.toEqual({
+      status: "claimed",
+    });
+    await expect(codes.consume("cto", result.roles[0]!.claimCode)).resolves.toEqual({
+      status: "no-outstanding-code",
+    });
+  });
+
+  it("re-init re-issues claim codes and voids previously printed ones", async () => {
+    const { root, home } = await setup();
+    const options = { projectRoot: root, project: "stand", roles, synloqHome: home };
+    const first = await initializeGenericTeam(options);
+    const second = await initializeGenericTeam(options);
+
+    const paths = await projectPaths(root, home);
+    const codes = new ClaimCodeStore(new TeamStateStore(paths.bindings));
+    await expect(codes.consume("cto", first.roles[0]!.claimCode)).resolves.toEqual({
+      status: "code-mismatch",
+    });
+    await expect(codes.consume("cto", second.roles[0]!.claimCode)).resolves.toEqual({
+      status: "claimed",
+    });
   });
 
   it("honours a custom loopback relay URL and rejects a remote one", async () => {

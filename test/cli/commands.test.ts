@@ -16,9 +16,11 @@ import {
   serveCommand,
 } from "../../src/cli/commands.js";
 import { runMain } from "../../src/cli/main.js";
+import { ClaimCodeStore } from "../../src/config/claim-codes.js";
 import { CredentialStore } from "../../src/config/credentials.js";
 import { issueTestCredentials } from "../helpers/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
+import { TeamStateStore } from "../../src/config/team-state.js";
 import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { Dispatcher } from "../../src/relay/dispatcher.js";
@@ -476,6 +478,227 @@ describe("token lifecycle CLI", () => {
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(auditHook).not.toHaveBeenCalled();
+  });
+});
+
+describe("claim CLI", () => {
+  const PAST = Date.parse("2020-01-01T00:00:00.000Z");
+
+  function capture(): {
+    io: { stdout: { write(c: string): boolean }; stderr: { write(c: string): boolean } };
+    out(): { stdout: string; stderr: string };
+  } {
+    let stdout = "";
+    let stderr = "";
+    return {
+      io: {
+        stdout: {
+          write: (chunk) => {
+            stdout += String(chunk);
+            return true;
+          },
+        },
+        stderr: {
+          write: (chunk) => {
+            stderr += String(chunk);
+            return true;
+          },
+        },
+      },
+      out: () => ({ stdout, stderr }),
+    };
+  }
+
+  async function seedState(): Promise<TeamStateStore> {
+    const paths = await projectPaths(fixture.root, fixture.home);
+    const store = new TeamStateStore(paths.bindings);
+    await store.write({
+      version: 1,
+      project: PROJECT,
+      projectRoot: fixture.root,
+      conversations: {},
+    });
+    return store;
+  }
+
+  async function auditEvents(): Promise<Array<Record<string, unknown>>> {
+    const paths = await projectPaths(fixture.root, fixture.home);
+    let text: string;
+    try {
+      text = await readFile(join(paths.home, "data", `${paths.key}-audit.jsonl`), "utf8");
+    } catch {
+      return [];
+    }
+    return text
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  it("claims a role with a live code, prints local paths, and audits the accept", async () => {
+    const store = await seedState();
+    const issued = await new ClaimCodeStore(store).issue("cto");
+    const io = capture();
+
+    const exitCode = await runMain(
+      ["claim", "--project-root", fixture.root, "--code", issued.code],
+      io.io,
+    );
+
+    const { stdout, stderr } = io.out();
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout) as {
+      agentId: string;
+      credentialPath: string;
+      configPath: string;
+      nextSteps: string[];
+    };
+    expect(result.agentId).toBe("cto");
+    expect(result.credentialPath).toMatch(/cto\.token$/);
+    expect(result.configPath).toMatch(/cto\.json$/);
+    expect(result.nextSteps.join("\n")).toContain("Restart the host client");
+    expect(stdout).not.toContain(fixture.ctoToken);
+    const events = await auditEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: "claim",
+        decision: "accept",
+        reasonCode: "CLAIMED",
+        agentId: "cto",
+        project: PROJECT,
+      }),
+    );
+  });
+
+  it("fails a re-claim with a pointer to replace-session and audits the deny", async () => {
+    const store = await seedState();
+    const issued = await new ClaimCodeStore(store).issue("cto");
+    const args = ["claim", "--project-root", fixture.root, "--code", issued.code];
+    const first = capture();
+    expect(await runMain(args, first.io)).toBe(0);
+
+    const second = capture();
+    expect(await runMain(args, second.io)).toBe(1);
+    expect(second.out().stderr).toContain("replace-session");
+    const events = await auditEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: "claim",
+        decision: "deny",
+        reasonCode: "NO_OUTSTANDING_CODE",
+        agentId: "cto",
+      }),
+    );
+  });
+
+  it("treats an expired code as operational noise: reissue hint, no audit event", async () => {
+    const store = await seedState();
+    const issued = await new ClaimCodeStore(store, { now: () => PAST }).issue("cto");
+    const io = capture();
+
+    const exitCode = await runMain(
+      ["claim", "--project-root", fixture.root, "--code", issued.code],
+      io.io,
+    );
+
+    expect(exitCode).toBe(1);
+    const { stderr } = io.out();
+    expect(stderr).toContain("claim-issue");
+    expect(stderr).toContain("--role cto");
+    expect(await auditEvents()).toEqual([]);
+  });
+
+  it("audits a mismatched code as a deny and keeps the outstanding code alive", async () => {
+    const store = await seedState();
+    const issued = await new ClaimCodeStore(store).issue("cto");
+    const io = capture();
+
+    const exitCode = await runMain(
+      ["claim", "--project-root", fixture.root, "--code", "synloq-claim-cto-zzzzz222"],
+      io.io,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(io.out().stderr).toContain("invalid claim code");
+    const events = await auditEvents();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        action: "claim",
+        decision: "deny",
+        reasonCode: "CLAIM_CODE_MISMATCH",
+        agentId: "cto",
+      }),
+    );
+    // The real code still claims afterwards.
+    const retry = capture();
+    expect(
+      await runMain(["claim", "--project-root", fixture.root, "--code", issued.code], retry.io),
+    ).toBe(0);
+  });
+
+  it("rotation voids an outstanding claim code", async () => {
+    const store = await seedState();
+    const issued = await new ClaimCodeStore(store).issue("cto");
+    const credential = join(fixture.home, "operator.token");
+    await writeFile(credential, `${fixture.operatorToken}\n`, { mode: 0o600 });
+
+    const rotate = capture();
+    expect(
+      await runMain(
+        [
+          "rotate-token",
+          "--project-root",
+          fixture.root,
+          "--agent-id",
+          "cto",
+          "--credential",
+          credential,
+        ],
+        rotate.io,
+      ),
+    ).toBe(0);
+
+    const claim = capture();
+    expect(
+      await runMain(["claim", "--project-root", fixture.root, "--code", issued.code], claim.io),
+    ).toBe(1);
+    expect(claim.out().stderr).toContain("replace-session");
+  });
+
+  it("claim-issue re-issues a code that then claims; unknown roles fail", async () => {
+    await seedState();
+    const issue = capture();
+    expect(
+      await runMain(["claim-issue", "--project-root", fixture.root, "--role", "arch"], issue.io),
+    ).toBe(0);
+    const issued = JSON.parse(issue.out().stdout) as { code: string; expiresAt: string };
+    expect(issued.code).toMatch(/^synloq-claim-arch-[a-z2-7]{8}$/);
+
+    const claim = capture();
+    expect(
+      await runMain(["claim", "--project-root", fixture.root, "--code", issued.code], claim.io),
+    ).toBe(0);
+
+    const unknown = capture();
+    expect(
+      await runMain(
+        ["claim-issue", "--project-root", fixture.root, "--role", "nobody"],
+        unknown.io,
+      ),
+    ).toBe(1);
+    expect(unknown.out().stderr).toContain("unknown role");
+  });
+
+  it("rejects a malformed claim code without touching the audit log", async () => {
+    await seedState();
+    const io = capture();
+    expect(
+      await runMain(["claim", "--project-root", fixture.root, "--code", "garbage"], io.io),
+    ).toBe(1);
+    expect(io.out().stderr).toContain("malformed claim code");
+    expect(await auditEvents()).toEqual([]);
   });
 });
 

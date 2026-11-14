@@ -11,14 +11,15 @@ export type AuditedAction =
   | "pause"
   | "resume"
   | "authenticate"
-  | "directory";
+  | "directory"
+  | "claim";
 
 export interface SecurityEvent {
   at: string;
   project: string;
   agentId: string;
   action: AuditedAction;
-  decision: "deny" | "degraded";
+  decision: "deny" | "degraded" | "accept";
   reasonCode: string;
   detail: string;
 }

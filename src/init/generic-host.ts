@@ -1,6 +1,8 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
+import type { Clock } from "../adapters/types.js";
 import { writeJsonAtomic } from "../config/atomic-file.js";
+import { ClaimCodeStore, CLAIM_CODE_TTL_MS } from "../config/claim-codes.js";
 import { CredentialStore } from "../config/credentials.js";
 import { writeManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
@@ -19,12 +21,15 @@ export interface InitializeGenericTeamOptions {
   synloqHome?: string;
   relayUrl?: string;
   language?: Language;
+  clock?: Clock;
 }
 
 export interface InitializedGenericRole {
   agentId: string;
   configPath: string;
   credentialPath: string;
+  claimCode: string;
+  claimCodeExpiresAt: string;
 }
 
 export interface InitializeGenericTeamResult {
@@ -33,6 +38,8 @@ export interface InitializeGenericTeamResult {
   statePath: string;
   registrationRequired: boolean;
   roles: InitializedGenericRole[];
+  claimCodeTtlMinutes: number;
+  nextSteps: string[];
 }
 
 const DEFAULT_RELAY_URL = "http://127.0.0.1:4100";
@@ -95,6 +102,8 @@ export async function initializeGenericTeam(
       agentId: role.agentId,
       configPath,
       credentialPath: credential.tokenPath,
+      claimCode: "",
+      claimCodeExpiresAt: "",
     });
   }
 
@@ -108,11 +117,29 @@ export async function initializeGenericTeam(
     return { ...base, project, projectRoot };
   });
 
+  // Issue #42 (ADR-0004 layer 3): a generic host cannot bind sessions, so
+  // every role gets a one-time claim code. The operator pastes it into the
+  // chat (or runs synloq claim locally) to pick up the role's credential.
+  // Re-running init re-issues codes, voiding previously printed ones.
+  const claimCodes = new ClaimCodeStore(stateStore, options.clock ?? { now: () => Date.now() });
+  for (const role of initializedRoles) {
+    const issued = await claimCodes.issue(role.agentId);
+    role.claimCode = issued.code;
+    role.claimCodeExpiresAt = issued.expiresAt;
+  }
+
   return {
     project,
     manifestPath: join(projectRoot, "synloq.yaml"),
     statePath: paths.bindings,
     registrationRequired: false,
     roles: initializedRoles,
+    claimCodeTtlMinutes: CLAIM_CODE_TTL_MS / 60_000,
+    nextSteps: [
+      "Paste each role's claim code into the chat that should take the role, or run: synloq claim --project-root <path> --code <code>",
+      `Claim codes expire in ${CLAIM_CODE_TTL_MS / 60_000} minutes; re-issue one with: synloq claim-issue --project-root <path> --role <id>`,
+      "Wire each role's configPath into the host's MCP configuration",
+      "Approve the host's trust dialogs and restart the host client so the channels start",
+    ],
   };
 }

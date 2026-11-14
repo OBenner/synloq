@@ -2,6 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
+import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
@@ -10,7 +11,7 @@ import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
-import { FileSecurityAuditLog } from "../relay/audit-log.js";
+import { FileSecurityAuditLog, type SecurityAuditLog } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
@@ -227,6 +228,15 @@ export interface TokenLifecycleOptions {
   auditHook?: (event: TokenLifecycleAuditEvent) => void;
 }
 
+/**
+ * Issue #42: rotation and revocation void any outstanding claim code for the
+ * role — a code printed before the rotation must no longer claim.
+ */
+async function clearOutstandingClaimCode(options: TokenLifecycleOptions): Promise<void> {
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  await new ClaimCodeStore(new TeamStateStore(paths.bindings)).clear(options.agentId);
+}
+
 async function requireLocalOperator(
   options: TokenLifecycleOptions,
 ): Promise<{ project: string; store: CredentialStore }> {
@@ -251,6 +261,7 @@ export async function rotateTokenCommand(options: TokenLifecycleOptions): Promis
 }> {
   const { project, store } = await requireLocalOperator(options);
   const rotated = await store.rotate(project, options.agentId);
+  await clearOutstandingClaimCode(options);
   options.auditHook?.({
     action: "rotate",
     agentId: options.agentId,
@@ -273,6 +284,7 @@ export async function revokeTokenCommand(options: TokenLifecycleOptions): Promis
 }> {
   const { project, store } = await requireLocalOperator(options);
   const revoked = await store.revoke(project, options.agentId);
+  await clearOutstandingClaimCode(options);
   options.auditHook?.({
     action: "revoke",
     agentId: options.agentId,
@@ -284,6 +296,132 @@ export async function revokeTokenCommand(options: TokenLifecycleOptions): Promis
     removedHashes: revoked.removedHashes,
     tokenPath: revoked.tokenPath,
   };
+}
+
+export interface ClaimCommandOptions {
+  projectRoot: string;
+  code: string;
+  synloqHome?: string;
+  clock?: Clock;
+  audit?: SecurityAuditLog;
+}
+
+export interface ClaimResult {
+  agentId: string;
+  credentialPath: string;
+  configPath: string;
+  nextSteps: string[];
+}
+
+/**
+ * Issue #42, ADR-0004 layer 3: consumes a one-time claim code and hands the
+ * role's local credential/config paths to the caller. The credential file
+ * itself is read locally by the host and never travels through chat. Claim
+ * accepts and refusals go to the security audit log; an expired code is
+ * operational noise (ADR-0004) and is not recorded.
+ */
+export async function claimCommand(options: ClaimCommandOptions): Promise<ClaimResult> {
+  const agentId = claimCodeAgentId(options.code);
+  if (!agentId) {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      "malformed claim code; expected synloq-claim-<role>-<8 base32 characters>",
+    );
+  }
+  const participants = await loadManifest(options.projectRoot);
+  const project = manifestProject(participants);
+  if (!participants.some((participant) => participant.agentId === agentId)) {
+    throw new SynloqError("INVALID_INPUT", `claim code names a role outside the manifest`);
+  }
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  const audit =
+    options.audit ?? new FileSecurityAuditLog(join(paths.home, "data", `${paths.key}-audit.jsonl`));
+  const store = new ClaimCodeStore(
+    new TeamStateStore(paths.bindings),
+    options.clock ?? { now: () => Date.now() },
+  );
+  const result = await store.consume(agentId, options.code);
+  const event = {
+    at: new Date().toISOString(),
+    project,
+    agentId,
+    action: "claim" as const,
+  };
+  if (result.status === "expired") {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      `claim code for role '${agentId}' expired at ${result.expiresAt}; ` +
+        `issue a new one with: synloq claim-issue --project-root <path> --role ${agentId}`,
+    );
+  }
+  if (result.status === "no-outstanding-code") {
+    audit.record({
+      ...event,
+      decision: "deny",
+      reasonCode: "NO_OUTSTANDING_CODE",
+      detail: "claim attempted without an outstanding code",
+    });
+    throw new SynloqError(
+      "UNAUTHORIZED",
+      `role '${agentId}' is already claimed or the code was reissued; ` +
+        "to hand the role to another chat use synloq replace-session",
+    );
+  }
+  if (result.status === "code-mismatch") {
+    audit.record({
+      ...event,
+      decision: "deny",
+      reasonCode: "CLAIM_CODE_MISMATCH",
+      detail: "claim code does not match the outstanding code",
+    });
+    throw new SynloqError("UNAUTHORIZED", `invalid claim code for role '${agentId}'`);
+  }
+  audit.record({
+    ...event,
+    decision: "accept",
+    reasonCode: "CLAIMED",
+    detail: "role claimed via one-time code",
+  });
+  const credentialPath = join(paths.tokens, `${agentId}.token`);
+  const configPath = join(paths.runtime, "mcp", `${agentId}.json`);
+  return {
+    agentId,
+    credentialPath,
+    configPath,
+    nextSteps: [
+      `Wire the MCP config into the host: ${configPath}`,
+      "Approve the host's trust dialog for the new MCP server if prompted",
+      "Restart the host client so the channel starts",
+      `Verify with: synloq doctor --project-root ${options.projectRoot}`,
+    ],
+  };
+}
+
+export interface ClaimIssueCommandOptions {
+  projectRoot: string;
+  agentId: string;
+  synloqHome?: string;
+  clock?: Clock;
+}
+
+/**
+ * Re-issues a claim code without a full init (issue #42): the path an
+ * expired-code error message points to. Issuing replaces any outstanding
+ * code for the role.
+ */
+export async function claimIssueCommand(
+  options: ClaimIssueCommandOptions,
+): Promise<IssuedClaimCode> {
+  const participants = await loadManifest(options.projectRoot);
+  manifestProject(participants);
+  if (!participants.some((participant) => participant.agentId === options.agentId)) {
+    throw new SynloqError("INVALID_INPUT", `unknown role: ${options.agentId}`);
+  }
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  return new ClaimCodeStore(
+    new TeamStateStore(paths.bindings),
+    options.clock ?? { now: () => Date.now() },
+  ).issue(options.agentId);
 }
 
 function storageError(error: unknown): string {

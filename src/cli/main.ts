@@ -18,6 +18,8 @@ import {
   type StandaloneAdapterHandle,
 } from "./adapter.js";
 import {
+  claimCommand,
+  claimIssueCommand,
   doctorCommand,
   inboxCommand,
   listCommand,
@@ -66,6 +68,8 @@ const commandNames = [
   "replace-session",
   "rotate-token",
   "revoke-token",
+  "claim",
+  "claim-issue",
   "doctor",
   "status",
 ] as const;
@@ -104,6 +108,10 @@ const helpText: Record<CommandName, string> = {
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
   "revoke-token":
     "Usage: synloq revoke-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
+  claim:
+    "Usage: synloq claim --project-root <path> --code <synloq-claim-...> [--synloq-home <path>]\n",
+  "claim-issue":
+    "Usage: synloq claim-issue --project-root <path> --role <agent-id> [--synloq-home <path>]\n",
 };
 
 function invalid(message: string): never {
@@ -279,6 +287,48 @@ async function execute(
     };
     const operation = command === "rotate-token" ? rotateTokenCommand : revokeTokenCommand;
     writeJson(io, await operation(options));
+    return;
+  }
+
+  if (command === "claim") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      code: { type: "string" },
+      "synloq-home": { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    writeJson(
+      io,
+      await claimCommand({
+        projectRoot: requiredString(values, "project-root"),
+        code: requiredString(values, "code"),
+        ...synloqHomeOption(values),
+      }),
+    );
+    return;
+  }
+
+  if (command === "claim-issue") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      role: { type: "string" },
+      "synloq-home": { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    writeJson(
+      io,
+      await claimIssueCommand({
+        projectRoot: requiredString(values, "project-root"),
+        agentId: requiredString(values, "role"),
+        ...synloqHomeOption(values),
+      }),
+    );
     return;
   }
 
