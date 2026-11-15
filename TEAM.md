@@ -17,6 +17,7 @@ The authoritative registration of participants lives in the project's `synloq.ya
 | `security` | Security          | Security review, threat modeling, risk assessment, hardening. Owns the security documents.                                                                                 |
 | `dev`      | Lead Developer    | Code ownership, implementation task decomposition, delegation to and review of `dev2`, final responsibility for `pnpm verify`.                                             |
 | `dev2`     | Developer 2       | Implementation support on scoped tasks delegated by the Lead Developer. Takes tasks from `dev` only — never directly from the CTO (single source of truth for priorities). |
+| `tester`   | Tester            | QA and verification, test and e2e execution, defect reports. Never modifies production code, never commits to `main`.                                                      |
 | `staff1`   | Staff Developer 1 | Feature implementation on scoped tasks delegated by the Lead Developer; works from its own worktrees via PRs. Takes tasks from `dev` only.                                 |
 | `staff2`   | Staff Developer 2 | Feature implementation on scoped tasks delegated by the Lead Developer; works from its own worktrees via PRs. Takes tasks from `dev` only.                                 |
 

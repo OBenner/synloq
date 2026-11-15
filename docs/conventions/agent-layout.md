@@ -100,8 +100,9 @@ absolute paths; moving would mint new project keys) and are deleted on TTL.
 
 - `synloq-agents/` is listed in `.gitignore` and `.prettierignore`.
 - Recommended: exclude the folder from the editor's search/indexing.
-- Verified on the first created worktree: a git worktree inside a gitignored folder
-  does not disturb `git status` of the main checkout.
+- Verified 2026-11-15 (worktree `roles/dev/worktrees/staff-followup`): a git
+  worktree inside a gitignored folder does not disturb `git status` of the main
+  checkout.
 
 ## Registry
 

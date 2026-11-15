@@ -34,3 +34,11 @@ roles:
     host: opencode
     channel: synloq-tester
     folder: null
+  staff1:
+    host: codex-desktop
+    channel: synloq-staff1
+    folder: synloq-agents/roles/staff1
+  staff2:
+    host: generic
+    channel: synloq-staff2
+    folder: synloq-agents/roles/staff2
