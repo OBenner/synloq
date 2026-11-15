@@ -28,13 +28,15 @@ agents:
 
 Run `synloq init --project-root <project> --synloq-home <home>` to reconcile
 the entire manifest. Kimi Work and OpenCode can provision visible sessions;
-Codex Desktop, ZCode, and generic currently prepare unclaimed role records,
+ZCode and generic prepare unclaimed role records,
 credentials, instructions, and MCP config paths. The JSON output contains a
 `roles` capability summary, host-specific `kimi`/`opencode` results, and
 `manual.roles` claim codes plus `manual.nextSteps`. Manual steps include
 wiring the channel, trusting configuration, and restarting the client.
 A manual-only stand also needs its own running relay on the configured port.
-Codex Desktop directory generation is a separate follow-up (#43).
+Codex Desktop uses generated per-role directories instead of claim codes;
+follow `desktop.nextSteps` and the Desktop-first section in
+`docs/adapters/codex.md`. Its state is `configured`, not a verified chat binding.
 
 For legacy single-host setup, `--host` selects that host. When used with a
 placement manifest it explicitly overrides all desired targets; omit it to

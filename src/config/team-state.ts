@@ -57,7 +57,8 @@ const teamStateSchema = z
           .object({
             host: hostSchema,
             instructions: z.string().optional(),
-            state: z.enum(["bound", "unclaimed"]),
+            state: z.enum(["bound", "unclaimed", "configured"]),
+            desktopFiles: z.record(z.string(), z.string()).optional(),
           })
           .strict(),
       )
