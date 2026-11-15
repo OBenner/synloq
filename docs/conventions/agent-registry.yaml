@@ -1,0 +1,36 @@
+# Agent registry — current placement of roles on this operator's stand.
+# The roster itself is owned by synloq.yaml; this file records placement only
+# (host, folder, channel). See docs/conventions/agent-layout.md.
+# Amend via PR (CTO review). A future doctor check will flag registry/manifest drift.
+
+version: 1
+stand: synloq
+roles:
+  ceo:
+    host: kimi-work
+    channel: synloq-ceo
+    folder: null # on demand
+  cto:
+    host: kimi-work
+    channel: synloq-cto
+    folder: null
+  arch:
+    host: kimi-work
+    channel: synloq-arch
+    folder: null
+  security:
+    host: kimi-work
+    channel: synloq-security
+    folder: null
+  dev:
+    host: kimi-work
+    channel: synloq-dev
+    folder: null
+  dev2:
+    host: kimi-work
+    channel: synloq-dev2
+    folder: null
+  tester:
+    host: opencode
+    channel: synloq-tester
+    folder: null
