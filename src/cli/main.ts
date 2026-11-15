@@ -106,7 +106,8 @@ const helpText: Record<CommandName, string> = {
     "Usage: synloq resume --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
-  doctor: "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair]\n",
+  doctor:
+    "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host]\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
@@ -235,16 +236,32 @@ async function execute(
       "project-root": { type: "string" },
       "synloq-home": { type: "string" },
       repair: { type: "boolean" },
+      "check-host": { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
+    }
+    // Issue #32 (W6): liveness probes need the OpenCode service; discovery
+    // failure must not break doctor — the report marks sessions "unknown".
+    let openCodeHost: OpenCodeSessionHost | undefined;
+    if (value(values, "check-host") === true) {
+      try {
+        const discovered = await discoverOpenCodeHost();
+        openCodeHost = new OpencodeApiClient(discovered.baseUrl, {
+          ...(discovered.authToken !== undefined ? { authToken: discovered.authToken } : {}),
+        });
+      } catch {
+        openCodeHost = undefined;
+      }
     }
     io.stdout.write(
       `${formatDoctorReport(
         await doctorCommand({
           projectRoot: requiredString(values, "project-root"),
           ...(value(values, "repair") === true ? { repair: true } : {}),
+          ...(value(values, "check-host") === true ? { checkHost: true } : {}),
+          ...(openCodeHost ? { openCodeHost } : {}),
           ...synloqHomeOption(values),
         }),
       )}\n`,

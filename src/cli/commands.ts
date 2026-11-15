@@ -11,7 +11,7 @@ import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
-import { removeOpencodeMcpServers } from "../host/opencode/config-file.js";
+import { opencodeMcpServerNames, removeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
 import {
   FileSecurityAuditLog,
@@ -35,6 +35,7 @@ import {
   createDoctorReport,
   type CredentialHealth,
   type DoctorReport,
+  type OpenCodeHostCheck,
   type SynloqHomeProbe,
 } from "./doctor.js";
 import {
@@ -72,6 +73,11 @@ export interface DoctorCommandOptions {
   // Test/embedding hook: override the Kimi Work installed-plugins registry
   // used by the plugin freshness check (issue #36).
   pluginsRegistryPath?: string;
+  // Issue #32 (W6): probe the OpenCode host for session liveness. Without
+  // the flag doctor stays offline-safe; the host client is injectable for
+  // tests, exactly like remove-role.
+  checkHost?: boolean;
+  openCodeHost?: OpenCodeSessionHost;
 }
 
 /**
@@ -591,9 +597,51 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const credentialStore = new CredentialStore(options.projectRoot, options.synloqHome);
   const credentialsHealth = new Map<string, CredentialHealth>();
   const configsHealth = new Map<string, ChannelConfigHealthReport>();
+  // Issue #32 (W6): OpenCode-bound roles get credential health plus a
+  // hostCheck — opencode.json entry always (offline), session liveness only
+  // behind --check-host. Host failures degrade to "unknown", never throw:
+  // doctor is a diagnostics surface, not a gate.
+  const hostChecks = new Map<string, OpenCodeHostCheck>();
+  let opencodeServers: string[] | "unreadable" = [];
+  try {
+    opencodeServers = await opencodeMcpServerNames(options.projectRoot);
+  } catch {
+    opencodeServers = "unreadable";
+  }
   for (const participant of participants) {
     const binding = teamState?.conversations[participant.agentId];
-    if (!binding || binding.kind === "opencode") continue;
+    if (binding?.kind === "opencode") {
+      credentialsHealth.set(
+        participant.agentId,
+        await credentialStore.inspect(project, participant.agentId),
+      );
+      const hostCheck: OpenCodeHostCheck = {
+        sessionId: binding.sessionId,
+        session: "unknown",
+        opencodeConfig:
+          opencodeServers === "unreadable"
+            ? "unreadable"
+            : opencodeServers.includes(`synloq-${participant.agentId}`)
+              ? "present"
+              : "missing",
+      };
+      if (options.checkHost) {
+        if (!options.openCodeHost) {
+          hostCheck.note = "opencode-host-unreachable";
+        } else {
+          try {
+            hostCheck.session = (await options.openCodeHost.getSession(binding.sessionId))
+              ? "alive"
+              : "dead";
+          } catch (error) {
+            hostCheck.note = error instanceof SynloqError ? error.message : "host check failed";
+          }
+        }
+      }
+      hostChecks.set(participant.agentId, hostCheck);
+      continue;
+    }
+    if (!binding) continue;
     credentialsHealth.set(
       participant.agentId,
       await credentialStore.inspect(project, participant.agentId),
@@ -616,6 +664,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       home,
       credentials: credentialsHealth,
       configs: configsHealth,
+      hostChecks,
       messages,
       sessions,
       clock,
@@ -631,6 +680,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       home,
       credentials: credentialsHealth,
       configs: configsHealth,
+      hostChecks,
       storageError: storageError(error),
       clock,
       audit,

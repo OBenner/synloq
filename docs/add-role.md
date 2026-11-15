@@ -118,6 +118,11 @@ not recorded.
   never installed from this source.
 - A role chat that stays empty after Install/Update usually means the client
   needs a restart so the new MCP channel is spawned.
+- For OpenCode-bound roles, `synloq doctor` shows a `hostCheck` section:
+  whether the `opencode.json` MCP entry is present and the credential file is
+  healthy. Add `--check-host` to also probe the OpenCode service for session
+  liveness (`alive` / `dead`; `unknown` with a note when the service is
+  unreachable). Without the flag doctor never touches the network.
 - Removing a role is heavier than adding one: restart the relay afterwards so
   its in-memory state for the removed role is dropped.
 

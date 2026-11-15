@@ -53,6 +53,27 @@ export async function mergeOpencodeMcpServers(
 }
 
 /**
+ * Read-only listing of the mcp.servers keys (doctor --check-host consistency).
+ * A missing file yields an empty list; malformed JSON fails loud so the
+ * caller can decide how to degrade.
+ */
+export async function opencodeMcpServerNames(projectRoot: string): Promise<string[]> {
+  const path = join(projectRoot, "opencode.json");
+  let existing: unknown;
+  try {
+    existing = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (error instanceof SyntaxError) invalid("opencode.json contains malformed JSON");
+    throw error;
+  }
+  const root = asRecord(existing, "root");
+  const mcp = root.mcp === undefined ? {} : asRecord(root.mcp, "mcp");
+  const current = mcp.servers === undefined ? {} : asRecord(mcp.servers, "mcp.servers");
+  return Object.keys(current);
+}
+
+/**
  * Removes the named mcp.servers entries (remove-role). Missing file or
  * missing keys are a no-op; foreign keys are preserved. Returns the removed
  * names so the caller can report exactly what changed.
