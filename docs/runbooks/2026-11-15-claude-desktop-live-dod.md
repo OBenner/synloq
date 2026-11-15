@@ -4,9 +4,17 @@
 > UNSUPPORTED (disabled).** Audited by the Synloq dev role against the relay
 > SQLite and saved evidence. Audit outcome and doc updates:
 > `docs/client-compatibility.md` § Claude Desktop (Code tab),
-> `docs/adapters/claude-code.md` § Claude Desktop (Code tab). Remaining
-> GUI-only evidence (E3 pickup screenshots, E3.5 isolation, cross-role ack) is
-> tracked as a follow-up operator window.
+> `docs/adapters/claude-code.md` § Claude Desktop (Code tab). The GUI follow-up
+> window closed 2026-11-15 on the same stand — all three remaining items
+> VERIFIED: (a) server pickup — each chat exposes its own `synloq_<role>_*`
+> tools (evidence listings `e3-tools-cto.txt` / `e3-tools-arch.txt`;
+> screenshots held by the operator); (b) E3.5 cross-server isolation — the cto
+> session sees only `mcp__synloq-cto__*`, the arch session only
+> `mcp__synloq-arch__*` (configuration-level isolation, not host-enforced);
+> (c) cross-role ack — cto's attempt to acknowledge arch's message
+> `23c8cebe-…` was rejected with `UNAUTHORIZED` ("only the recipient can
+> acknowledge a message") and the denial was recorded in the stand's audit
+> log.
 
 **Executor:** an agent running inside Claude Desktop (the **Code** tab) on this
 machine (Windows).

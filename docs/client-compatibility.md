@@ -86,7 +86,7 @@ Until this evidence exists, Claude Code active delivery must remain disabled in 
 
 ## Claude Desktop (Code tab)
 
-**MCP inbox: VERIFIED live on 2026-11-15. Per-role server isolation: UNVERIFIED. Active delivery: UNSUPPORTED (disabled).**
+**MCP inbox: VERIFIED live on 2026-11-15. Per-role server isolation: VERIFIED as observed configuration isolation. Active delivery: UNSUPPORTED (disabled).**
 
 Live evidence from the runbook `docs/runbooks/2026-11-15-claude-desktop-live-dod.md`, executed against Claude Desktop 5.11492.5.0 (MSIX package) with project `claude-desktop-synloq` and a relay on `127.0.0.1:4303`:
 
@@ -99,7 +99,11 @@ Live evidence from the runbook `docs/runbooks/2026-11-15-claude-desktop-live-dod
 - Active delivery remains disabled: Desktop exposes no development-channel activation surface (no equivalent of the CLI channel flags), so the activation gate conditions above cannot be met on this host.
 - Hooks (`SessionStart`, `Stop`) execute; their link to relay busy/idle state is UNVERIFIED.
 
-Not yet verified (requires a GUI window): MCP server pickup screenshots, E3.5 cross-server isolation (one role must not see the other role's server), and cross-role ack rejection (`UNAUTHORIZED`).
+GUI follow-up window executed 2026-11-15 on the same stand — all three remaining items VERIFIED:
+
+- Server pickup: each Desktop Code-tab chat exposes its own `synloq_<role>_*` tool set (evidence listings `e3-tools-cto.txt` / `e3-tools-arch.txt` on the stand; screenshots held by the operator).
+- E3.5 cross-server isolation: VERIFIED as configuration isolation — the cto session sees only `mcp__synloq-cto__*` tools, the arch session only `mcp__synloq-arch__*`. This is per-role `.mcp.json` scoping, not host-enforced isolation.
+- Cross-role ack: VERIFIED — an attempt by cto to acknowledge a message addressed to arch (`23c8cebe-…`) was rejected with `UNAUTHORIZED` ("only the recipient can acknowledge a message") and the denial was recorded in the stand's audit log.
 
 ## Codex
 
