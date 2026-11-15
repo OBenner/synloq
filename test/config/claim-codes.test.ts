@@ -137,6 +137,15 @@ describe("ClaimCodeStore", () => {
     expect(state?.claims?.arch).toBeDefined();
     await expect(codes.consume("arch", arch.code)).resolves.toEqual({ status: "claimed" });
   });
+  it("always issues well-formed 8-char base32 codes (1000-iteration pin)", async () => {
+    const { store } = await fixture();
+    const codes = new ClaimCodeStore(store, clockAt(T0));
+
+    for (let i = 0; i < 1000; i++) {
+      const issued = await codes.issue("dev");
+      expect(issued.code).toMatch(/^synloq-claim-dev-[a-z2-7]{8}$/);
+    }
+  });
 });
 
 describe("team state claims schema", () => {
