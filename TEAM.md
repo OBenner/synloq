@@ -9,21 +9,23 @@
 
 The authoritative registration of participants lives in the project's `synloq.yaml`; this roster describes their domains. New roles are added by the operator via `synloq init`, not by editing this document.
 
-| Role       | Title          | Domain                                                                                                                                                                     |
-| ---------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ceo`      | CEO            | Strategic priorities, roadmap, final arbitration of cross-role conflicts.                                                                                                  |
-| `cto`      | CTO            | Technical strategy, task decomposition, coordination. Owns README/CHANGELOG/charter; accepts RESULTs.                                                                      |
-| `arch`     | Architect      | Architecture review, risks, verification. Co-owns the protocol spec (dual approval with CTO).                                                                              |
-| `security` | Security       | Security review, threat modeling, risk assessment, hardening. Owns the security documents.                                                                                 |
-| `dev`      | Lead Developer | Code ownership, implementation task decomposition, delegation to and review of `dev2`, final responsibility for `pnpm verify`.                                             |
-| `dev2`     | Developer 2    | Implementation support on scoped tasks delegated by the Lead Developer. Takes tasks from `dev` only — never directly from the CTO (single source of truth for priorities). |
+| Role       | Title             | Domain                                                                                                                                                                     |
+| ---------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ceo`      | CEO               | Strategic priorities, roadmap, final arbitration of cross-role conflicts.                                                                                                  |
+| `cto`      | CTO               | Technical strategy, task decomposition, coordination. Owns README/CHANGELOG/charter; accepts RESULTs.                                                                      |
+| `arch`     | Architect         | Architecture review, risks, verification. Co-owns the protocol spec (dual approval with CTO).                                                                              |
+| `security` | Security          | Security review, threat modeling, risk assessment, hardening. Owns the security documents.                                                                                 |
+| `dev`      | Lead Developer    | Code ownership, implementation task decomposition, delegation to and review of `dev2`, final responsibility for `pnpm verify`.                                             |
+| `dev2`     | Developer 2       | Implementation support on scoped tasks delegated by the Lead Developer. Takes tasks from `dev` only — never directly from the CTO (single source of truth for priorities). |
+| `staff1`   | Staff Developer 1 | Feature implementation on scoped tasks delegated by the Lead Developer; works from its own worktrees via PRs. Takes tasks from `dev` only.                                 |
+| `staff2`   | Staff Developer 2 | Feature implementation on scoped tasks delegated by the Lead Developer; works from its own worktrees via PRs. Takes tasks from `dev` only.                                 |
 
 ## 2. Direct communication by default
 
 Every role messages any other role directly — the CTO is a coordinator, not a router.
 
 - Address the role that owns the domain: implementation → Lead Developer (who decomposes and may delegate scoped work to `dev2`), architecture/protocol → Architect, threats/hygiene → Security, priorities/decomposition/acceptance → CTO, strategy/roadmap/deadlocks → CEO.
-- `dev2` receives tasks only from the Lead Developer; `dev`↔`dev2` escalations go to the CTO, deadlocks to the CEO (operator decision D-2026-11-14-03).
+- `dev2`, `staff1`, and `staff2` receive tasks only from the Lead Developer; escalations go to the CTO, deadlocks to the CEO (operator decision D-2026-11-14-03).
 - Cross-domain decisions get a NOTICE copy to the CTO, not a request to relay.
 - Never ask the operator to relay a message between roles. The relay exists; use it.
 - Escalation NOTICE to the protocol-level `operator` (spec §2.3) is a protocol mechanism, not asking the human operator to relay; the human operator reads the digest (§6).
