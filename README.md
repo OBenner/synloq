@@ -284,7 +284,11 @@ decisions are additionally recorded in the security audit log at
 `~/.synloq/data/<project-key>-audit.jsonl` (one JSON object per line with `at`,
 `agentId`, `action`, `reasonCode`). Claim events are recorded the same way —
 both accepted claims and refusals (an expired claim code is operational noise
-and is not recorded). Neither stream ever contains tokens or
+and is not recorded). Session registrations are recorded too — accepted and
+refused (duplicate or protocol-mismatched) — with the session id, generation,
+and the client-reported `surface`, so "who bound this role, when, and from
+where" is answerable from the log; heartbeat lease renewals are not recorded.
+Neither stream ever contains tokens or
 message bodies.
 
 `unknown`, stale, busy, closed, unsupported, paused, or mismatched sessions fail closed. Message text cannot grant tools, permissions, registration, or capabilities.

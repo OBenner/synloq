@@ -114,6 +114,7 @@ export async function startStandaloneAdapter(
       sessionId: configuration.sessionId,
       protocolVersion: configuration.protocolVersion,
       capabilities: running.adapter.capabilities,
+      surface: "claude",
       ...(configuration.acceptanceMessageId === undefined
         ? {}
         : { acceptanceMessageId: configuration.acceptanceMessageId }),

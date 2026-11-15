@@ -17,7 +17,8 @@ export type AuditedAction =
   | "issue"
   | "rotate"
   | "revoke"
-  | "replaceSession";
+  | "replaceSession"
+  | "registerSession";
 
 export interface SecurityEvent {
   at: string;

@@ -169,6 +169,7 @@ describe("KimiWorkAdapter state and registration", () => {
       sessionId: binding.conversationKey,
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: false },
+      surface: "kimi-work",
     });
     expect(adapter.sessionBinding).toEqual({ sessionId: binding.conversationKey, generation: 3 });
   });

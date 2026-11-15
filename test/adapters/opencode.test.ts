@@ -558,6 +558,7 @@ describe("OpenCode queued prompt adapter", () => {
       sessionId: SESSION_ID,
       protocolVersion: PROTOCOL_VERSION,
       capabilities: adapter.capabilities,
+      surface: "opencode",
     });
     await expectState(adapter, "idle");
     expect(vi.mocked(relay.heartbeat)).toHaveBeenCalledWith({

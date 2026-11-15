@@ -85,6 +85,7 @@ export async function runCodexHook(
           stateReporting: true,
           clientIdempotency: false,
         },
+        surface: "codex-hook",
       },
       relayTimeoutMs,
     );

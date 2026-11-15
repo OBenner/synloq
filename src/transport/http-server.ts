@@ -65,6 +65,9 @@ const registerSchema = z
   .object({
     ...sessionFields,
     acceptanceMessageId: z.string().uuid().optional(),
+    // Audit-only client surface hint ("kimi-work", "opencode", …); never
+    // persisted to the session store (issue #53).
+    surface: z.string().min(1).max(128).optional(),
   })
   .strict();
 const heartbeatSchema = z
@@ -283,22 +286,60 @@ export class RelayHttpServer {
     }
 
     if (method === "POST" && path === "/v1/sessions/register") {
-      const input = registerSchema.parse(await this.readJson(request));
-      const session = this.options.sessions.register(
-        {
-          sessionId: input.sessionId,
-          protocolVersion: input.protocolVersion,
-          capabilities: input.capabilities,
-          ...(input.acceptanceMessageId === undefined
-            ? {}
-            : { acceptanceMessageId: input.acceptanceMessageId }),
+      // Issue #53: every registration attempt — accepted or refused — is
+      // audited so "who bound this role, when, from which surface" is
+      // answerable from the log. Heartbeat lease renewals are deliberately
+      // not audited (volume vs. signal; the lease is visible in doctor).
+      let input: z.infer<typeof registerSchema> | undefined;
+      try {
+        input = registerSchema.parse(await this.readJson(request));
+        const session = this.options.sessions.register(
+          {
+            sessionId: input.sessionId,
+            protocolVersion: input.protocolVersion,
+            capabilities: input.capabilities,
+            ...(input.acceptanceMessageId === undefined
+              ? {}
+              : { acceptanceMessageId: input.acceptanceMessageId }),
+            project,
+            agentId: identity.agentId,
+          },
+          false,
+        );
+        this.audit.record({
+          at: new Date().toISOString(),
           project,
           agentId: identity.agentId,
-        },
-        false,
-      );
-      this.changed(project, identity.agentId);
-      this.sendJson(response, 200, { session });
+          action: "registerSession",
+          decision: "accept",
+          reasonCode: "REGISTERED",
+          detail:
+            `session '${session.sessionId}' bound (generation ${session.generation}, ` +
+            `protocol v${session.protocolVersion}` +
+            (input.surface === undefined ? "" : `, surface '${input.surface}'`) +
+            ")",
+        });
+        this.changed(project, identity.agentId);
+        this.sendJson(response, 200, { session });
+      } catch (error) {
+        if (error instanceof SynloqError) {
+          this.audit.record({
+            at: new Date().toISOString(),
+            project,
+            agentId: identity.agentId,
+            action: "registerSession",
+            decision: "deny",
+            reasonCode: error.code,
+            detail:
+              input === undefined
+                ? error.message
+                : `${error.message} (attempted session '${input.sessionId}'` +
+                  (input.surface === undefined ? "" : `, surface '${input.surface}'`) +
+                  ")",
+          });
+        }
+        throw error;
+      }
       return;
     }
 
