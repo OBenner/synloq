@@ -42,9 +42,13 @@ describe("initializeGenericTeam", () => {
     ) as Record<string, unknown>;
     expect(ctoConfig).toEqual({
       relayUrl: "http://127.0.0.1:4100",
-      credentialPath: result.roles[0]!.credentialPath,
+      // Issue #7/#32: relative to the config file, like the other renderers.
+      credentialPath: `../../../credentials/${paths.key}/cto.token`,
       language: "en",
     });
+    // The relative path resolves to the real token file.
+    const { resolve } = await import("node:path");
+    await readFile(resolve(join(paths.runtime, "mcp"), ctoConfig.credentialPath as string), "utf8");
     await readFile(result.roles[0]!.credentialPath, "utf8");
 
     const state = await new TeamStateStore(paths.bindings).read();

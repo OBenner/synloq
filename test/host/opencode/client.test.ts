@@ -162,3 +162,30 @@ describe("OpencodeApiClient", () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe("OpencodeApiClient.deleteSession (#32 W5)", () => {
+  it("deletes a session: 200 true, 404 false, 5xx unavailable, 4xx loud", async () => {
+    const { fetchImpl, calls } = fetchSequence([{ status: 200 }]);
+    const client = new OpencodeApiClient("http://127.0.0.1:4096", { fetch: fetchImpl });
+    await expect(client.deleteSession("ses_1")).resolves.toBe(true);
+    expect(calls[0]).toMatchObject({
+      method: "DELETE",
+      url: "http://127.0.0.1:4096/api/session/ses_1",
+    });
+
+    const missing = new OpencodeApiClient("http://127.0.0.1:4096", {
+      fetch: fetchSequence([{ status: 404 }]).fetchImpl,
+    });
+    await expect(missing.deleteSession("ses_gone")).resolves.toBe(false);
+
+    const dead = new OpencodeApiClient("http://127.0.0.1:4096", {
+      fetch: fetchSequence([{ status: 500 }]).fetchImpl,
+    });
+    await expect(dead.deleteSession("ses_1")).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    const rejected = new OpencodeApiClient("http://127.0.0.1:4096", {
+      fetch: fetchSequence([{ status: 403 }]).fetchImpl,
+    });
+    await expect(rejected.deleteSession("ses_1")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});

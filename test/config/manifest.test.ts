@@ -2,7 +2,13 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadManifest, loadManifestLanguage, writeManifest } from "../../src/config/manifest.js";
+import {
+  loadManifest,
+  loadManifestLanguage,
+  mergeManifestParticipants,
+  removeManifestParticipant,
+  writeManifest,
+} from "../../src/config/manifest.js";
 
 async function manifestRoot(contents: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "synloq-manifest-"));
@@ -157,6 +163,50 @@ describe("manifest language", () => {
     await expect(loadManifest(root)).rejects.toMatchObject({
       name: "SynloqError",
       code: "INVALID_INPUT",
+    });
+  });
+});
+
+describe("mergeManifestParticipants / removeManifestParticipant (#32 W5)", () => {
+  const cto = { project: "stand", agentId: "cto", title: "CTO", role: "Coordinates" };
+  const arch = { project: "stand", agentId: "arch", title: "Architect", role: "Designs" };
+  const tester = { project: "stand", agentId: "tester", title: "Tester", role: "Verifies" };
+
+  it("extends an existing manifest and overrides same-id roles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-merge-"));
+    await writeManifest(root, [cto, arch]);
+
+    const merged = await mergeManifestParticipants(root, [
+      tester,
+      { ...arch, role: "Designs and reviews" },
+    ]);
+
+    expect(merged.map((p) => p.agentId)).toEqual(["cto", "arch", "tester"]);
+    expect(merged.find((p) => p.agentId === "arch")?.role).toBe("Designs and reviews");
+    expect((await loadManifest(root)).map((p) => p.agentId)).toEqual(["cto", "arch", "tester"]);
+  });
+
+  it("writes a fresh manifest when none exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-merge-"));
+    await mergeManifestParticipants(root, [cto]);
+    expect((await loadManifest(root)).map((p) => p.agentId)).toEqual(["cto"]);
+  });
+
+  it("removes a role and refuses both unknown roles and emptying the manifest", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-remove-"));
+    await writeManifest(root, [cto, arch], "ru");
+
+    await removeManifestParticipant(root, "arch");
+    const remaining = await loadManifest(root);
+    expect(remaining.map((p) => p.agentId)).toEqual(["cto"]);
+    await expect(loadManifestLanguage(root)).resolves.toBe("ru");
+
+    await expect(removeManifestParticipant(root, "ghost")).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    await expect(removeManifestParticipant(root, "cto")).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("last role"),
     });
   });
 });

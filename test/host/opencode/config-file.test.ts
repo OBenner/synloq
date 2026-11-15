@@ -2,7 +2,10 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { mergeOpencodeMcpServers } from "../../../src/host/opencode/config-file.js";
+import {
+  mergeOpencodeMcpServers,
+  removeOpencodeMcpServers,
+} from "../../../src/host/opencode/config-file.js";
 
 const servers = {
   "synloq-cto": {
@@ -77,5 +80,31 @@ describe("mergeOpencodeMcpServers", () => {
     await expect(mergeOpencodeMcpServers(root, servers)).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
+  });
+});
+
+describe("removeOpencodeMcpServers (#32 W5)", () => {
+  it("removes the named servers, preserves foreign keys, and reports what changed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-opencode-remove-"));
+    await writeFile(
+      join(root, "opencode.json"),
+      JSON.stringify({
+        mcp: { servers: { ...servers, other: { type: "local", command: ["x"], enabled: true } } },
+        ui: { theme: "dark" },
+      }),
+    );
+
+    const removed = await removeOpencodeMcpServers(root, ["synloq-cto", "synloq-ghost"]);
+
+    expect(removed).toEqual(["synloq-cto"]);
+    expect(await readJson(join(root, "opencode.json"))).toEqual({
+      mcp: { servers: { other: { type: "local", command: ["x"], enabled: true } } },
+      ui: { theme: "dark" },
+    });
+  });
+
+  it("is a no-op without a file and never touches it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-opencode-remove-"));
+    await expect(removeOpencodeMcpServers(root, ["synloq-cto"])).resolves.toEqual([]);
   });
 });

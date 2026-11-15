@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
-import { loadManifestLanguage, writeManifest } from "../config/manifest.js";
+import { loadManifestLanguage, mergeManifestParticipants } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import {
   TeamStateStore,
@@ -161,7 +161,9 @@ export async function initializeTeam(
     title: role.title,
     role: role.role,
   }));
-  await writeManifest(projectRoot, participants, language);
+  // Issue #32 (gap G1): merge into the existing manifest — init --role is
+  // the add-role path and must not drop roles from previous runs.
+  await mergeManifestParticipants(projectRoot, participants, language);
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,

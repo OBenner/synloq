@@ -4,12 +4,14 @@ import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
-import { loadManifest } from "../config/manifest.js";
+import { loadManifest, removeManifestParticipant } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
+import type { OpenCodeSessionHost } from "../host/opencode/client.js";
+import { removeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
 import {
   FileSecurityAuditLog,
@@ -432,6 +434,111 @@ export async function claimIssueCommand(
     new TeamStateStore(paths.bindings),
     options.clock ?? { now: () => Date.now() },
   ).issue(options.agentId);
+}
+
+export interface RemoveRoleOptions {
+  projectRoot: string;
+  agentId: string;
+  operatorCredentialPath: string;
+  synloqHome?: string;
+  /** DI for tests; required to delete an OpenCode session, optional otherwise. */
+  openCodeHost?: OpenCodeSessionHost;
+}
+
+export interface RemoveRoleResult {
+  agentId: string;
+  manifest: "removed";
+  credential: "revoked" | "absent";
+  claimCode: "cleared" | "absent";
+  session: "deleted" | "already-gone" | "skipped-host-unavailable" | "manual";
+  opencodeConfig: "removed" | "absent";
+  nextSteps: string[];
+}
+
+/**
+ * Issue #32 (W5): tears a role down — manifest entry, credential (via the
+ * operator-gated revoke path, which also voids outstanding claim codes),
+ * OpenCode session and opencode.json entry when the role lived on OpenCode.
+ * Kimi Work chats cannot be deleted programmatically; the operator closes
+ * them manually. The relay hot-reloads additions, but dropping a role's
+ * in-memory state still requires a relay restart — said in nextSteps.
+ */
+export async function removeRoleCommand(options: RemoveRoleOptions): Promise<RemoveRoleResult> {
+  const participants = await loadManifest(options.projectRoot);
+  if (!participants.some((participant) => participant.agentId === options.agentId)) {
+    throw new SynloqError("INVALID_INPUT", `unknown role: ${options.agentId}`);
+  }
+  const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  const stateStore = new TeamStateStore(paths.bindings);
+  const state = await stateStore.read();
+  const binding = state?.conversations[options.agentId];
+
+  // 1. Validate the operator credential BEFORE any irreversible host-side
+  //    effect: a failed check must leave the stand untouched.
+  const operatorToken = (await readFile(options.operatorCredentialPath, "utf8")).trim();
+  const operatorIdentity = await new CredentialStore(options.projectRoot, paths.home).authenticate(
+    participants[0]!.project,
+    operatorToken,
+  );
+  if (!operatorIdentity.operator) {
+    throw new SynloqError("UNAUTHORIZED", "operator credential required");
+  }
+
+  // 2. Host session: once the credential is revoked the chat is dead anyway,
+  //    but deleting while everything is still up keeps the failure modes
+  //    legible.
+  let session: RemoveRoleResult["session"] = "manual";
+  if (binding?.kind === "opencode") {
+    if (!options.openCodeHost) {
+      session = "skipped-host-unavailable";
+    } else {
+      session = (await options.openCodeHost.deleteSession(binding.sessionId))
+        ? "deleted"
+        : "already-gone";
+    }
+  }
+
+  // 3. Credential via the operator-gated path (audited, kills claim codes).
+  const hadClaimCode = state?.claims?.[options.agentId] !== undefined;
+  const revoked = await revokeTokenCommand({
+    projectRoot: options.projectRoot,
+    agentId: options.agentId,
+    operatorCredentialPath: options.operatorCredentialPath,
+    ...(options.synloqHome ? { synloqHome: options.synloqHome } : {}),
+  });
+
+  // 4. Manifest, opencode.json, team state.
+  await removeManifestParticipant(options.projectRoot, options.agentId);
+  const removedServers = await removeOpencodeMcpServers(options.projectRoot, [
+    `synloq-${options.agentId}`,
+  ]);
+  if (state?.conversations[options.agentId]) {
+    await stateStore.update((current): TeamState => {
+      if (!current) throw new SynloqError("INVALID_INPUT", "Synloq team state is missing");
+      const conversations = { ...current.conversations };
+      delete conversations[options.agentId];
+      return { ...current, conversations };
+    });
+  }
+
+  const nextSteps = ["Restart the relay so the removed role leaves the participant registry"];
+  if (session === "manual") {
+    nextSteps.push("Close the role's Kimi Work chat manually — it cannot be deleted via API");
+  }
+  if (session === "skipped-host-unavailable") {
+    nextSteps.push(
+      "OpenCode service was unreachable — delete the session manually or re-run with the service up",
+    );
+  }
+  return {
+    agentId: options.agentId,
+    manifest: "removed",
+    credential: revoked.removedHashes > 0 ? "revoked" : "absent",
+    claimCode: hadClaimCode ? "cleared" : "absent",
+    session,
+    opencodeConfig: removedServers.length > 0 ? "removed" : "absent",
+    nextSteps,
+  };
 }
 
 function storageError(error: unknown): string {

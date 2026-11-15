@@ -3,6 +3,22 @@ import type { Language } from "../i18n/index.js";
 
 export const DEFAULT_RELAY_URL = "http://127.0.0.1:4100";
 
+/**
+ * Paths under the Synloq home, rendered relative to a generated channel
+ * config (<home>/runtime/<key>/mcp/<role>.json) — the stdio loader resolves
+ * them against the config directory (issue #7). Shared by the Kimi Work and
+ * OpenCode renderers so both stay relocation-safe (issue #32 W5).
+ */
+export function relativeHomePaths(
+  projectKey: string,
+  agentId: string,
+): { credentialPath: string; synloqHome: string } {
+  return {
+    credentialPath: `../../../credentials/${projectKey}/${agentId}.token`,
+    synloqHome: "../../..",
+  };
+}
+
 export interface RoleRuntimeConfigInput {
   relayUrl: string;
   /** Project key — used to render the credential path relative to the config. */
@@ -27,8 +43,7 @@ export interface RoleRuntimeConfigInput {
 export function roleRuntimeConfig(input: RoleRuntimeConfigInput): Record<string, unknown> {
   return {
     relayUrl: input.relayUrl,
-    credentialPath: `../../../credentials/${input.projectKey}/${input.agentId}.token`,
-    synloqHome: "../../..",
+    ...relativeHomePaths(input.projectKey, input.agentId),
     language: input.language,
     kimiWork: {
       projectRoot: input.projectRoot,

@@ -80,3 +80,45 @@ export async function writeManifest(
   });
   await writeTextAtomic(join(projectRoot, "synloq.yaml"), YAML.stringify(manifest), 0o644);
 }
+
+/**
+ * Issue #32 (gap G1): init with an explicit --role list must EXTEND the
+ * existing manifest, not overwrite it — that is what makes `synloq init
+ * --role x` a working add-role. New entries override same-id ones; a project
+ * mismatch fails loud via writeManifest's single-project validation. Returns
+ * the merged roster so callers can reason about the whole team (gap G3).
+ */
+export async function mergeManifestParticipants(
+  projectRoot: string,
+  participants: Participant[],
+  language: Language = DEFAULT_LANGUAGE,
+): Promise<Participant[]> {
+  let existing: Participant[] = [];
+  try {
+    existing = await loadManifest(projectRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const byId = new Map(existing.map((participant) => [participant.agentId, participant]));
+  for (const participant of participants) byId.set(participant.agentId, participant);
+  const merged = [...byId.values()];
+  await writeManifest(projectRoot, merged, language);
+  return merged;
+}
+
+/**
+ * Removes one role from the manifest (remove-role). Refuses to empty the
+ * manifest — a project with zero roles is deleted by removing the file, not
+ * by writing an invalid one.
+ */
+export async function removeManifestParticipant(projectRoot: string, role: string): Promise<void> {
+  const existing = await loadManifest(projectRoot);
+  if (!existing.some((participant) => participant.agentId === role)) {
+    throw new SynloqError("INVALID_INPUT", `unknown role: ${role}`);
+  }
+  const remaining = existing.filter((participant) => participant.agentId !== role);
+  if (remaining.length === 0) {
+    throw new SynloqError("INVALID_INPUT", "cannot remove the last role from the manifest");
+  }
+  await writeManifest(projectRoot, remaining, await loadManifestLanguage(projectRoot));
+}

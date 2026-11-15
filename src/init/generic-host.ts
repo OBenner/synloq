@@ -4,7 +4,7 @@ import type { Clock } from "../adapters/types.js";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, CLAIM_CODE_TTL_MS } from "../config/claim-codes.js";
 import { CredentialStore } from "../config/credentials.js";
-import { writeManifest } from "../config/manifest.js";
+import { mergeManifestParticipants } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
@@ -13,6 +13,7 @@ import type { Language } from "../i18n/index.js";
 import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
+import { relativeHomePaths } from "./runtime-config.js";
 import type { RoleInput } from "./types.js";
 
 export interface InitializeGenericTeamOptions {
@@ -86,7 +87,9 @@ export async function initializeGenericTeam(
     title: role.title,
     role: role.role,
   }));
-  await writeManifest(projectRoot, participants, language);
+  // Issue #32 (gap G1): merge into the existing manifest — init --role is
+  // the add-role path and must not drop roles from previous runs.
+  await mergeManifestParticipants(projectRoot, participants, language);
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,
@@ -100,7 +103,8 @@ export async function initializeGenericTeam(
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
     await writeJsonAtomic(configPath, {
       relayUrl,
-      credentialPath: credential.tokenPath,
+      // Relative to the config file, like the Kimi/OpenCode renderers (#7/#32).
+      credentialPath: relativeHomePaths(paths.key, role.agentId).credentialPath,
       language,
     });
     initializedRoles.push({
