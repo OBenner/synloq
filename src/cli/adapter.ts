@@ -3,8 +3,12 @@ import { runClaudeAdapter } from "../adapters/claude-channel.js";
 import { HttpAdapterRunner } from "../adapters/http-runner.js";
 import { runOpenCodeAdapter, type OpenCodeApi } from "../adapters/opencode.js";
 import { loadAdapterConfiguration } from "../config/adapter.js";
+import { loadManifest } from "../config/manifest.js";
+import { projectPaths } from "../config/paths.js";
+import { formatDiagnostic } from "../diagnostics.js";
 import { SynloqError } from "../domain/errors.js";
 import { resolveOpenCodeServiceAuth } from "../host/opencode/discovery.js";
+import { createStoredPingWatcher } from "../mcp/stored-ping.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { runClaudeHook, type ClaudeHookIo } from "./claude-hook.js";
 import { runCodexHook, type CodexHookIo } from "./codex-hook.js";
@@ -67,6 +71,24 @@ export async function startStandaloneAdapter(
       dependencies.deliveryWaitMs,
     );
     runner.start();
+    // Issue #45: stored-ping watcher for the OpenCode adapter process —
+    // nudge the visible session via the host prompt API when incoming mail
+    // sits stored past the threshold while the session is live and idle.
+    let storedPingTimer: ReturnType<typeof setInterval> | undefined;
+    if (configuration.storedPing !== false) {
+      const participants = await loadManifest(configuration.projectRoot);
+      const paths = await projectPaths(configuration.projectRoot, configuration.synloqHome);
+      const watcher = createStoredPingWatcher({
+        project: configuration.project,
+        agentId: configuration.agentId,
+        participants,
+        databasePath: paths.database,
+        diagnostics: process.stderr,
+        push: (text) => adapter.ping(text),
+      });
+      storedPingTimer = setInterval(() => void watcher.check(), 60_000);
+      storedPingTimer.unref?.();
+    }
     let markClosed!: () => void;
     const closed = new Promise<void>((resolve) => {
       markClosed = resolve;
@@ -77,6 +99,7 @@ export async function startStandaloneAdapter(
       sessionId: configuration.sessionId,
       closed,
       close: closeOnce(async () => {
+        if (storedPingTimer) clearInterval(storedPingTimer);
         try {
           await runner.close();
           await adapter.close();

@@ -277,6 +277,16 @@ also surfaces acked messages that expected a reply but stayed unanswered for
 over 30 minutes. Delivered prompts carry a `+N more pending` hint when the
 recipient's backlog is non-empty.
 
+Stored-mail nudge: when a role has stored messages older than 15 minutes while
+its chat is live and idle on a push-capable host (`kimi-work`, `opencode`),
+the role's channel posts a content-free nudge into the chat ("N incoming
+message(s) waiting — run synloq_inbox") — at most once per backlog epoch,
+repeated every 30 minutes while the backlog stays unread. Busy, dead, or
+paused chats are never nudged, and the nudge never contains message text.
+Opt out per role with `"storedPing": false` in the role's channel config. On
+hosts without push, `synloq status` instead marks queued roles with a
+`no push on host <host> — check synloq_inbox manually` note.
+
 Diagnostic output: every line that long-lived processes (the MCP stdio bridge
 and the relay supervisor loop) write to stderr is prefixed with an ISO 8601 UTC
 timestamp, so an incident timeline can be reconstructed from logs alone. Deny

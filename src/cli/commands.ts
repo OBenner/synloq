@@ -728,6 +728,14 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
 export async function statusCommand(options: DoctorCommandOptions): Promise<StatusReport> {
   const participants = await loadManifest(options.projectRoot);
   const project = manifestProject(participants);
+  // Issue #45: the manual-poll note needs the manifest host per role; the
+  // doctor entry only carries it when placements were probed.
+  const roleHosts = new Map(
+    (await loadManifestRoles(options.projectRoot)).map((role) => [
+      role.agentId,
+      role.host ?? ("kimi-work" as const),
+    ]),
+  );
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
@@ -744,6 +752,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       messages,
       sessions,
       clock,
+      roleHosts,
       ...(options.unansweredThresholdMs === undefined
         ? {}
         : { unansweredThresholdMs: options.unansweredThresholdMs }),
@@ -756,6 +765,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       home,
       storageError: storageError(error),
       clock,
+      roleHosts,
     });
   } finally {
     sessions?.close();

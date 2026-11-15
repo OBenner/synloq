@@ -90,6 +90,7 @@ describe("MCP automatic relay lifecycle", () => {
           close: vi.fn(async () => {
             events.push("adapter-close");
           }),
+          ping: vi.fn(async () => false),
         },
       };
     });

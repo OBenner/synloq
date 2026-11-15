@@ -178,6 +178,31 @@ describe("createStatusReport wait reasons", () => {
     expect(entry?.unansweredAcked).toEqual({ count: 1, oldestAt: "2026-11-09T23:15:00.000Z" });
     expect(entry?.waitReason).toBe("ready; 1 acked without reply (oldest 45m 00s)");
   });
+
+  it("notes manual polling for queued mail on a host without push (#45)", () => {
+    register("arch", "idle");
+    queueMessage("arch", "2026-11-09T23:55:00.000Z", "status-nopush-1");
+    const roleHosts = new Map([
+      ["cto", "kimi-work" as const],
+      ["arch", "generic" as const],
+    ]);
+
+    const reportWithHosts = createStatusReport({
+      project: PROJECT,
+      participants,
+      databasePath: fixture.databasePath,
+      messages: fixture.messages,
+      sessions: fixture.sessions,
+      clock: fixture.clock,
+      roleHosts,
+    });
+    expect(reportWithHosts.participants[1]?.waitReason).toBe(
+      "1 stored — idle, next delivery imminent (oldest 5m 00s); no push on host generic — check synloq_inbox manually",
+    );
+    // A push-capable host gets the nudge instead — no manual-poll note.
+    const pushReport = report();
+    expect(pushReport.participants[1]?.waitReason).not.toContain("no push");
+  });
 });
 
 describe("formatStatusReport", () => {
@@ -219,6 +244,30 @@ describe("statusCommand", () => {
     const result = await statusCommand({ projectRoot: fixture.root, clock: fixture.clock });
     expect(result.storage.ok).toBe(false);
     expect(result.participants[0]?.waitReason).toBe("session-not-registered");
+  });
+
+  it("notes manual polling for a queued role on a push-less manifest host (#45)", async () => {
+    await writeFile(
+      join(fixture.root, "synloq.yaml"),
+      `project: verdicta
+agents:
+  cto:
+    title: CTO
+    role: Technical strategy
+  arch:
+    title: Architect
+    role: Architecture review
+    host: generic
+`,
+      "utf8",
+    );
+    register("arch", "idle");
+    queueMessage("arch", "2026-11-09T23:55:00.000Z", "status-cli-nopush-1");
+
+    const result = await statusCommand({ projectRoot: fixture.root, clock: fixture.clock });
+    expect(result.participants[1]?.waitReason).toContain(
+      "no push on host generic — check synloq_inbox manually",
+    );
   });
 });
 

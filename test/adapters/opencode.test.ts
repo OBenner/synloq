@@ -768,3 +768,40 @@ describe("createOpenCodeApi wire contract", () => {
     });
   });
 });
+
+describe("OpenCodeAdapter ping (#45)", () => {
+  it("admits a content-free nudge while the session is idle", async () => {
+    const { adapter, api } = await makeIdleFixture();
+
+    await expect(adapter.ping("Synloq: 2 incoming — run synloq_inbox")).resolves.toBe(true);
+    expect(api.admit).toHaveBeenCalledWith(SESSION_ID, "Synloq: 2 incoming — run synloq_inbox");
+  });
+
+  it("stays silent while the session is busy", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    api.snapshot = { exists: true, busy: true };
+    api.streams[0]?.push({
+      type: "session.status",
+      properties: { sessionID: SESSION_ID, status: { type: "busy" } },
+    });
+    await expectState(adapter, "busy");
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+    expect(api.admit).not.toHaveBeenCalled();
+  });
+
+  it("stays silent after close", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    await adapter.close();
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+    expect(api.admit).not.toHaveBeenCalled();
+  });
+
+  it("reports false when the host refuses the nudge", async () => {
+    const { adapter, api } = await makeIdleFixture();
+    api.admit.mockRejectedValueOnce(new Error("host gone"));
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+  });
+});
