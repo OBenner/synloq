@@ -105,7 +105,7 @@ Not yet verified (requires a GUI window): MCP server pickup screenshots, E3.5 cr
 
 **Support: authenticated MCP inbox plus lifecycle state reporting. Live verification status: UNVERIFIED. Active delivery: unsupported and disabled.** Automated tests use a mocked relay, fake hook input, and fake app-server processes. No Codex executable or visible Codex chat was launched in the implementation environment.
 
-The existing stdio MCP bridge exposes exactly the six ordinary Synloq tools. One Codex configuration scope, normally one `CODEX_HOME`, represents exactly one Synloq role credential. Configuring several role servers in one shared Desktop/CLI scope is not an approved multi-role setup because per-thread role identity has not been demonstrated. Shared Desktop multi-role binding remains UNVERIFIED.
+The existing stdio MCP bridge exposes exactly the six ordinary Synloq tools. One Codex configuration scope, normally one `CODEX_HOME`, represents exactly one Synloq role credential. Configuring several role servers in one shared Desktop/CLI scope is not an approved multi-role setup because per-thread role identity has not been demonstrated. Shared Desktop multi-role binding remains UNVERIFIED; the verified Desktop model is one role per project directory (see Codex Desktop below).
 
 The separate strict adapter JSON uses `kind:"codex"`, the exact visible `session_id`, an external role credential, loopback relay URL, and protocol `1`. `synloq codex-hook --config <path>` rejects malformed or oversized input and a different session ID before relay mutation. On `SessionStart` it registers with `activeDelivery:false`, `stateReporting:true`, and `clientIdempotency:false`. Generic `synloq adapter --config` rejects Codex explicitly; there is no Codex active runner, production activation field, or active-delivery acceptance flag.
 
@@ -139,6 +139,18 @@ The first command collects executable version, app-server help/schema availabili
 Metadata help/schema output is represented by byte count and SHA-256. Initialize data is recursively sanitized: prompt/text/turn/token/secret/account/auth keys are removed, strings and arrays are bounded, and depth is limited. Resume/read results are not embedded. Reports contain only the exact attached thread ID, status, and numeric error codes. Process/request phases default to five seconds, retained protocol frames are capped at 1 MiB, stderr is drained, and cleanup escalates from SIGTERM to SIGKILL rather than claiming a live child exited.
 
 Every report contains `activeDeliveryClaim:false` and `reason:"visible-session-submission-not-verified"`. Successful initialize, schema generation, resume, or read is compatibility evidence only, never active-delivery evidence. Live MCP/hooks/probe status remains UNVERIFIED until the operator matrix in `test/e2e/real-clients.md` is completed; even a successful matrix does not enable active delivery in this increment.
+
+## Codex Desktop
+
+**MCP inbox: VERIFIED live on 2026-11-15. Per-role isolation: VERIFIED as observed configuration isolation (not host-enforced). Active delivery: UNSUPPORTED (reactive inbox pattern).**
+
+Live evidence from the runbook `docs/runbooks/2026-11-15-codex-desktop-acceptance.md`, executed on an isolated stand (Codex Desktop ≥ 0.169.0-alpha.11.1, relay `127.0.0.1:4399`) with two roles provisioned by `synloq init` as per-role project directories (`docs/adapters/codex.md` § Desktop-first role directories):
+
+- Each role directory's `.codex/config.toml` carries only its own `synloq-<role>` MCP server; both Desktop chats saw exactly their own server, and `doctor` reported `placement.state: configured` / `ok: true` before and after a Desktop restart.
+- Full two-role loop without manual copying: cto→arch `7ccc61ce-…`, arch→cto reply `c253ecaf-…`, both acked; after a Desktop restart the cycle repeated (`b90c998b-…` / `2e1d18bf-…`) with history and message IDs preserved.
+- Idempotent resend with the same key returned the original message ID; cross-role ack attempts were rejected with `UNAUTHORIZED` and recorded in the audit log.
+
+Honest limits: isolation is configuration-level — the host does not prevent an operator from registering another role's server manually; roles are reactive (no automatic wake-up, no active delivery); the generated launcher arguments embed absolute paths, so re-run `synloq init` after relocating the Synloq home or the runtime. Shared-scope multi-role binding (several role servers in one Desktop configuration) remains UNVERIFIED and unapproved — the verified model is one role per project directory.
 
 ## Kimi Code
 
