@@ -42,6 +42,9 @@ const configurationSchema = z
     language: languageSchema.optional(),
     // Issue #45: per-role opt-out for the stored-ping watcher (default on).
     storedPing: z.boolean().optional(),
+    // Issue #46: explicit writer-session id for channels whose binding block
+    // carries none (e.g. codex-desktop MCP configs alongside the hook).
+    sessionId: z.string().min(1).max(256).optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),
     opencode: openCodeConfigurationSchema.optional(),
   })
@@ -99,6 +102,7 @@ interface McpConfiguration {
   synloqHome?: string;
   language?: Language;
   storedPing?: boolean;
+  sessionId?: string;
   kimiWork?: ResolvedKimiWorkBinding;
   opencode?: ResolvedOpenCodeBinding;
 }
@@ -140,6 +144,7 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
     ...(configuration.data.storedPing === undefined
       ? {}
       : { storedPing: configuration.data.storedPing }),
+    ...(configuration.data.sessionId ? { sessionId: configuration.data.sessionId } : {}),
     ...(kimiWork ? { kimiWork } : {}),
     ...(opencode ? { opencode } : {}),
   };
@@ -417,7 +422,13 @@ export async function startMcpStdio(
   const client =
     supervisor?.client ?? new RelayHttpClient(configuration.relayUrl, () => configuration.token);
   const server = new McpServer({ name: "synloq", version: "0.1.0" });
-  registerSynloqTools(server, client);
+  // Issue #46: writer-session proof for write tools — the visible chat's own
+  // session id, so a second chat of the same role stays read-only.
+  const writerSessionId =
+    configuration.kimiWork?.conversationKey ??
+    configuration.opencode?.sessionId ??
+    configuration.sessionId;
+  registerSynloqTools(server, client, writerSessionId);
   try {
     await server.connect(new StdioServerTransport(options.stdin, options.stdout));
   } catch (error) {

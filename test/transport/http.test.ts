@@ -841,3 +841,41 @@ describe("Claude delivery receipt evidence", () => {
     expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
   });
 });
+
+describe("RelayHttpServer single-writer enforcement (#46)", () => {
+  async function registerCto(sessionId: string) {
+    await fixture.cto.registerSession({
+      sessionId,
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+  }
+
+  function draft(sessionId?: string) {
+    return {
+      to: "arch",
+      text: "writer check",
+      expectsReply: false,
+      idempotencyKey: `http-${crypto.randomUUID()}`,
+      ...(sessionId === undefined ? {} : { sessionId }),
+    };
+  }
+
+  it("rejects non-writer writes with 403 NOT_WRITER and accepts the writer", async () => {
+    await registerCto("session-cto-writer");
+
+    await expect(fixture.cto.send(draft())).rejects.toMatchObject({ code: "NOT_WRITER" });
+    await expect(fixture.cto.send(draft("session-cto-mirror"))).rejects.toMatchObject({
+      code: "NOT_WRITER",
+    });
+    const mirror = await post("/v1/messages", fixture.ctoToken, JSON.stringify(draft()));
+    expect(mirror.status).toBe(403);
+
+    await expect(fixture.cto.send(draft("session-cto-writer"))).resolves.toMatchObject({
+      message: expect.objectContaining({ from: "cto" }),
+    });
+    // The mirror keeps its reads.
+    const inbox = await fixture.cto.inbox();
+    expect(inbox.messages.length).toBeGreaterThanOrEqual(0);
+  });
+});

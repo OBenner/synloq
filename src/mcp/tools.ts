@@ -55,7 +55,14 @@ async function invoke(operation: () => Promise<unknown>): Promise<CallToolResult
   }
 }
 
-export function registerSynloqTools(server: McpServer, client: RelayHttpClient): void {
+export function registerSynloqTools(
+  server: McpServer,
+  client: RelayHttpClient,
+  // Issue #46: the channel's writer-session proof, injected into every write
+  // so a second chat of the same role stays read-only. Undefined for
+  // session-less (hook-style) channels.
+  writerSessionId?: string,
+): void {
   server.registerTool(
     "synloq_list",
     {
@@ -71,7 +78,12 @@ export function registerSynloqTools(server: McpServer, client: RelayHttpClient):
       description: "Send a direct message to one participant",
       inputSchema: sendInputSchema,
     },
-    async (input) => invoke(() => client.send(input)),
+    async (input) =>
+      invoke(() =>
+        client.send(
+          writerSessionId === undefined ? input : { ...input, sessionId: writerSessionId },
+        ),
+      ),
   );
 
   server.registerTool(
@@ -80,7 +92,12 @@ export function registerSynloqTools(server: McpServer, client: RelayHttpClient):
       description: "Reply in an existing thread",
       inputSchema: replyInputSchema,
     },
-    async (input) => invoke(() => client.reply(input)),
+    async (input) =>
+      invoke(() =>
+        client.reply(
+          writerSessionId === undefined ? input : { ...input, sessionId: writerSessionId },
+        ),
+      ),
   );
 
   server.registerTool(
@@ -112,6 +129,6 @@ export function registerSynloqTools(server: McpServer, client: RelayHttpClient):
       description: "Acknowledge that a message was read",
       inputSchema: ackInputSchema,
     },
-    async (input) => invoke(() => client.acknowledge(input.messageId)),
+    async (input) => invoke(() => client.acknowledge(input.messageId, writerSessionId)),
   );
 }

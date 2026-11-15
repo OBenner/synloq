@@ -27,6 +27,7 @@ const errorCodes = [
   "UNAUTHORIZED",
   "DELIVERY_UNCERTAIN",
   "NOT_FOUND",
+  "NOT_WRITER",
 ] as const;
 const errorResponseSchema = z.object({
   error: z.object({ code: z.enum(errorCodes), message: z.string() }),
@@ -140,8 +141,11 @@ export class RelayHttpClient {
     );
   }
 
-  acknowledge(messageId: string): Promise<{ message: Message }> {
-    return this.request("POST", "/v1/ack", { messageId });
+  acknowledge(messageId: string, sessionId?: string): Promise<{ message: Message }> {
+    return this.request("POST", "/v1/ack", {
+      messageId,
+      ...(sessionId === undefined ? {} : { sessionId }),
+    });
   }
 
   registerSession(
