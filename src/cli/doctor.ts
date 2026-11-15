@@ -7,6 +7,14 @@ import type { SecurityEvent } from "../relay/audit-log.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import type { ChannelConfigHealthReport } from "./repair.js";
+import type { HostName } from "../config/hosts.js";
+
+export interface PlacementHealth {
+  host: HostName;
+  state: "bound" | "unclaimed" | "manual" | "missing";
+  ok: boolean;
+  issue?: string;
+}
 
 export interface SynloqHomeProbe {
   path: string;
@@ -44,6 +52,8 @@ export interface DoctorReport {
   };
   participants: Array<{
     agentId: string;
+    host?: HostName;
+    placement?: PlacementHealth;
     sessionId?: string;
     state: SessionState;
     adapterConnected: boolean;
@@ -60,6 +70,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorReportOptions {
+  placements?: Map<string, PlacementHealth>;
   project: string;
   participants: Participant[];
   databasePath: string;
@@ -139,6 +150,12 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
       const hostCheck = options.hostChecks?.get(participant.agentId);
       return {
         agentId: participant.agentId,
+        ...(options.placements?.get(participant.agentId)
+          ? {
+              host: options.placements.get(participant.agentId)!.host,
+              placement: options.placements.get(participant.agentId)!,
+            }
+          : {}),
         ...(session ? { sessionId: session.sessionId } : {}),
         state,
         adapterConnected: storage.ok && hasUnexpiredLease(session, now),

@@ -7,6 +7,7 @@ import {
   loadManifestLanguage,
   mergeManifestParticipants,
   removeManifestParticipant,
+  loadManifestRoles,
   writeManifest,
 } from "../../src/config/manifest.js";
 
@@ -17,6 +18,15 @@ async function manifestRoot(contents: string): Promise<string> {
 }
 
 describe("loadManifest", () => {
+  it("round-trips per-role hosts without exposing them on the participant API", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-host-manifest-"));
+    await writeManifest(root, [
+      { project: "team", agentId: "dev", title: "Dev", role: "Build", host: "codex-desktop" },
+    ]);
+    expect((await loadManifestRoles(root))[0]?.host).toBe("codex-desktop");
+    expect((await loadManifest(root))[0]).not.toHaveProperty("host");
+  });
+
   it("loads role descriptions without creating instructions", async () => {
     const root = await manifestRoot(
       [
@@ -75,6 +85,11 @@ describe("loadManifest", () => {
   });
 
   it.each([
+    {
+      name: "an unsupported host",
+      contents:
+        "project: team\nagents:\n  dev:\n    title: Dev\n    role: Build\n    host: typo-host\n",
+    },
     {
       name: "malformed YAML",
       contents: "project: [",
@@ -171,6 +186,42 @@ describe("mergeManifestParticipants / removeManifestParticipant (#32 W5)", () =>
   const cto = { project: "stand", agentId: "cto", title: "CTO", role: "Coordinates" };
   const arch = { project: "stand", agentId: "arch", title: "Architect", role: "Designs" };
   const tester = { project: "stand", agentId: "tester", title: "Tester", role: "Verifies" };
+
+  it("preserves hosts of retained and updated roles and accepts explicit host overrides", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-host-merge-"));
+    await writeManifest(root, [
+      { ...cto, host: "kimi-work" },
+      { ...arch, host: "codex-desktop" },
+    ]);
+    const merged = await mergeManifestParticipants(root, [
+      { ...arch, role: "Reviews architecture" },
+      { ...tester, host: "opencode" },
+    ]);
+    expect(merged.map(({ agentId, host }) => ({ agentId, host }))).toEqual([
+      { agentId: "cto", host: "kimi-work" },
+      { agentId: "arch", host: "codex-desktop" },
+      { agentId: "tester", host: "opencode" },
+    ]);
+    expect(await loadManifestRoles(root)).toEqual(merged);
+    expect(merged.find((participant) => participant.agentId === "arch")?.role).toBe(
+      "Reviews architecture",
+    );
+    await mergeManifestParticipants(root, [{ ...arch, host: "zcode" }]);
+    expect(
+      (await loadManifestRoles(root)).find((participant) => participant.agentId === "arch")?.host,
+    ).toBe("zcode");
+    expect((await loadManifest(root)).every((participant) => !("host" in participant))).toBe(true);
+  });
+
+  it("preserves the hosts of other roles when removing a participant", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-manifest-host-remove-"));
+    await writeManifest(root, [
+      { ...cto, host: "opencode" },
+      { ...arch, host: "codex-desktop" },
+    ]);
+    await removeManifestParticipant(root, "arch");
+    expect(await loadManifestRoles(root)).toEqual([{ ...cto, host: "opencode" }]);
+  });
 
   it("extends an existing manifest and overrides same-id roles", async () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-manifest-merge-"));

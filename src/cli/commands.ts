@@ -4,7 +4,8 @@ import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
-import { loadManifest, removeManifestParticipant } from "../config/manifest.js";
+import { loadManifest, loadManifestRoles, removeManifestParticipant } from "../config/manifest.js";
+import { HOST_CAPABILITIES } from "../config/hosts.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
@@ -37,6 +38,7 @@ import {
   type DoctorReport,
   type OpenCodeHostCheck,
   type SynloqHomeProbe,
+  type PlacementHealth,
 } from "./doctor.js";
 import {
   inspectChannelConfig,
@@ -556,6 +558,7 @@ function storageError(error: unknown): string {
 
 export async function doctorCommand(options: DoctorCommandOptions): Promise<DoctorReport> {
   const participants = await loadManifest(options.projectRoot);
+  const manifestRoles = await loadManifestRoles(options.projectRoot);
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
@@ -597,6 +600,33 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const credentialStore = new CredentialStore(options.projectRoot, options.synloqHome);
   const credentialsHealth = new Map<string, CredentialHealth>();
   const configsHealth = new Map<string, ChannelConfigHealthReport>();
+  const placements = new Map<string, PlacementHealth>();
+  for (const role of manifestRoles) {
+    const host = role.host ?? "kimi-work";
+    const binding = teamState?.conversations[role.agentId];
+    const prepared = teamState?.placements?.[role.agentId];
+    const observedHost = binding ? (binding.kind ?? "kimi-work") : prepared?.host;
+    const mismatch = observedHost !== undefined && observedHost !== host;
+    const missing = HOST_CAPABILITIES[host].canProvisionSessions ? !binding : !prepared;
+    placements.set(role.agentId, {
+      host,
+      state: binding
+        ? "bound"
+        : !prepared
+          ? "missing"
+          : teamState?.claims?.[role.agentId]
+            ? "unclaimed"
+            : "manual",
+      ok: !mismatch && !missing,
+      ...(mismatch
+        ? {
+            issue: `manifest host ${host} differs from prepared host ${observedHost}; use explicit replace-session/migration`,
+          }
+        : missing
+          ? { issue: "host placement is not initialized; run init" }
+          : {}),
+    });
+  }
   // Issue #32 (W6): OpenCode-bound roles get credential health plus a
   // hostCheck — opencode.json entry always (offline), session liveness only
   // behind --check-host. Host failures degrade to "unknown", never throw:
@@ -641,7 +671,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       hostChecks.set(participant.agentId, hostCheck);
       continue;
     }
-    if (!binding) continue;
+    if (!binding && !teamState?.placements?.[participant.agentId]) continue;
     credentialsHealth.set(
       participant.agentId,
       await credentialStore.inspect(project, participant.agentId),
@@ -665,6 +695,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       credentials: credentialsHealth,
       configs: configsHealth,
       hostChecks,
+      placements,
       messages,
       sessions,
       clock,
@@ -681,6 +712,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       credentials: credentialsHealth,
       configs: configsHealth,
       hostChecks,
+      placements,
       storageError: storageError(error),
       clock,
       audit,

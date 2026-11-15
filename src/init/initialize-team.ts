@@ -4,6 +4,8 @@ import { z } from "zod";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { loadManifestLanguage, mergeManifestParticipants } from "../config/manifest.js";
+import { hostSchema } from "../config/hosts.js";
+import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { projectPaths } from "../config/paths.js";
 import {
   TeamStateStore,
@@ -36,6 +38,7 @@ import type {
 const roleSchema = z
   .object({
     agentId,
+    host: hostSchema.optional(),
     title: z.string().min(1).max(128),
     role: z.string().min(1).max(8_000),
     instructions: z.string().min(1).max(16_000).optional(),
@@ -144,6 +147,9 @@ export async function initializeTeam(
   options: InitializeTeamOptions,
 ): Promise<InitializeTeamResult> {
   const { project, roles } = parseRoleInputs(options.project, options.roles);
+  const relayUrl = options.relayUrl ?? DEFAULT_RELAY_URL;
+  if (!isLoopbackHttpUrl(relayUrl))
+    throw new SynloqError("INVALID_INPUT", "relayUrl must be an explicit HTTP loopback origin");
   const projectRoot = await realpath(options.projectRoot);
   const language = await resolveLanguage(projectRoot, options.language);
 
@@ -163,7 +169,11 @@ export async function initializeTeam(
   }));
   // Issue #32 (gap G1): merge into the existing manifest — init --role is
   // the add-role path and must not drop roles from previous runs.
-  await mergeManifestParticipants(projectRoot, participants, language);
+  await mergeManifestParticipants(
+    projectRoot,
+    options.manifestParticipants ?? participants,
+    language,
+  );
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,
@@ -262,7 +272,7 @@ export async function initializeTeam(
     await writeJsonAtomic(
       configPath,
       roleRuntimeConfig({
-        relayUrl: DEFAULT_RELAY_URL,
+        relayUrl,
         projectKey: paths.key,
         language,
         projectRoot,

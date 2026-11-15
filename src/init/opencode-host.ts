@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
-import { mergeManifestParticipants } from "../config/manifest.js";
+import { mergeManifestParticipants, type ManifestRole } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import {
   TeamStateStore,
@@ -10,7 +10,6 @@ import {
   type TeamState,
 } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
-import type { Participant } from "../domain/message.js";
 import type { Language } from "../i18n/index.js";
 import { mergeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
@@ -22,6 +21,7 @@ import { rolePromptOpenCode } from "./role-prompt.js";
 import type { RoleInput } from "./types.js";
 
 export interface InitializeOpenCodeTeamOptions {
+  manifestParticipants?: ManifestRole[];
   projectRoot: string;
   project: string;
   roles: RoleInput[];
@@ -76,17 +76,22 @@ export async function initializeOpenCodeTeam(
     throw new SynloqError("INVALID_INPUT", "Synloq project state ownership does not match");
   }
 
-  const participants: Participant[] = roles.map((role) => ({
+  const participants: ManifestRole[] = roles.map((role) => ({
     project,
     agentId: role.agentId,
     title: role.title,
     role: role.role,
+    host: role.host ?? "opencode",
   }));
   // Issue #32 (gaps G1/G3): merge into the existing manifest instead of
   // overwriting it, and build the deny-tools matrix from the merged roster —
   // a single-role run must not leave the new session able to call the tools
   // of roles that were not part of this invocation.
-  const roster = await mergeManifestParticipants(projectRoot, participants, language);
+  const roster = await mergeManifestParticipants(
+    projectRoot,
+    options.manifestParticipants ?? participants,
+    language,
+  );
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,

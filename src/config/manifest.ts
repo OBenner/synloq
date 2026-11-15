@@ -6,6 +6,11 @@ import { SynloqError } from "../domain/errors.js";
 import { agentId, type Participant } from "../domain/message.js";
 import { DEFAULT_LANGUAGE, languageSchema, type Language } from "../i18n/index.js";
 import { writeTextAtomic } from "./atomic-file.js";
+import { hostSchema, type HostName } from "./hosts.js";
+
+export interface ManifestRole extends Participant {
+  host?: HostName;
+}
 
 const manifestSchema = z
   .object({
@@ -18,6 +23,7 @@ const manifestSchema = z
         .object({
           title: z.string(),
           role: z.string(),
+          host: hostSchema.optional(),
         })
         .strict(),
     ),
@@ -25,12 +31,23 @@ const manifestSchema = z
   .strict();
 
 export async function loadManifest(projectRoot: string): Promise<Participant[]> {
+  return (await loadManifestRoles(projectRoot)).map(({ project, agentId, title, role }) => ({
+    project,
+    agentId,
+    title,
+    role,
+  }));
+}
+
+/** Host placement is local configuration, not part of the relay participant API. */
+export async function loadManifestRoles(projectRoot: string): Promise<ManifestRole[]> {
   const manifest = await readManifest(projectRoot);
   return Object.entries(manifest.agents).map(([id, agent]) => ({
     project: manifest.project,
     agentId: id,
     title: agent.title,
     role: agent.role,
+    ...(agent.host ? { host: agent.host } : {}),
   }));
 }
 
@@ -56,7 +73,7 @@ async function readManifest(projectRoot: string) {
 
 export async function writeManifest(
   projectRoot: string,
-  participants: Participant[],
+  participants: ManifestRole[],
   language: Language = DEFAULT_LANGUAGE,
 ): Promise<void> {
   const project = participants[0]?.project;
@@ -74,7 +91,11 @@ export async function writeManifest(
     agents: Object.fromEntries(
       participants.map((participant) => [
         participant.agentId,
-        { title: participant.title, role: participant.role },
+        {
+          title: participant.title,
+          role: participant.role,
+          ...(participant.host ? { host: participant.host } : {}),
+        },
       ]),
     ),
   });
@@ -90,17 +111,19 @@ export async function writeManifest(
  */
 export async function mergeManifestParticipants(
   projectRoot: string,
-  participants: Participant[],
+  participants: ManifestRole[],
   language: Language = DEFAULT_LANGUAGE,
-): Promise<Participant[]> {
-  let existing: Participant[] = [];
+): Promise<ManifestRole[]> {
+  let existing: ManifestRole[] = [];
   try {
-    existing = await loadManifest(projectRoot);
+    existing = await loadManifestRoles(projectRoot);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const byId = new Map(existing.map((participant) => [participant.agentId, participant]));
-  for (const participant of participants) byId.set(participant.agentId, participant);
+  for (const participant of participants) {
+    byId.set(participant.agentId, { ...byId.get(participant.agentId), ...participant });
+  }
   const merged = [...byId.values()];
   await writeManifest(projectRoot, merged, language);
   return merged;
@@ -112,7 +135,7 @@ export async function mergeManifestParticipants(
  * by writing an invalid one.
  */
 export async function removeManifestParticipant(projectRoot: string, role: string): Promise<void> {
-  const existing = await loadManifest(projectRoot);
+  const existing = await loadManifestRoles(projectRoot);
   if (!existing.some((participant) => participant.agentId === role)) {
     throw new SynloqError("INVALID_INPUT", `unknown role: ${role}`);
   }
