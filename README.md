@@ -286,8 +286,9 @@ decisions are additionally recorded in the security audit log at
 both accepted claims and refusals (an expired claim code is operational noise
 and is not recorded). Session registrations are recorded too — accepted and
 refused (duplicate or protocol-mismatched) — with the session id, generation,
-and the client-reported `surface`, so "who bound this role, when, and from
-where" is answerable from the log; heartbeat lease renewals are not recorded.
+and the client-reported `surface`, which is a hint, not proof of the client
+binary, so "who bound this role, when, and from where" is answerable from the
+log; heartbeat lease renewals are not recorded.
 Neither stream ever contains tokens or
 message bodies.
 

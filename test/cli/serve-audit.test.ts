@@ -316,5 +316,45 @@ describe("serveCommand audit wiring", () => {
         await handle.close();
       }
     });
+
+    it("audits a malformed JSON body as a denied registration attempt", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: "{ not json",
+        });
+        expect(response.status).toBe(400);
+
+        const events = readEvents(await auditPath());
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            action: "registerSession",
+            decision: "deny",
+            reasonCode: "INVALID_INPUT",
+            agentId: "cto",
+          }),
+        );
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("does not audit schema rejections (consistent with replace-session)", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        // Valid JSON, but no capabilities → zod rejection, not a SynloqError.
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1 }),
+        });
+        expect(response.status).toBe(400);
+        await expect(async () => readFileSync(await auditPath(), "utf8")).rejects.toThrow();
+      } finally {
+        await handle.close();
+      }
+    });
   });
 });
