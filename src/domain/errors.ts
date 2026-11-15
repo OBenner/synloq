@@ -13,7 +13,8 @@ export class SynloqError extends Error {
       | "PERMISSION_DENIED"
       | "UNAUTHORIZED"
       | "DELIVERY_UNCERTAIN"
-      | "NOT_FOUND",
+      | "NOT_FOUND"
+      | "NOT_WRITER",
     message: string,
   ) {
     super(message);

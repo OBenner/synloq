@@ -32,9 +32,9 @@ interface McpConnection {
   close(): Promise<void>;
 }
 
-async function openMcp(relay: RelayHttpClient): Promise<McpConnection> {
+async function openMcp(relay: RelayHttpClient, writerSessionId?: string): Promise<McpConnection> {
   const server = new McpServer({ name: "synloq-reference-e2e", version: "0.1.0" });
-  registerSynloqTools(server, relay);
+  registerSynloqTools(server, relay, writerSessionId);
   const client = new Client({ name: "reference-visible-client", version: "0.1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -92,8 +92,8 @@ describe("reference end-to-end acceptance", () => {
       const archAdapter = new ReferenceAdapter();
       let ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);
       let archBinding = await register(archRelay, archAdapter, ARCH_SESSION);
-      let ctoMcp = await openMcp(ctoRelay);
-      let archMcp = await openMcp(archRelay);
+      let ctoMcp = await openMcp(ctoRelay, CTO_SESSION);
+      let archMcp = await openMcp(archRelay, ARCH_SESSION);
       connections = [ctoMcp, archMcp];
       let ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, ctoBinding, 0);
       let archRunner = new HttpAdapterRunner(archRelay, archAdapter, archBinding, 0);
@@ -241,8 +241,8 @@ describe("reference end-to-end acceptance", () => {
       archAdapter.setState(ARCH_SESSION, "idle");
       ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);
       archBinding = await register(archRelay, archAdapter, ARCH_SESSION);
-      ctoMcp = await openMcp(ctoRelay);
-      archMcp = await openMcp(archRelay);
+      ctoMcp = await openMcp(ctoRelay, CTO_SESSION);
+      archMcp = await openMcp(archRelay, ARCH_SESSION);
       connections = [ctoMcp, archMcp];
       ctoRunner = new HttpAdapterRunner(ctoRelay, ctoAdapter, ctoBinding, 0);
       archRunner = new HttpAdapterRunner(archRelay, archAdapter, archBinding, 0);

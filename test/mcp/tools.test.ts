@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialStore } from "../../src/config/credentials.js";
 import type { Participant } from "../../src/domain/message.js";
+import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { registerSynloqTools } from "../../src/mcp/tools.js";
 import { Dispatcher } from "../../src/relay/dispatcher.js";
 import { ProtectionPolicy } from "../../src/relay/protection.js";
@@ -29,6 +30,8 @@ interface Fixture {
   messages: SQLiteMessageStore;
   sessions: SessionStore;
   cto: RelayHttpClient;
+  archToken: string;
+  baseUrl: string;
   root: string;
   home: string;
 }
@@ -68,6 +71,8 @@ beforeEach(async () => {
     messages,
     sessions,
     cto: new RelayHttpClient(baseUrl, () => ctoToken),
+    archToken,
+    baseUrl,
     root,
     home,
   };
@@ -343,5 +348,56 @@ describe("Synloq agent-facing MCP tools", () => {
 
     expect(invalidAck.isError).toBe(true);
     expect(invalidInbox.isError).toBe(true);
+  });
+
+  it("injects the writer session id into writes when configured (#46)", async () => {
+    // The fixture's tools act as arch without a writer proof; once arch has a
+    // registered session, those writes must be refused…
+    fixture.sessions.register(
+      {
+        project: PROJECT,
+        agentId: "arch",
+        sessionId: "ses-arch-main",
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
+      },
+      false,
+    );
+
+    const denied = await fixture.mcpClient.callTool({
+      name: "synloq_send",
+      arguments: { to: "cto", text: "mirror write", expectsReply: false, idempotencyKey: "m46-1" },
+    });
+    expect(denied.isError).toBe(true);
+    expect(JSON.stringify(denied.structuredContent)).toContain("NOT_WRITER");
+
+    // …while a channel configured with the writer session id writes freely.
+    const writerServer = new McpServer({ name: "synloq-writer", version: "0.1.0" });
+    const writerClient = new Client({ name: "synloq-writer-client", version: "0.1.0" });
+    registerSynloqTools(
+      writerServer,
+      new RelayHttpClient(fixture.baseUrl, () => fixture.archToken),
+      "ses-arch-main",
+    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      writerClient.connect(clientTransport),
+      writerServer.connect(serverTransport),
+    ]);
+    try {
+      const allowed = await writerClient.callTool({
+        name: "synloq_send",
+        arguments: {
+          to: "cto",
+          text: "writer write",
+          expectsReply: false,
+          idempotencyKey: "m46-2",
+        },
+      });
+      expect(allowed.isError).toBeFalsy();
+    } finally {
+      await writerClient.close();
+      await writerServer.close();
+    }
   });
 });

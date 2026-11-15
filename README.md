@@ -226,6 +226,8 @@ synloq replace-session \
 
 Use capabilities observed from the replacement adapter, never values inferred from a client version. Update the standalone adapter config to the same session before restarting it.
 
+A role has a single writer: the chat that owns the registered session. Other chats holding the same role's token can read (`synloq_inbox`, `synloq_list`, `synloq_wait`) but their writes (`synloq_send`, `synloq_reply`, `synloq_ack`) are rejected with `NOT_WRITER` naming the active writer session — takeover goes through `synloq replace-session` only, and every refusal lands in the audit log. Channel tooling injects the writer proof automatically from the role's MCP config (`kimiWork.conversationKey`, `opencode.sessionId`, or an explicit top-level `sessionId` for hook-style hosts); agents never set it by hand. Roles without any registered session keep token-only writes — the guarantee starts with the first registration.
+
 Pause or resume delivery with the operator credential:
 
 ```bash

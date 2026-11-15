@@ -113,6 +113,10 @@ decision exists.
   opencode), content-free, throttled per backlog epoch; hosts without push
   get a manual-poll note in `synloq status`. Per-role opt-out via
   `"storedPing": false` in the channel config.
-- Single-writer / read-only mode (#46): not implemented. The headless
-  executor gets its own issue after this ADR is accepted and the LLM
-  provider is chosen.
+- Single-writer / read-only mode (#46): implemented — the registered session
+  is the role's writer; writes (`send`/`reply`/`ack`) from other sessions or
+  without the writer proof are refused with `NOT_WRITER` and audited;
+  takeover via `replace-session` flips ownership. Protocol note:
+  docs/protocol/v1.md §2.4.
+- The headless executor gets its own issue after this ADR is accepted and
+  the LLM provider is chosen.

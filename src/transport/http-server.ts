@@ -34,6 +34,9 @@ const sendSchema = z
     expectsReply: z.boolean(),
     inReplyTo: z.string().uuid().optional(),
     idempotencyKey: z.string().min(1).max(128),
+    // Writer-session proof (issue #46); required only when the role has a
+    // registered session.
+    sessionId: z.string().min(1).max(256).optional(),
   })
   .strict();
 const replySchema = z
@@ -42,6 +45,7 @@ const replySchema = z
     text: z.string().min(1),
     expectsReply: z.boolean(),
     idempotencyKey: z.string().min(1).max(128),
+    sessionId: z.string().min(1).max(256).optional(),
   })
   .strict();
 const inboxQuerySchema = z
@@ -60,7 +64,12 @@ const bindingSchema = z.object(bindingFields).strict();
 const deliveryQuerySchema = bindingSchema.extend({
   waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
 });
-const acknowledgeSchema = z.object({ messageId: z.string().uuid() }).strict();
+const acknowledgeSchema = z
+  .object({
+    messageId: z.string().uuid(),
+    sessionId: z.string().min(1).max(256).optional(),
+  })
+  .strict();
 const registerSchema = z
   .object({
     ...sessionFields,
@@ -277,7 +286,11 @@ export class RelayHttpServer {
 
     if (method === "POST" && path === "/v1/ack") {
       const input = acknowledgeSchema.parse(await this.readJson(request));
-      const message = await this.options.relay.acknowledge(identity, input.messageId);
+      const message = await this.options.relay.acknowledge(
+        identity,
+        input.messageId,
+        input.sessionId,
+      );
       this.sendJson(response, 200, { message });
       return;
     }
@@ -604,6 +617,9 @@ export class RelayHttpServer {
         return { status: 400, error };
       case "UNAUTHORIZED":
         return { status: authentication ? 401 : 403, error };
+      case "NOT_WRITER":
+        // Authenticated as the role, but not as its active writer session.
+        return { status: 403, error };
       case "UNKNOWN_RECIPIENT":
       case "NOT_FOUND":
         return { status: 404, error };

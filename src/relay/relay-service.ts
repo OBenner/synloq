@@ -13,7 +13,10 @@ import { NullSecurityAuditLog, type AuditedAction, type SecurityAuditLog } from 
 import { StaticParticipantDirectory, type ParticipantDirectory } from "./participant-directory.js";
 import type { ProtectionPolicy } from "./protection.js";
 
-export type SendRequest = Omit<SendMessageInput, "project" | "from">;
+export type SendRequest = Omit<SendMessageInput, "project" | "from"> & {
+  /** Writer-session proof (issue #46): required when the role has a registered session. */
+  sessionId?: string | undefined;
+};
 export type ReplyRequest = Omit<SendRequest, "to" | "inReplyTo"> & {
   inReplyTo: string;
 };
@@ -88,9 +91,32 @@ export class RelayService {
     }
   }
 
+  // Issue #46 (single-writer): when the role has a registered session, only
+  // that session may write. A second chat holding the role's token reads
+  // (inbox/list are token-scoped) but its writes are refused with a pointer
+  // to the active writer and replace-session as the only takeover path.
+  // Roles without a session (hook-style channels) keep token-only writes.
+  private requireWriter(identity: Identity, sessionId: string | undefined): void {
+    if (identity.operator) return;
+    const writer = this.sessions
+      .list(identity.project)
+      .find((candidate) => candidate.agentId === identity.agentId);
+    if (!writer || writer.sessionId === sessionId) return;
+    throw new SynloqError(
+      "NOT_WRITER",
+      `role '${identity.agentId}' is owned by active writer session '${writer.sessionId}'` +
+        (sessionId === undefined ? "" : `, not '${sessionId}'`) +
+        "; reads stay open, writes require the owning session — " +
+        "take over with synloq replace-session (operator)",
+    );
+  }
+
   private async performSend(identity: Identity, raw: SendRequest): Promise<Message> {
+    this.requireWriter(identity, raw.sessionId);
+    const wire = { ...raw };
+    delete wire.sessionId; // writer proof is a transport concern, not message content
     const input = parseSendMessageInput({
-      ...raw,
+      ...wire,
       project: identity.project,
       from: identity.operator ? "operator" : identity.agentId,
     });
@@ -138,6 +164,7 @@ export class RelayService {
 
   async reply(identity: Identity, raw: ReplyRequest): Promise<Message> {
     try {
+      this.requireWriter(identity, raw.sessionId);
       const parent = this.messages.getMessage(raw.inReplyTo);
       if (!parent || parent.to !== identity.agentId || parent.project !== identity.project) {
         throw new SynloqError("NOT_FOUND", "reply parent not found");
@@ -173,8 +200,9 @@ export class RelayService {
     }
   }
 
-  async acknowledge(identity: Identity, messageId: string): Promise<Message> {
+  async acknowledge(identity: Identity, messageId: string, sessionId?: string): Promise<Message> {
     try {
+      this.requireWriter(identity, sessionId);
       return await this.messages.acknowledge(messageId, identity.project, identity.agentId);
     } catch (error) {
       this.recordDeny(identity, "acknowledge", error);
