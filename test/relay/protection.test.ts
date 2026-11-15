@@ -162,7 +162,7 @@ describe("ProtectionPolicy", () => {
     store.create(input(), crypto.randomUUID(), older, threadId);
     store.create(input(), crypto.randomUUID(), new Date(now).toISOString(), crypto.randomUUID());
 
-    expect(store.countThreadSince(threadId, boundary)).toBe(1);
+    expect(store.countThreadSince(threadId, "verdicta", boundary)).toBe(1);
     protection.afterAccept(
       store.create(input(), crypto.randomUUID(), new Date(now).toISOString(), threadId).message,
     );
@@ -239,7 +239,7 @@ describe("RelayService protection integration", () => {
 
     expect(store.isPaused("verdicta", "thread", first.threadId)).toBe(true);
     expect(store.nextPending("verdicta", "arch")?.threadId).toBe(first.threadId);
-    expect(store.getMessage(third.id)?.deliveryState).toBe("stored");
+    expect(store.getMessage(third.id, third.project)?.deliveryState).toBe("stored");
 
     const acceptedWhilePaused = await relay.reply(arch, {
       inReplyTo: third.id,
@@ -247,7 +247,9 @@ describe("RelayService protection integration", () => {
       expectsReply: false,
       idempotencyKey: crypto.randomUUID(),
     });
-    expect(store.getMessage(acceptedWhilePaused.id)?.deliveryState).toBe("stored");
+    expect(
+      store.getMessage(acceptedWhilePaused.id, acceptedWhilePaused.project)?.deliveryState,
+    ).toBe("stored");
   });
 
   it("allows only a same-project operator to pause and resume delivery", () => {

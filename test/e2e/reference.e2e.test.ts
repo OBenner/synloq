@@ -208,8 +208,8 @@ describe("reference end-to-end acceptance", () => {
         arguments: { messageId: reply.id },
       });
       expect(forgedCtoAck.isError).toBe(true);
-      expect(relay.messages.getMessage(second.id)?.deliveryState).toBe("delivered");
-      expect(relay.messages.getMessage(third.id)?.deliveryState).toBe("delivered");
+      expect(relay.messages.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
+      expect(relay.messages.getMessage(third.id, third.project)?.deliveryState).toBe("delivered");
 
       const snapshot = (current: ServeHandle) => ({
         visibleIds: () => ({

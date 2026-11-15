@@ -181,7 +181,9 @@ describe("RelayHttpServer authentication and participant routes", () => {
       to: "arch",
       deliveryState: "stored",
     });
-    expect(fixture.messages.getMessage(result.message.id)).toEqual(result.message);
+    expect(fixture.messages.getMessage(result.message.id, result.message.project)).toEqual(
+      result.message,
+    );
   });
 
   it("replies in the authorized thread", async () => {
@@ -214,7 +216,7 @@ describe("RelayHttpServer authentication and participant routes", () => {
       expectsReply: false,
       idempotencyKey: "http-ack-1",
     });
-    fixture.messages.setDeliveryState(message.id, "delivered");
+    fixture.messages.setDeliveryState(message.id, message.project, "delivered");
 
     await expect(fixture.arch.acknowledge(message.id)).resolves.toEqual({
       message: { ...message, deliveryState: "acked" },
@@ -238,7 +240,7 @@ describe("RelayHttpServer authentication and participant routes", () => {
       expectsReply: false,
       idempotencyKey: "http-unread-acked-1",
     });
-    fixture.messages.setDeliveryState(acked.id, "delivered");
+    fixture.messages.setDeliveryState(acked.id, acked.project, "delivered");
     await fixture.arch.acknowledge(acked.id);
 
     const { message: fresh } = await fixture.cto.send({
@@ -333,7 +335,9 @@ describe("RelayHttpServer sessions and active delivery", () => {
     });
 
     await expect(nextArch()).resolves.toEqual({ message, ...binding });
-    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(fixture.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "submitted",
+    );
     await expect(nextArch()).resolves.toEqual({ message: null, ...binding });
 
     const receipt: DeliveryReceipt = {
@@ -440,7 +444,7 @@ describe("RelayHttpServer sessions and active delivery", () => {
     await rejection;
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(fixture.messages.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
     await expect(nextArch()).resolves.toEqual({ message, ...binding });
   });
 
@@ -796,7 +800,7 @@ describe("Claude delivery receipt evidence", () => {
       code: "INVALID_INPUT",
       message: "delivery evidence requires a submitted message",
     });
-    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(fixture.messages.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
   });
 
   it.each([
@@ -818,7 +822,9 @@ describe("Claude delivery receipt evidence", () => {
       code: "INVALID_INPUT",
       message: "delivery evidence provenance does not match the submitted claim",
     });
-    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(fixture.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "submitted",
+    );
   });
 
   it("rejects evidence for a different bound session", async () => {
@@ -838,7 +844,9 @@ describe("Claude delivery receipt evidence", () => {
       code: "INVALID_INPUT",
       message: "delivery evidence provenance does not match the submitted claim",
     });
-    expect(fixture.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(fixture.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "submitted",
+    );
   });
 });
 

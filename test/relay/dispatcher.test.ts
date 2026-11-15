@@ -191,13 +191,13 @@ describe("Dispatcher", () => {
     await f.dispatcher.kick(PROJECT, AGENT);
 
     expect(f.adapter.submit).not.toHaveBeenCalled();
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
 
     f.store.resume(PROJECT, scope as PauseScope, scopeId);
     await f.dispatcher.kick(PROJECT, AGENT);
 
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it("shares one drain across concurrent kicks without duplicate submissions", async () => {
@@ -233,8 +233,8 @@ describe("Dispatcher", () => {
     await Promise.all([firstKick, secondKick]);
 
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, second.id]);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
   });
 
   it("stops the drain on a submitted receipt until delivery is recorded", async () => {
@@ -250,14 +250,14 @@ describe("Dispatcher", () => {
     await f.dispatcher.kick(PROJECT, AGENT);
 
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id]);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("submitted");
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("submitted");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
 
-    f.store.setDeliveryState(first.id, "delivered");
+    f.store.setDeliveryState(first.id, first.project, "delivered");
     await f.dispatcher.kick(PROJECT, AGENT);
 
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, second.id]);
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
   });
 
   it("uses bounded exponential backoff without inspecting later FIFO entries", async () => {
@@ -270,8 +270,8 @@ describe("Dispatcher", () => {
     for (const [index, delay] of delays.entries()) {
       await f.dispatcher.runOnce(PROJECT, AGENT);
       expect(f.adapter.submit).toHaveBeenCalledTimes(index + 1);
-      expect(f.store.getMessage(first.id)?.deliveryState).toBe("stored");
-      expect(f.store.getMessage(second.id)?.deliveryState).toBe("stored");
+      expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("stored");
+      expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
       expect(f.adapter.submissions.every((message) => message.id === first.id)).toBe(true);
 
       await f.dispatcher.kick(PROJECT, AGENT);
@@ -305,17 +305,17 @@ describe("Dispatcher", () => {
     f.clock.advance(200);
     heartbeat(f);
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
     f.clock.advance(199);
     heartbeat(f);
     await f.dispatcher.runOnce(PROJECT, AGENT);
     expect(f.adapter.submissions.filter((message) => message.id === second.id)).toHaveLength(1);
     f.clock.advance(1);
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
   });
 
   it("releases uncertain delivery without muting the participant and retries to success", async () => {
@@ -338,8 +338,8 @@ describe("Dispatcher", () => {
     // The ambiguous outcome returns the message to the queue; no pause gate,
     // no quarantine block — the participant is never muted (issue #28).
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("stored");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(uncertain.id, uncertain.project)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(later.id, later.project)?.deliveryState).toBe("stored");
     expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
 
     await f.dispatcher.kick(PROJECT, AGENT);
@@ -350,8 +350,8 @@ describe("Dispatcher", () => {
       uncertain.id,
       later.id,
     ]);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(uncertain.id, uncertain.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(later.id, later.project)?.deliveryState).toBe("delivered");
     expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
   });
 
@@ -371,7 +371,7 @@ describe("Dispatcher", () => {
     };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
     expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
 
     f.clock.advance(199);
@@ -385,7 +385,7 @@ describe("Dispatcher", () => {
       message.id,
       message.id,
     ]);
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it("excludes overlapping runOnce calls from submitting the same FIFO row", async () => {
@@ -414,8 +414,8 @@ describe("Dispatcher", () => {
     expect(overlappingAttempt).toBe(firstAttempt);
     expect(results.every((result) => result.status === "fulfilled")).toBe(true);
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id]);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
   });
 
   it("shares exclusion between runOnce and kick while preserving drain semantics", async () => {
@@ -444,8 +444,8 @@ describe("Dispatcher", () => {
     expect(overlappingDrain).toBe(attempt);
     expect(results.every((result) => result.status === "fulfilled")).toBe(true);
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, second.id]);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
   });
 
   it("rechecks work when a kick overlaps the terminal empty queue check", async () => {
@@ -468,8 +468,8 @@ describe("Dispatcher", () => {
 
     expect(overlappingDrain).toBe(initialDrain);
     expect(f.adapter.submissions.map((message) => message.id)).toEqual([first.id, secondId]);
-    expect(f.store.getMessage(first.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(secondId)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(secondId, first.project)?.deliveryState).toBe("delivered");
   });
 
   it("releases asymmetric uncertain delivery and recovers without operator resume", async () => {
@@ -491,7 +491,7 @@ describe("Dispatcher", () => {
     };
 
     await f.dispatcher.runOnce(PROJECT, AGENT);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(uncertain.id, uncertain.project)?.deliveryState).toBe("stored");
     expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
 
     f.clock.advance(15_001);
@@ -502,8 +502,8 @@ describe("Dispatcher", () => {
     // Recovery needs no operator resume: the retry delivers the ambiguous
     // message and the FIFO successor right behind it (issue #28).
     expect(f.adapter.submit).toHaveBeenCalledTimes(3);
-    expect(f.store.getMessage(uncertain.id)?.deliveryState).toBe("delivered");
-    expect(f.store.getMessage(later.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(uncertain.id, uncertain.project)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(later.id, later.project)?.deliveryState).toBe("delivered");
     expect(f.store.isPaused(PROJECT, "participant", AGENT)).toBe(false);
   });
 
@@ -513,13 +513,13 @@ describe("Dispatcher", () => {
     const database = join(directory, "synloq.sqlite");
     const f = makeFixture({}, {}, database);
     const message = createMessage(f, "message-ordinary-paused", "2026-11-09T00:00:00.000Z");
-    f.store.setDeliveryState(message.id, "submitted");
+    f.store.setDeliveryState(message.id, message.project, "submitted");
     f.store.pause(PROJECT, "participant", AGENT, new Date(f.clock.now()).toISOString());
 
     f.clock.advance(15_001);
     f.sessions.reapExpired(f.store);
 
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
 
     f.store.resume(PROJECT, "participant", AGENT);
     f.sessions.register(
@@ -541,7 +541,7 @@ describe("Dispatcher", () => {
 
     expect(f.adapter.submit).toHaveBeenCalledTimes(1);
     expect(f.adapter.submissions[0]?.id).toBe(message.id);
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it("atomically excludes independent dispatchers from the same FIFO row", async () => {
@@ -566,14 +566,14 @@ describe("Dispatcher", () => {
     await independent.runOnce(PROJECT, AGENT);
 
     const secondSubmissionCount = secondAdapter.submit.mock.calls.length;
-    const stateBeforeCompletion = f.store.getMessage(message.id)?.deliveryState;
+    const stateBeforeCompletion = f.store.getMessage(message.id, message.project)?.deliveryState;
     blocked.resolve({ state: "delivered", clientMessageId: message.id });
     const [firstResult] = await Promise.allSettled([firstAttempt]);
 
     expect(secondSubmissionCount).toBe(0);
     expect(stateBeforeCompletion).toBe("submitted");
     expect(firstResult.status).toBe("fulfilled");
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it("rejects a stale adapter completion after same-session reconnect", async () => {
@@ -602,6 +602,6 @@ describe("Dispatcher", () => {
     blocked.resolve({ state: "delivered", clientMessageId: message.id });
 
     await expect(attempt).resolves.toBeUndefined();
-    expect(f.store.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(f.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
   });
 });

@@ -821,7 +821,7 @@ describe("serveCommand", () => {
       new Date(now).toISOString(),
       crypto.randomUUID(),
     );
-    messages.setDeliveryState(id, "submitted");
+    messages.setDeliveryState(id, PROJECT, "submitted");
     messages.pause(PROJECT, "participant", "arch", new Date(now).toISOString());
     now += 16_000;
     sessions.close();
@@ -835,7 +835,7 @@ describe("serveCommand", () => {
     });
     try {
       expect(handle.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      expect(handle.messages.getMessage(id)?.deliveryState).toBe("stored");
+      expect(handle.messages.getMessage(id, PROJECT)?.deliveryState).toBe("stored");
       expect(handle.messages.isPaused(PROJECT, "participant", "arch")).toBe(true);
       expect(handle.sessions.list(PROJECT)[0]?.sessionId).toBe("persisted-arch");
       expect(handle.sessions.effectiveState(PROJECT, "arch")).toBe("unknown");

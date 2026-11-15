@@ -133,9 +133,12 @@ export class SQLiteMessageStore {
     }
   }
 
-  private findById(id: string): MessageRow | undefined {
-    return this.database.prepare(`SELECT ${messageColumns} FROM messages WHERE id = ?`).get(id) as
-      MessageRow | undefined;
+  private findById(id: string, project: string): MessageRow | undefined {
+    // Project scope is part of the lookup, not a caller-side check: an id is
+    // only meaningful within its project (issue #51, defense in depth).
+    return this.database
+      .prepare(`SELECT ${messageColumns} FROM messages WHERE id = ? AND project = ?`)
+      .get(id, project) as MessageRow | undefined;
   }
 
   create(input: SendMessageInput, id: string, createdAt: string, threadId: string): CreateResult {
@@ -182,7 +185,7 @@ export class SQLiteMessageStore {
           createdAt,
           input.idempotencyKey,
         );
-      const inserted = this.findById(id);
+      const inserted = this.findById(id, input.project);
       if (!inserted) throw new Error("inserted message could not be read");
       return { message: toMessage(inserted), created: true };
     });
@@ -200,9 +203,9 @@ export class SQLiteMessageStore {
     });
   }
 
-  getMessage(id: string): Message | undefined {
+  getMessage(id: string, project: string): Message | undefined {
     return this.read(() => {
-      const row = this.findById(id);
+      const row = this.findById(id, project);
       return row ? toMessage(row) : undefined;
     });
   }
@@ -394,8 +397,8 @@ export class SQLiteMessageStore {
     binding: SessionBinding,
   ): Message {
     return this.write(() => {
-      const row = this.findById(id);
-      if (!row || row.project !== project || row.recipient !== recipient) {
+      const row = this.findById(id, project);
+      if (!row || row.recipient !== recipient) {
         throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
       }
       const session = this.deliverySession(project, recipient, binding);
@@ -422,8 +425,8 @@ export class SQLiteMessageStore {
     recipient: string,
     binding: SessionBinding,
   ): { row: MessageRow; session: DeliverySessionRow } {
-    const row = this.findById(id);
-    if (!row || row.project !== project || row.recipient !== recipient) {
+    const row = this.findById(id, project);
+    if (!row || row.recipient !== recipient) {
       throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
     }
     const session = this.deliverySession(project, recipient, binding);
@@ -444,7 +447,7 @@ export class SQLiteMessageStore {
     receipt: DeliveryReceipt,
   ): Message {
     return this.write(() => {
-      const before = this.findById(id);
+      const before = this.findById(id, project);
       if (
         receipt.evidence &&
         (receipt.state !== "delivered" ||
@@ -496,8 +499,8 @@ export class SQLiteMessageStore {
     clientIdempotency: boolean,
   ): Message {
     return this.write(() => {
-      const row = this.findById(id);
-      if (!row || row.project !== project || row.recipient !== recipient) {
+      const row = this.findById(id, project);
+      if (!row || row.recipient !== recipient) {
         throw new SynloqError("UNAUTHORIZED", "delivery does not belong to the recipient");
       }
       const session = this.deliverySession(project, recipient, binding);
@@ -529,7 +532,7 @@ export class SQLiteMessageStore {
         )
         .run(code, id);
       if (result.changes !== 1) throw new Error("delivery state changed during failure report");
-      const updated = this.findById(id);
+      const updated = this.findById(id, project);
       if (!updated) throw new Error("reset message could not be read");
       return toMessage(updated);
     });
@@ -645,22 +648,23 @@ export class SQLiteMessageStore {
       .prepare("UPDATE messages SET delivery_state = ? WHERE id = ? AND delivery_state = ?")
       .run(target, row.id, row.delivery_state);
     if (result.changes !== 1) throw new Error("delivery state changed during transaction");
-    const updated = this.findById(row.id);
+    const updated = this.findById(row.id, row.project);
     if (!updated) throw new Error("updated message could not be read");
     return toMessage(updated);
   }
 
   setDeliveryState(
     id: string,
+    project: string,
     target: Message["deliveryState"],
     binding?: SessionBinding,
   ): Message {
     return this.write(() => {
-      const row = this.findById(id);
+      const row = this.findById(id, project);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
       if (row.delivery_state === "stored" && target === "delivered") {
         this.transition(row, "submitted");
-        const submitted = this.findById(id);
+        const submitted = this.findById(id, project);
         if (!submitted) throw new Error("submitted message could not be read");
         return this.transition(submitted, "delivered");
       }
@@ -688,7 +692,7 @@ export class SQLiteMessageStore {
             binding.generation,
             id,
           );
-        const claimed = this.findById(id);
+        const claimed = this.findById(id, project);
         if (!claimed) throw new Error("claimed message could not be read");
         return toMessage(claimed);
       }
@@ -698,9 +702,9 @@ export class SQLiteMessageStore {
 
   quarantineDelivery(id: string, project: string, recipient: string, createdAt: string): Message {
     return this.write(() => {
-      const row = this.findById(id);
+      const row = this.findById(id, project);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
-      if (row.project !== project || row.recipient !== recipient) {
+      if (row.recipient !== recipient) {
         throw new SynloqError("INVALID_INPUT", "quarantine recipient does not match the message");
       }
       if (row.delivery_state === "stored") this.transition(row, "submitted");
@@ -714,7 +718,7 @@ export class SQLiteMessageStore {
            VALUES (?, ?, ?, ?) ON CONFLICT(message_id) DO NOTHING`,
         )
         .run(id, project, recipient, createdAt);
-      const quarantined = this.findById(id);
+      const quarantined = this.findById(id, project);
       if (!quarantined) throw new Error("quarantined message could not be read");
       return toMessage(quarantined);
     });
@@ -764,9 +768,9 @@ export class SQLiteMessageStore {
     });
   }
 
-  resetSubmittedForRetry(id: string): Message {
+  resetSubmittedForRetry(id: string, project: string): Message {
     return this.write(() => {
-      const row = this.findById(id);
+      const row = this.findById(id, project);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
       if (row.delivery_state !== "submitted") {
         throw new SynloqError("INVALID_INPUT", "only a submitted message can be reset for retry");
@@ -778,7 +782,7 @@ export class SQLiteMessageStore {
         )
         .run(id);
       if (result.changes !== 1) throw new Error("delivery state changed during transaction");
-      const updated = this.findById(id);
+      const updated = this.findById(id, project);
       if (!updated) throw new Error("reset message could not be read");
       return toMessage(updated);
     });
@@ -786,19 +790,19 @@ export class SQLiteMessageStore {
 
   acknowledge(id: string, project: string, recipient: string): Message {
     return this.write(() => {
-      const row = this.findById(id);
+      const row = this.findById(id, project);
       if (!row) throw new SynloqError("NOT_FOUND", "message not found");
-      if (row.project !== project || row.recipient !== recipient) {
+      if (row.recipient !== recipient) {
         throw new SynloqError("UNAUTHORIZED", "only the recipient can acknowledge a message");
       }
       if (row.delivery_state === "acked") return toMessage(row);
       if (row.delivery_state === "stored") this.transition(row, "submitted");
 
-      const submitted = this.findById(id);
+      const submitted = this.findById(id, project);
       if (!submitted) throw new Error("submitted message could not be read");
       if (submitted.delivery_state === "submitted") this.transition(submitted, "delivered");
 
-      const delivered = this.findById(id);
+      const delivered = this.findById(id, project);
       if (!delivered) throw new Error("delivered message could not be read");
       return this.transition(delivered, "acked");
     });
@@ -819,14 +823,14 @@ export class SQLiteMessageStore {
     });
   }
 
-  countThreadSince(threadId: string, since: string): number {
+  countThreadSince(threadId: string, project: string, since: string): number {
     return this.read(() => {
       const row = this.database
         .prepare(
           `SELECT COUNT(*) AS count FROM messages
-           WHERE thread_id = ? AND created_at >= ?`,
+           WHERE thread_id = ? AND project = ? AND created_at >= ?`,
         )
-        .get(threadId, since) as { count: number };
+        .get(threadId, project, since) as { count: number };
       return Number(row.count);
     });
   }

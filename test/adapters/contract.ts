@@ -110,7 +110,7 @@ export function createContractMessage(
 async function expectDelivered(h: Harness, message: Message): Promise<void> {
   await h.dispatcher.runOnce(message.project, message.to);
   expect(h.visible.map((entry) => entry.id)).toContain(message.id);
-  expect(h.store.getMessage(message.id)?.deliveryState).toBe("delivered");
+  expect(h.store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
 }
 
 export function runAdapterContract(name: string, factory: AdapterHarnessFactory): void {
@@ -162,7 +162,7 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       await h.dispatcher.runOnce(CONTRACT_PROJECT, CONTRACT_AGENT);
 
       expect(submit).not.toHaveBeenCalled();
-      expect(h.store.getMessage(message.id)?.deliveryState).toBe("stored");
+      expect(h.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
       expect(h.visible).toEqual([]);
     });
 
@@ -190,8 +190,8 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       await h.dispatcher.kick(CONTRACT_PROJECT, CONTRACT_AGENT);
 
       expect(h.visible.map((entry) => entry.id)).toEqual([first.id, second.id]);
-      expect(h.store.getMessage(first.id)?.deliveryState).toBe("delivered");
-      expect(h.store.getMessage(second.id)?.deliveryState).toBe("delivered");
+      expect(h.store.getMessage(first.id, first.project)?.deliveryState).toBe("delivered");
+      expect(h.store.getMessage(second.id, second.project)?.deliveryState).toBe("delivered");
     });
 
     it("preserves provenance", async () => {
@@ -234,8 +234,8 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       await h.dispatcher.runOnce(CONTRACT_PROJECT, CONTRACT_AGENT);
       await h.dispatcher.runOnce(CONTRACT_PROJECT, CONTRACT_AGENT);
 
-      expect(h.store.getMessage(first.id)?.deliveryState).toBe("stored");
-      expect(h.store.getMessage(second.id)?.deliveryState).toBe("stored");
+      expect(h.store.getMessage(first.id, first.project)?.deliveryState).toBe("stored");
+      expect(h.store.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
       expect(submit).toHaveBeenCalledTimes(1);
       expect(submit).toHaveBeenCalledWith(CONTRACT_SESSION, first, {
         generation: 1,
@@ -252,7 +252,7 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       await h.dispatcher.runOnce(CONTRACT_PROJECT, CONTRACT_AGENT);
 
       expect(submit).not.toHaveBeenCalled();
-      expect(h.store.getMessage(message.id)?.deliveryState).toBe("stored");
+      expect(h.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
       expect(h.visible).toEqual([]);
     });
 
@@ -267,7 +267,7 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
       const session = h.sessions.list(CONTRACT_PROJECT)[0];
       expect(inactiveReason(session)).toBe("active-delivery-unsupported");
       expect(submit).not.toHaveBeenCalled();
-      expect(h.store.getMessage(message.id)?.deliveryState).toBe("stored");
+      expect(h.store.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
       expect(h.visible).toEqual([]);
     });
   });

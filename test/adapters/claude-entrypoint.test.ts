@@ -131,14 +131,14 @@ describe("Claude composition entry points", () => {
         method: "notifications/claude/channel",
         params: { content: frameMessage(message, 1) },
       });
-      expect(messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+      expect(messages.getMessage(message.id, message.project)?.deliveryState).toBe("submitted");
 
       await runClaudeHook(
         arch,
         { project: PROJECT, agentId: "arch", sessionId: SESSION_ID },
         { stdin: hookInput("UserPromptSubmit", frameMessage(message, 1)) },
       );
-      expect(messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+      expect(messages.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
     } finally {
       await server.close();
       await mcpClient.close();

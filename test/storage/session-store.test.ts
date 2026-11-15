@@ -101,7 +101,7 @@ function createSubmitted(
     idempotencyKey,
   };
   store.create(input, id, "2026-11-09T00:00:00.000Z", crypto.randomUUID());
-  store.setDeliveryState(id, "submitted");
+  store.setDeliveryState(id, "verdicta", "submitted");
 }
 
 afterEach(() => {
@@ -355,8 +355,8 @@ describe("expired-session reaping", () => {
 
     store.reapExpired(messages);
 
-    expect(messages.getMessage("message-cto")?.deliveryState).toBe("stored");
-    expect(messages.getMessage("message-arch")?.deliveryState).toBe("submitted");
+    expect(messages.getMessage("message-cto", "verdicta")?.deliveryState).toBe("stored");
+    expect(messages.getMessage("message-arch", "verdicta")?.deliveryState).toBe("submitted");
     expect(messages.nextPending("verdicta", "cto")?.id).toBe("message-cto");
   });
 
@@ -370,7 +370,7 @@ describe("expired-session reaping", () => {
 
     store.reapExpired(messages);
 
-    expect(messages.getMessage("message-uncertain")?.deliveryState).toBe("submitted");
+    expect(messages.getMessage("message-uncertain", "verdicta")?.deliveryState).toBe("submitted");
     expect(messages.nextPending("verdicta", "cto")).toBeUndefined();
   });
 
@@ -384,7 +384,7 @@ describe("expired-session reaping", () => {
 
     store.reapExpired(messages);
 
-    expect(messages.getMessage("message-renewed")?.deliveryState).toBe("submitted");
+    expect(messages.getMessage("message-renewed", "verdicta")?.deliveryState).toBe("submitted");
   });
 
   it("releases a stale claim at replacement registration, not through reaping", () => {
@@ -393,7 +393,7 @@ describe("expired-session reaping", () => {
       const replacement = ctoSession("session-b");
       replacement.capabilities.clientIdempotency = false;
       store.register(replacement, true);
-      stateAfterReplacement = messages.getMessage("message-replaced")?.deliveryState;
+      stateAfterReplacement = messages.getMessage("message-replaced", "verdicta")?.deliveryState;
     });
     store.register(ctoSession("session-a"), false);
     createSubmitted(messages, "message-replaced");
@@ -405,12 +405,12 @@ describe("expired-session reaping", () => {
     // outstanding claim itself (issue #28); reaping must not act on the stale
     // idempotent snapshot afterwards.
     expect(stateAfterReplacement).toBe("stored");
-    expect(messages.getMessage("message-replaced")?.deliveryState).toBe("stored");
+    expect(messages.getMessage("message-replaced", "verdicta")?.deliveryState).toBe("stored");
   });
 
   it("skips delivered progress and continues reaping later submitted messages", () => {
     const { store, clock, messages } = makeSharedReapingStores(() => {
-      messages.setDeliveryState("message-progressed", "delivered");
+      messages.setDeliveryState("message-progressed", "verdicta", "delivered");
     });
     store.register(ctoSession("session-a"), false);
     createSubmitted(messages, "message-progressed");
@@ -419,8 +419,10 @@ describe("expired-session reaping", () => {
 
     expect(() => store.reapExpired(messages)).not.toThrow();
 
-    expect(messages.getMessage("message-progressed")?.deliveryState).toBe("delivered");
-    expect(messages.getMessage("message-still-submitted")?.deliveryState).toBe("stored");
+    expect(messages.getMessage("message-progressed", "verdicta")?.deliveryState).toBe("delivered");
+    expect(messages.getMessage("message-still-submitted", "verdicta")?.deliveryState).toBe(
+      "stored",
+    );
   });
 
   it("persists per-message quarantine across reopen and idempotent reaping", () => {
@@ -460,9 +462,9 @@ describe("expired-session reaping", () => {
     reopened.clock.advance(15_001);
     reopened.store.reapExpired(reopenedMessages);
 
-    expect(reopenedMessages.getMessage("message-durable-quarantine")?.deliveryState).toBe(
-      "submitted",
-    );
+    expect(
+      reopenedMessages.getMessage("message-durable-quarantine", "verdicta")?.deliveryState,
+    ).toBe("submitted");
     expect(reopenedMessages.nextPending("verdicta", "cto")).toBeUndefined();
   });
 
@@ -470,11 +472,13 @@ describe("expired-session reaping", () => {
     const messages = makeMessages();
     createSubmitted(messages, "message-submitted");
 
-    expect(messages.resetSubmittedForRetry("message-submitted").deliveryState).toBe("stored");
-    expect(() => messages.resetSubmittedForRetry("message-submitted")).toThrow(
+    expect(messages.resetSubmittedForRetry("message-submitted", "verdicta").deliveryState).toBe(
+      "stored",
+    );
+    expect(() => messages.resetSubmittedForRetry("message-submitted", "verdicta")).toThrow(
       expect.objectContaining({ code: "INVALID_INPUT" }),
     );
-    expect(() => messages.resetSubmittedForRetry("missing")).toThrow(
+    expect(() => messages.resetSubmittedForRetry("missing", "verdicta")).toThrow(
       expect.objectContaining({ code: "NOT_FOUND" }),
     );
   });

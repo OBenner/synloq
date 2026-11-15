@@ -598,7 +598,7 @@ describe("OpenCode dispatcher on-demand freshness", () => {
 
     expect(api.getSession).toHaveBeenCalled();
     expect(api.admit).toHaveBeenCalledTimes(1);
-    expect(store.getMessage(pending.id)?.deliveryState).toBe("delivered");
+    expect(store.getMessage(pending.id, pending.project)?.deliveryState).toBe("delivered");
   });
 
   it("performs zero admissions while the session markers report busy", async () => {
@@ -609,7 +609,7 @@ describe("OpenCode dispatcher on-demand freshness", () => {
     await dispatcher.runOnce(config.project, config.agentId);
 
     expect(api.admit).not.toHaveBeenCalled();
-    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+    expect(store.getMessage(pending.id, pending.project)?.deliveryState).toBe("stored");
   });
 
   it("performs zero admissions after the stream ends while the markers report busy", async () => {
@@ -624,7 +624,7 @@ describe("OpenCode dispatcher on-demand freshness", () => {
     await dispatcher.runOnce(config.project, config.agentId);
 
     expect(api.admit).not.toHaveBeenCalled();
-    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+    expect(store.getMessage(pending.id, pending.project)?.deliveryState).toBe("stored");
   });
 
   it("performs zero admissions after the session is deleted", async () => {
@@ -641,7 +641,7 @@ describe("OpenCode dispatcher on-demand freshness", () => {
     await dispatcher.runOnce(config.project, config.agentId);
 
     expect(api.admit).not.toHaveBeenCalled();
-    expect(store.getMessage(pending.id)?.deliveryState).toBe("stored");
+    expect(store.getMessage(pending.id, pending.project)?.deliveryState).toBe("stored");
   });
 
   it("admits a stored message on a quiet idle session without any events", async () => {
@@ -657,7 +657,7 @@ describe("OpenCode dispatcher on-demand freshness", () => {
     await dispatcher.runOnce(config.project, config.agentId);
 
     expect(api.admit).toHaveBeenCalledTimes(1);
-    expect(store.getMessage(pending.id)?.deliveryState).toBe("delivered");
+    expect(store.getMessage(pending.id, pending.project)?.deliveryState).toBe("delivered");
   });
 });
 

@@ -52,6 +52,7 @@ export class ProtectionPolicy {
   afterAccept(message: Message): void {
     const count = this.store.countThreadSince(
       message.threadId,
+      message.project,
       new Date(this.clock.now() - this.limits.threadWindowMs).toISOString(),
     );
     if (count >= this.limits.maxThreadMessagesPerWindow) {

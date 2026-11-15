@@ -99,7 +99,7 @@ describe("RelayService", () => {
     const message = await relay.send(cto, forged);
 
     expect(message).toMatchObject({ project: "verdicta", from: "cto", to: "arch" });
-    expect(messages.getMessage(message.id)).toEqual(message);
+    expect(messages.getMessage(message.id, message.project)).toEqual(message);
     expect(messages.listInbox("another-project", "arch", undefined, 50).messages).toEqual([]);
   });
 
@@ -302,7 +302,7 @@ describe("RelayService", () => {
       code: "UNAUTHORIZED",
     });
     await expect(relay.getMessage(otherProjectOperator, message.id)).rejects.toMatchObject({
-      code: "UNAUTHORIZED",
+      code: "NOT_FOUND",
     });
     await expect(relay.getMessage(operator, crypto.randomUUID())).rejects.toMatchObject({
       code: "NOT_FOUND",
@@ -312,8 +312,8 @@ describe("RelayService", () => {
   it("acknowledges only as the recipient and returns acked without another outcome", async () => {
     const { relay, messages, cto, arch } = await makeRelay();
     const message = await relay.send(cto, validInput);
-    messages.setDeliveryState(message.id, "submitted");
-    messages.setDeliveryState(message.id, "delivered");
+    messages.setDeliveryState(message.id, message.project, "submitted");
+    messages.setDeliveryState(message.id, message.project, "delivered");
 
     const acknowledged = await relay.acknowledge(arch, message.id);
 
@@ -324,15 +324,15 @@ describe("RelayService", () => {
   it("does not let a sender, third participant, or operator acknowledge", async () => {
     const { relay, messages, cto, tester, operator } = await makeRelay();
     const message = await relay.send(cto, validInput);
-    messages.setDeliveryState(message.id, "submitted");
-    messages.setDeliveryState(message.id, "delivered");
+    messages.setDeliveryState(message.id, message.project, "submitted");
+    messages.setDeliveryState(message.id, message.project, "delivered");
 
     for (const identity of [cto, tester, operator]) {
       await expect(relay.acknowledge(identity, message.id)).rejects.toMatchObject({
         code: "UNAUTHORIZED",
       });
     }
-    expect(messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(messages.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
     await expect(relay.acknowledge(cto, crypto.randomUUID())).rejects.toBeInstanceOf(SynloqError);
   });
 });
