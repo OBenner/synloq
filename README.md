@@ -18,6 +18,21 @@ Synloq is not an orchestrator. It does not hide work in replacement chats, run o
 3. In a project chat, ask the agent to **Initialize Synloq for this project** and confirm each role's name and responsibilities.
 4. The role chats appear in the project and coordinate through the local relay automatically — no separate server or manual MCP configuration is required.
 
+## How each host connects
+
+Synloq is host-agnostic: the relay, the CLI, and the per-role MCP channels know nothing about any specific client. A role joins a host by registering its MCP server in whatever form that host natively supports — there are no per-IDE plugin codebases.
+
+| Host           | Connection mechanism                                                                                                                                        | Live status                                                                         |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Kimi Work      | `synloq init` renders a personal plugin (the only MCP registration surface Kimi Work exposes) and creates the visible role chats through the client API     | **Verified** on live stands (2026-11-11, 2026-11-14)                                |
+| OpenCode       | init merges the MCP entry into `opencode.json` and creates role sessions through the server API                                                             | **Verified** by the live evidence matrix (2026-11-13; fault-injection rows pending) |
+| Codex CLI      | per-role `CODEX_HOME` with hooks — the full-matrix reference track                                                                                          | Live run in progress                                                                |
+| Codex Desktop  | per-role project directory with `.codex/config.toml` (manual today; init provisioning per [ADR 0004](docs/adr/0004-role-placement-and-claim.md) is planned) | **Configured** — live verification pending                                          |
+| Claude Desktop | MCP config; inbox and lifecycle state only, active delivery unsupported                                                                                     | **Inbox-only** (runbook `docs/runbooks/2026-11-15-claude-desktop-live-dod.md`)      |
+| ZCode          | API-created chats do not load the workspace MCP config (vendor limitation)                                                                                  | **Blocked** — manual UI retry pending                                               |
+
+Role placement is declared per role in `synloq.yaml` (the `host:` field) and reconciled by `synloq init` ([ADR 0004](docs/adr/0004-role-placement-and-claim.md)). Where a host exposes no session API, init emits an explicit next-steps checklist or a one-time claim code — never a silent degradation.
+
 ## Clone and run your own stand
 
 A clone of a project that commits a `synloq.yaml` is an **independent stand**, not a node of someone else's team. The committed manifest declares the default role roster and travels with the repository; credentials, session bindings, and the relay database are always machine-local under the Synloq home and are never committed.
@@ -34,12 +49,13 @@ The project key is derived deterministically from the canonical project root pat
 
 - **Kimi Work** visible delivery to an exact bound client conversation: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral — verified on the local CTO ↔ Architect stand, 2026-11-11.
 - **Kimi Work** generic arbitrary-role initialization and automatic relay startup/recovery: exact visible chat creation, idempotent reconciliation, two visible reply cycles, role-initiated acknowledgements, live host respawn recovery — verified on an isolated local Product ↔ Reviewer stand, 2026-11-11. Surviving-peer election is covered by a real loopback/SQLite integration test, not claimed as live-host evidence.
+- **OpenCode** active delivery — verified by the live evidence matrix on the adopted stand, 2026-11-13 (`docs/runbooks/2026-11-13-opencode-adapter-matrix.md`, runs r3/r3b); the §8 fault-injection rows of `test/e2e/real-clients.md` remain pending.
 
 **Experimental (not verified live)** — see [docs/adapters/](docs/adapters/README.md):
 
-- Claude Code active delivery — **UNVERIFIED** until the manual evidence matrix is executed.
-- OpenCode active delivery — **UNVERIFIED** until the manual evidence matrix is executed.
-- Codex MCP inbox and lifecycle state reporting (active delivery unsupported) — **UNVERIFIED**.
+- Claude Code active delivery — **UNVERIFIED** until the manual evidence matrix is executed. Claude Desktop is inbox-only (no active delivery).
+- Codex MCP inbox and lifecycle state reporting (active delivery unsupported) — CLI live run in progress; Desktop configured per [ADR 0004](docs/adr/0004-role-placement-and-claim.md), verification pending.
+- ZCode — **BLOCKED**: API-created chats do not load the workspace MCP config (vendor limitation; manual UI retry pending).
 - The reference adapter is covered by automated contract and end-to-end tests; controlled transports and fake SDK clients are contract evidence, not live-client evidence.
 
 Known-unverified regardless of host: host-enforced per-chat MCP isolation, Kimi Code CLI active delivery. Controlled tests are not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
