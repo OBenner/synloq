@@ -11,3 +11,4 @@ coverage/
 .tmp-*
 .tmp-pack/
 docs/superpowers/
+/synloq-agents/
