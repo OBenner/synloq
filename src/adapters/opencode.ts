@@ -665,6 +665,7 @@ export async function runOpenCodeAdapter(
     sessionId: config.sessionId,
     protocolVersion: PROTOCOL_VERSION,
     capabilities: adapter.capabilities,
+    surface: "opencode",
   });
   adapter.start();
   return Object.assign(adapter, {

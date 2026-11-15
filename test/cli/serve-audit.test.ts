@@ -160,4 +160,201 @@ describe("serveCommand audit wiring", () => {
       await handle.close();
     }
   });
+
+  describe("session registration audit (issue #53)", () => {
+    const capabilities = {
+      activeDelivery: true,
+      stateReporting: true,
+      clientIdempotency: true,
+    };
+
+    async function startRelayWithRole(): Promise<{
+      handle: Awaited<ReturnType<typeof serveCommand>>;
+      headers: Record<string, string>;
+      auditPath: () => Promise<string>;
+    }> {
+      const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-reg-"));
+      dirs.push(root);
+      writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
+      const home = join(root, ".synloq");
+      const roleToken = await new CredentialStore(root, home).issue("verdicta", "cto");
+      const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
+      return {
+        handle,
+        headers: { authorization: `Bearer ${roleToken}`, "content-type": "application/json" },
+        auditPath: async () => {
+          const paths = await projectPaths(root, home);
+          return join(paths.home, "data", `${paths.key}-audit.jsonl`);
+        },
+      };
+    }
+
+    function readEvents(path: string): Record<string, unknown>[] {
+      return readFileSync(path, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+    }
+
+    it("records an accepted registration with session, generation, and surface", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            sessionId: "ses_cto_1",
+            protocolVersion: 1,
+            capabilities,
+            surface: "kimi-work",
+          }),
+        });
+        expect(response.status).toBe(200);
+
+        const events = readEvents(await auditPath());
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            action: "registerSession",
+            decision: "accept",
+            reasonCode: "REGISTERED",
+            agentId: "cto",
+          }),
+        );
+        const accepted = events.find((event) => event.action === "registerSession");
+        expect(accepted?.detail).toContain("ses_cto_1");
+        expect(accepted?.detail).toContain("generation 1");
+        expect(accepted?.detail).toContain("kimi-work");
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("records a denied duplicate registration with the attempted session id", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const first = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
+        });
+        expect(first.status).toBe(200);
+        const duplicate = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            sessionId: "ses_cto_2",
+            protocolVersion: 1,
+            capabilities,
+            surface: "opencode",
+          }),
+        });
+        expect(duplicate.status).toBe(409);
+
+        const events = readEvents(await auditPath());
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            action: "registerSession",
+            decision: "deny",
+            reasonCode: "DUPLICATE_SESSION",
+            agentId: "cto",
+          }),
+        );
+        const denied = events.find(
+          (event) => event.action === "registerSession" && event.decision === "deny",
+        );
+        expect(denied?.detail).toContain("ses_cto_2");
+        expect(denied?.detail).toContain("opencode");
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("records a denied registration with an incompatible protocol version", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 999, capabilities }),
+        });
+        expect(response.status).toBe(409);
+
+        const events = readEvents(await auditPath());
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            action: "registerSession",
+            decision: "deny",
+            reasonCode: "INCOMPATIBLE_PROTOCOL",
+            agentId: "cto",
+          }),
+        );
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("does not audit heartbeat lease renewals", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const register = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
+        });
+        expect(register.status).toBe(200);
+        const heartbeat = await fetch(`${handle.baseUrl}/v1/sessions/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", state: "idle" }),
+        });
+        expect(heartbeat.status).toBe(200);
+
+        const events = readEvents(await auditPath());
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ action: "registerSession", decision: "accept" });
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("audits a malformed JSON body as a denied registration attempt", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: "{ not json",
+        });
+        expect(response.status).toBe(400);
+
+        const events = readEvents(await auditPath());
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            action: "registerSession",
+            decision: "deny",
+            reasonCode: "INVALID_INPUT",
+            agentId: "cto",
+          }),
+        );
+      } finally {
+        await handle.close();
+      }
+    });
+
+    it("does not audit schema rejections (consistent with replace-session)", async () => {
+      const { handle, headers, auditPath } = await startRelayWithRole();
+      try {
+        // Valid JSON, but no capabilities → zod rejection, not a SynloqError.
+        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1 }),
+        });
+        expect(response.status).toBe(400);
+        await expect(async () => readFileSync(await auditPath(), "utf8")).rejects.toThrow();
+      } finally {
+        await handle.close();
+      }
+    });
+  });
 });

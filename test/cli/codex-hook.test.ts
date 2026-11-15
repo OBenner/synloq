@@ -56,6 +56,7 @@ describe("Codex hook", () => {
           stateReporting: true,
           clientIdempotency: false,
         },
+        surface: "codex-hook",
       },
       undefined,
     );

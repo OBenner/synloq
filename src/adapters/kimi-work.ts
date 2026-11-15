@@ -473,6 +473,7 @@ export async function runKimiWorkAdapter(
       sessionId: config.conversationKey,
       protocolVersion: PROTOCOL_VERSION,
       capabilities: adapter.capabilities,
+      surface: "kimi-work",
     });
     if (
       session.project !== config.project ||

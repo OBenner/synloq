@@ -34,7 +34,10 @@ const errorResponseSchema = z.object({
 });
 
 export type TokenProvider = () => string | Promise<string>;
-export type SessionRegistrationRequest = Omit<SessionRegistration, "project" | "agentId">;
+export type SessionRegistrationRequest = Omit<SessionRegistration, "project" | "agentId"> & {
+  /** Client surface name ("kimi-work", "opencode", …); audit-only, never stored (issue #53). */
+  surface?: string;
+};
 export type ReplaceSessionRequest = Omit<SessionRegistration, "project">;
 
 export interface InboxOptions {
