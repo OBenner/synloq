@@ -9,6 +9,8 @@ import { CredentialStore } from "../config/credentials.js";
 import { loadManifest } from "../config/manifest.js";
 import { SynloqError } from "../domain/errors.js";
 import { PROTOCOL_VERSION } from "../domain/session.js";
+import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
+import { discoverOpenCodeHost } from "../host/opencode/discovery.js";
 import { startMcpStdio } from "../mcp/stdio.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import {
@@ -24,6 +26,7 @@ import {
   inboxCommand,
   listCommand,
   pauseCommand,
+  removeRoleCommand,
   replaceSessionCommand,
   resumeCommand,
   revokeTokenCommand,
@@ -68,6 +71,7 @@ const commandNames = [
   "replace-session",
   "rotate-token",
   "revoke-token",
+  "remove-role",
   "claim",
   "claim-issue",
   "doctor",
@@ -102,12 +106,15 @@ const helpText: Record<CommandName, string> = {
     "Usage: synloq resume --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   "replace-session":
     "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
-  doctor: "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair]\n",
+  doctor:
+    "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host]\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
   "revoke-token":
     "Usage: synloq revoke-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
+  "remove-role":
+    "Usage: synloq remove-role --project-root <path> --role <agent-id> --credential <operator-token-file> [--synloq-home <path>]\n",
   claim:
     "Usage: synloq claim --project-root <path> --code <synloq-claim-...> [--synloq-home <path>]\n",
   "claim-issue":
@@ -229,16 +236,32 @@ async function execute(
       "project-root": { type: "string" },
       "synloq-home": { type: "string" },
       repair: { type: "boolean" },
+      "check-host": { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
+    }
+    // Issue #32 (W6): liveness probes need the OpenCode service; discovery
+    // failure must not break doctor — the report marks sessions "unknown".
+    let openCodeHost: OpenCodeSessionHost | undefined;
+    if (value(values, "check-host") === true) {
+      try {
+        const discovered = await discoverOpenCodeHost();
+        openCodeHost = new OpencodeApiClient(discovered.baseUrl, {
+          ...(discovered.authToken !== undefined ? { authToken: discovered.authToken } : {}),
+        });
+      } catch {
+        openCodeHost = undefined;
+      }
     }
     io.stdout.write(
       `${formatDoctorReport(
         await doctorCommand({
           projectRoot: requiredString(values, "project-root"),
           ...(value(values, "repair") === true ? { repair: true } : {}),
+          ...(value(values, "check-host") === true ? { checkHost: true } : {}),
+          ...(openCodeHost ? { openCodeHost } : {}),
           ...synloqHomeOption(values),
         }),
       )}\n`,
@@ -287,6 +310,43 @@ async function execute(
     };
     const operation = command === "rotate-token" ? rotateTokenCommand : revokeTokenCommand;
     writeJson(io, await operation(options));
+    return;
+  }
+
+  if (command === "remove-role") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      role: { type: "string" },
+      credential: { type: "string" },
+      "synloq-home": { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    // The OpenCode session can be deleted only while the service is
+    // reachable; when discovery fails the command proceeds and reports the
+    // session as skipped-host-unavailable (the credential revocation and
+    // manifest removal are the security-relevant parts).
+    let openCodeHost: OpenCodeSessionHost | undefined;
+    try {
+      const discovered = await discoverOpenCodeHost();
+      openCodeHost = new OpencodeApiClient(discovered.baseUrl, {
+        ...(discovered.authToken !== undefined ? { authToken: discovered.authToken } : {}),
+      });
+    } catch {
+      openCodeHost = undefined;
+    }
+    writeJson(
+      io,
+      await removeRoleCommand({
+        projectRoot: requiredString(values, "project-root"),
+        agentId: requiredString(values, "role"),
+        operatorCredentialPath: requiredString(values, "credential"),
+        ...synloqHomeOption(values),
+        ...(openCodeHost ? { openCodeHost } : {}),
+      }),
+    );
     return;
   }
 

@@ -10,6 +10,8 @@ export interface OpenCodeSessionHost {
   }): Promise<{ id: string; permissionsApplied: boolean }>;
   getSession(id: string): Promise<boolean>;
   postPrompt(id: string, text: string): Promise<void>;
+  /** Deletes the session; resolves false when it is already gone. */
+  deleteSession(id: string): Promise<boolean>;
 }
 
 export interface OpenCodeFetchResponse {
@@ -156,6 +158,19 @@ export class OpencodeApiClient implements OpenCodeSessionHost {
     }
     const parsed = sessionSchema.safeParse(OpencodeApiClient.unwrap(result.json));
     return parsed.success && parsed.data.id === id;
+  }
+
+  async deleteSession(id: string): Promise<boolean> {
+    const result = await this.request("DELETE", `/api/session/${encodeURIComponent(id)}`);
+    if (result.status === 404) return false;
+    if (result.status >= 500) throw unavailable();
+    if (result.status < 200 || result.status >= 300) {
+      throw new SynloqError(
+        "INVALID_INPUT",
+        `OpenCode session deletion failed with status ${result.status}`,
+      );
+    }
+    return true;
   }
 
   async postPrompt(id: string, text: string): Promise<void> {

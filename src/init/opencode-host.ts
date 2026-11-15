@@ -2,7 +2,7 @@ import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
-import { writeManifest } from "../config/manifest.js";
+import { mergeManifestParticipants } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import {
   TeamStateStore,
@@ -17,6 +17,7 @@ import type { OpenCodeSessionHost } from "../host/opencode/client.js";
 import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
+import { relativeHomePaths } from "./runtime-config.js";
 import { rolePromptOpenCode } from "./role-prompt.js";
 import type { RoleInput } from "./types.js";
 
@@ -81,7 +82,11 @@ export async function initializeOpenCodeTeam(
     title: role.title,
     role: role.role,
   }));
-  await writeManifest(projectRoot, participants, language);
+  // Issue #32 (gaps G1/G3): merge into the existing manifest instead of
+  // overwriting it, and build the deny-tools matrix from the merged roster —
+  // a single-role run must not leave the new session able to call the tools
+  // of roles that were not part of this invocation.
+  const roster = await mergeManifestParticipants(projectRoot, participants, language);
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,
@@ -128,7 +133,7 @@ export async function initializeOpenCodeTeam(
         }
         sessionId = role.conversationKey;
       } else {
-        const denyTools = roles
+        const denyTools = roster
           .filter((other) => other.agentId !== role.agentId)
           .map((other) => `synloq-${other.agentId}*`);
         const created = await host.createSession({
@@ -167,10 +172,10 @@ export async function initializeOpenCodeTeam(
     // The opencode binding lets the MCP channel host the relay itself
     // (supervisor election), so no manual `synloq serve` is needed (#30).
     // sessionId is absent only when init ran without a reachable service.
+    // Paths under the Synloq home are relative to the config file (#7/#32).
     await writeJsonAtomic(configPath, {
       relayUrl,
-      credentialPath: credential.tokenPath,
-      synloqHome: paths.home,
+      ...relativeHomePaths(paths.key, role.agentId),
       language,
       opencode: {
         projectRoot,

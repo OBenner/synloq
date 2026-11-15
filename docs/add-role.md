@@ -36,6 +36,36 @@ already runs other roles.
    plugin lifecycle, and a channel for a new role can only appear after the
    host reloads the plugin.
 
+## Adding a role with an explicit role list (any host)
+
+Passing `--role` extends the existing manifest instead of replacing it
+(issue #32, gap G1) — roles from previous runs are never dropped:
+
+```bash
+npx synloq@latest init --host opencode --role qa:QA:"Verify outcomes" --non-interactive
+```
+
+On OpenCode this also creates the session with a deny-tools matrix built
+from the full merged roster (not just the roles of this invocation), posts
+the role prompt, and merges `opencode.json` non-destructively. The running
+relay picks the new role up from the manifest — no relay restart needed.
+
+## Removing a role
+
+```bash
+npx synloq@latest remove-role --project-root <path> --role qa --credential <operator-token-file>
+```
+
+The command, in order: validates the operator credential (no irreversible
+effect runs before this check), deletes the OpenCode session when the role
+lives there (`DELETE /api/session/{id}`; skipped with a note when the service
+is unreachable), revokes the credential through the operator-gated path
+(which also voids any outstanding claim code), removes the role from
+`synloq.yaml`, its `opencode.json` server entry, and the team-state binding.
+Kimi Work chats cannot be deleted programmatically — the result tells you to
+close the chat manually. Afterwards restart the relay so the removed role
+leaves the in-memory participant registry.
+
 ## Claiming a role on a host without session provisioning
 
 Hosts without a session-creation API (`synloq init --host generic`) cannot
@@ -88,6 +118,11 @@ not recorded.
   never installed from this source.
 - A role chat that stays empty after Install/Update usually means the client
   needs a restart so the new MCP channel is spawned.
+- For OpenCode-bound roles, `synloq doctor` shows a `hostCheck` section:
+  whether the `opencode.json` MCP entry is present and the credential file is
+  healthy. Add `--check-host` to also probe the OpenCode service for session
+  liveness (`alive` / `dead`; `unknown` with a note when the service is
+  unreachable). Without the flag doctor never touches the network.
 - Removing a role is heavier than adding one: restart the relay afterwards so
   its in-memory state for the removed role is dropped.
 
@@ -96,4 +131,6 @@ not recorded.
 - The plugin channel set (`mcpServers`) cannot hot-reload without the host;
   that is an upstream Kimi Work feature request tracked in issue #36.
 - Mixed-host projects (some roles in Kimi Work, some in OpenCode) are
-  supported by the relay, but full add-role UX for them lands with issue #32.
+  supported by the relay, and add-role merges the manifest on any host — but
+  declaring each role's host in `synloq.yaml` (ADR-0004 layers 1–2) is a
+  separate task; until then the host is chosen per init invocation.

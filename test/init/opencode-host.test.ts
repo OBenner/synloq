@@ -42,14 +42,19 @@ describe("initializeOpenCodeTeam", () => {
     ) as Record<string, unknown>;
     expect(ctoConfig).toEqual({
       relayUrl: "http://127.0.0.1:4100",
-      credentialPath: result.roles[0]!.credentialPath,
-      synloqHome: paths.home,
+      // Issue #7/#32: paths under the Synloq home are relative to the config
+      // file (<home>/runtime/<key>/mcp/<role>.json) so relocation keeps working.
+      credentialPath: `../../../credentials/${paths.key}/cto.token`,
+      synloqHome: "../../..",
       language: "en",
       opencode: {
         projectRoot: root,
         agentId: "cto",
       },
     });
+    // The relative credential path resolves to the real token file.
+    const { resolve } = await import("node:path");
+    await readFile(resolve(join(paths.runtime, "mcp"), ctoConfig.credentialPath as string), "utf8");
     await readFile(result.roles[0]!.credentialPath, "utf8");
 
     const opencode = JSON.parse(await readFile(join(root, "opencode.json"), "utf8")) as {
@@ -356,6 +361,39 @@ describe("initializeOpenCodeTeam with a live server API", () => {
     }
   });
 
+  it("builds the deny-tools matrix from the merged roster, not the invocation (#32 G3)", async () => {
+    const { root, home, baseUrl, sessions, close } = await stand();
+    try {
+      const { OpencodeApiClient } = await import("../../src/host/opencode/client.js");
+      const host = new OpencodeApiClient(baseUrl);
+      const options = {
+        projectRoot: root,
+        project: "stand",
+        synloqHome: home,
+        runtimeEntrypoint: "dist/mcp/stdio.js",
+        host,
+      };
+      await initializeOpenCodeTeam({ ...options, roles });
+
+      // A single-role follow-up run (the add-role path): the new session must
+      // still be denied the tools of cto and arch from the first run.
+      const result = await initializeOpenCodeTeam({
+        ...options,
+        roles: [{ agentId: "tester", title: "Tester", role: "Verifies acceptance" }],
+      });
+      const tester = sessions.get(result.roles[0]!.sessionId!)!;
+      expect(tester.body.permissions).toEqual([
+        { action: "synloq-cto*", resource: "*", effect: "deny" },
+        { action: "synloq-arch*", resource: "*", effect: "deny" },
+      ]);
+      // And its prompt carries the OpenCode mechanics (W4).
+      expect(tester.prompts[0]).toContain("no automatic push delivery");
+      expect(tester.prompts[0]).toContain("synloq-tester");
+    } finally {
+      await close();
+    }
+  });
+
   it("refuses to rebind a role already bound to a Kimi Work conversation", async () => {
     const { root, home, baseUrl, close } = await stand();
     try {
@@ -389,6 +427,54 @@ describe("initializeOpenCodeTeam with a live server API", () => {
     } finally {
       await close();
     }
+  });
+});
+
+describe("initializeOpenCodeTeam manifest merge (#32 W5)", () => {
+  it("merges new roles into the existing manifest instead of overwriting it (G1)", async () => {
+    const { root, home } = await setup();
+    const options = {
+      projectRoot: root,
+      project: "stand",
+      synloqHome: home,
+      runtimeEntrypoint: "dist/mcp/stdio.js",
+    };
+    await initializeOpenCodeTeam({ ...options, roles });
+    await initializeOpenCodeTeam({
+      ...options,
+      roles: [{ agentId: "tester", title: "Tester", role: "Verifies acceptance" }],
+    });
+
+    const manifest = await readFile(join(root, "synloq.yaml"), "utf8");
+    for (const id of ["cto", "arch", "tester"]) expect(manifest).toContain(`${id}:`);
+
+    const opencode = JSON.parse(await readFile(join(root, "opencode.json"), "utf8")) as {
+      mcp: { servers: Record<string, unknown> };
+    };
+    expect(Object.keys(opencode.mcp.servers).sort()).toEqual([
+      "synloq-arch",
+      "synloq-cto",
+      "synloq-tester",
+    ]);
+  });
+
+  it("overrides a same-id role on re-init but keeps the others", async () => {
+    const { root, home } = await setup();
+    const options = {
+      projectRoot: root,
+      project: "stand",
+      synloqHome: home,
+      runtimeEntrypoint: "dist/mcp/stdio.js",
+    };
+    await initializeOpenCodeTeam({ ...options, roles });
+    await initializeOpenCodeTeam({
+      ...options,
+      roles: [{ agentId: "arch", title: "Architect", role: "Designs and reviews" }],
+    });
+
+    const manifest = await readFile(join(root, "synloq.yaml"), "utf8");
+    expect(manifest).toContain("Designs and reviews");
+    expect(manifest).toContain("cto:");
   });
 });
 

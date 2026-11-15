@@ -19,6 +19,19 @@ export interface CredentialHealth {
   status: "ok" | "missing" | "stale";
 }
 
+/**
+ * Issue #32 (W6): per-participant checks for roles living on an OpenCode
+ * host. `session` is "unknown" unless doctor ran with --check-host and the
+ * host answered; `opencodeConfig` reflects the project opencode.json entry
+ * ("unreadable" when the file exists but does not parse).
+ */
+export interface OpenCodeHostCheck {
+  sessionId: string;
+  session: "alive" | "dead" | "unknown";
+  opencodeConfig: "present" | "missing" | "unreadable";
+  note?: string;
+}
+
 export interface DoctorReport {
   storage: { ok: boolean; path: string; error?: string };
   home?: SynloqHomeProbe;
@@ -36,6 +49,7 @@ export interface DoctorReport {
     adapterConnected: boolean;
     credential?: CredentialHealth;
     config?: ChannelConfigHealthReport;
+    hostCheck?: OpenCodeHostCheck;
     protocolVersion?: number;
     capabilities?: AdapterCapabilities;
     lastHeartbeatAt?: string;
@@ -52,6 +66,7 @@ export interface DoctorReportOptions {
   home?: SynloqHomeProbe;
   credentials?: Map<string, CredentialHealth>;
   configs?: Map<string, ChannelConfigHealthReport>;
+  hostChecks?: Map<string, OpenCodeHostCheck>;
   repair?: DoctorReport["repair"];
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
@@ -121,6 +136,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
       };
       const credential = options.credentials?.get(participant.agentId);
       const config = options.configs?.get(participant.agentId);
+      const hostCheck = options.hostChecks?.get(participant.agentId);
       return {
         agentId: participant.agentId,
         ...(session ? { sessionId: session.sessionId } : {}),
@@ -128,6 +144,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
         adapterConnected: storage.ok && hasUnexpiredLease(session, now),
         ...(credential ? { credential } : {}),
         ...(config ? { config } : {}),
+        ...(hostCheck ? { hostCheck } : {}),
         ...(session
           ? {
               protocolVersion: session.protocolVersion,

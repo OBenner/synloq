@@ -26,6 +26,7 @@ describe("synloq init --host opencode", () => {
       createSession: vi.fn(),
       getSession: vi.fn(),
       postPrompt: vi.fn(),
+      deleteSession: vi.fn(),
     };
     let stdout = "";
     let stderr = "";
