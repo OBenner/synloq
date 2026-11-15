@@ -6,6 +6,7 @@ import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../confi
 import { CredentialStore, type Identity } from "../config/credentials.js";
 import { loadManifest, loadManifestRoles, removeManifestParticipant } from "../config/manifest.js";
 import { HOST_CAPABILITIES } from "../config/hosts.js";
+import { inspectDesktopDirectory, removeDesktopDirectory } from "../init/codex-desktop.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
@@ -520,17 +521,28 @@ export async function removeRoleCommand(options: RemoveRoleOptions): Promise<Rem
   const removedServers = await removeOpencodeMcpServers(options.projectRoot, [
     `synloq-${options.agentId}`,
   ]);
-  if (state?.conversations[options.agentId]) {
+  if (state?.conversations[options.agentId] || state?.placements?.[options.agentId]) {
     await stateStore.update((current): TeamState => {
       if (!current) throw new SynloqError("INVALID_INPUT", "Synloq team state is missing");
       const conversations = { ...current.conversations };
       delete conversations[options.agentId];
-      return { ...current, conversations };
+      const placements = { ...current.placements };
+      delete placements[options.agentId];
+      return { ...current, conversations, placements };
     });
   }
 
   const nextSteps = ["Restart the relay so the removed role leaves the participant registry"];
-  if (session === "manual") {
+  if (state?.placements?.[options.agentId]?.host === "codex-desktop") {
+    nextSteps.push(
+      await removeDesktopDirectory(
+        paths.runtime,
+        options.agentId,
+        state.placements[options.agentId]?.desktopFiles,
+      ),
+    );
+  }
+  if (session === "manual" && state?.placements?.[options.agentId]?.host !== "codex-desktop") {
     nextSteps.push("Close the role's Kimi Work chat manually — it cannot be deleted via API");
   }
   if (session === "skipped-host-unavailable") {
@@ -608,16 +620,23 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
     const observedHost = binding ? (binding.kind ?? "kimi-work") : prepared?.host;
     const mismatch = observedHost !== undefined && observedHost !== host;
     const missing = HOST_CAPABILITIES[host].canProvisionSessions ? !binding : !prepared;
+    const desktop =
+      host === "codex-desktop"
+        ? await inspectDesktopDirectory(paths.runtime, role.agentId, prepared?.desktopFiles)
+        : undefined;
     placements.set(role.agentId, {
       host,
-      state: binding
-        ? "bound"
-        : !prepared
-          ? "missing"
-          : teamState?.claims?.[role.agentId]
-            ? "unclaimed"
-            : "manual",
-      ok: !mismatch && !missing,
+      state: desktop?.ok
+        ? "configured"
+        : binding
+          ? "bound"
+          : !prepared
+            ? "missing"
+            : teamState?.claims?.[role.agentId]
+              ? "unclaimed"
+              : "manual",
+      ok: !mismatch && !missing && (desktop?.ok ?? true),
+      ...(desktop && !desktop.ok ? { issue: desktop.issue ?? "role directory is invalid" } : {}),
       ...(mismatch
         ? {
             issue: `manifest host ${host} differs from prepared host ${observedHost}; use explicit replace-session/migration`,

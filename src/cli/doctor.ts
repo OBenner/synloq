@@ -11,7 +11,7 @@ import type { HostName } from "../config/hosts.js";
 
 export interface PlacementHealth {
   host: HostName;
-  state: "bound" | "unclaimed" | "manual" | "missing";
+  state: "bound" | "unclaimed" | "manual" | "missing" | "configured";
   ok: boolean;
   issue?: string;
 }

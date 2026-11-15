@@ -49,7 +49,8 @@ describe("init per-role placement", () => {
     ]);
     expect(result.manual.nextSteps.join(" ")).toContain("trust");
     expect(result.manual.nextSteps.join(" ")).toContain("synloq serve");
-    expect(result.manual.roles[0].claimCode).toMatch(/^synloq-claim-arch-/);
+    expect(result.manual.roles[0].claimCode).toMatch(/^synloq-claim-qa-/);
+    expect(result.desktop.roles[0].agentId).toBe("arch");
     expect(JSON.parse(await readFile(result.manual.roles[0].configPath, "utf8")).relayUrl).toBe(
       "http://127.0.0.1:4399",
     );

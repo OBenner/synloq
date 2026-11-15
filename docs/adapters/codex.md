@@ -1,5 +1,48 @@
 # Codex bridge (experimental)
 
+## Desktop-first role directories
+
+Declare `host: codex-desktop` for each role in `synloq.yaml`, then run init
+against the source project with an explicit Synloq home and relay URL:
+
+```bash
+synloq init --project-root <source-project> --synloq-home <home> --relay-url http://127.0.0.1:4399 --non-interactive
+```
+
+The `desktop.roles` result lists directories under
+`<home>/runtime/<project-key>/roles/<role>`. Open each directory as a separate
+trusted Codex Desktop project and start a chat, following `desktop.nextSteps`.
+Each `.codex/config.toml` declares only `synloq-<role>`; `AGENTS.md` contains
+the shared role prompt and source-project location. Credentials stay in the
+Synloq home; the runtime JSON uses `relativeHomePaths`. The TOML contains
+paths, never tokens. Re-run init after relocating the home/runtime binary
+because the Desktop launcher arguments contain absolute paths.
+
+Desktop configuration provisioning does not create a chat, report session
+state, or wake an inactive model. `canProvisionSessions` remains false.
+Desktop roles do not require claim codes; generic/ZCode roles retain the
+existing claim flow. The role is reactive: activate it to check its inbox.
+A manual-only stand requires an operator-started relay on its configured
+port (or an existing compatible relay supervised by another host).
+
+`doctor` reports `placement.state: configured` for intact Desktop files;
+this is configuration evidence, not a live chat binding. Missing directories,
+missing files, and edited generated files produce a failed placement check.
+Re-init preserves credentials and refuses to overwrite drifted files.
+Back up deliberate edits and resolve drift before re-init. `remove-role`
+uses the existing operator authorization/revocation path and removes only
+unchanged generated files; modified or additional user files are retained
+with a diagnostic. Close Desktop chats manually after removal.
+
+Live acceptance is **pending**. During an operator-approved window on an
+isolated stand: open cto/arch directories, verify each chat sees only its own
+channel (also check global MCP configuration), exchange a message and ack/reply
+via the relay, restart Desktop, and repeat. Record role/message IDs only.
+Automated generation and credential tests do not establish host-enforced
+isolation. Do not use the production relay for this acceptance run.
+
+## CLI reference: hooks and lifecycle reporting
+
 > **Status: UNVERIFIED.** Live compatibility with a real Codex client has not been
 > verified. Codex currently supports the authenticated MCP inbox and lifecycle state
 > reporting only; active delivery is unsupported and always disabled. Generic

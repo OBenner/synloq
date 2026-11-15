@@ -86,7 +86,8 @@ describe("mixed-host reconcile", () => {
     expect(roles.map((role) => role.host)).toEqual(options.roles.map((role) => role.host));
     // Host placement must never leak into the relay participant representation.
     expect((await loadManifest(root)).every((role) => !("host" in role))).toBe(true);
-    expect(first.manual.roles.map((role) => role.agentId)).toEqual(["arch", "qa"]);
+    expect(first.manual.roles.map((role) => role.agentId)).toEqual(["qa"]);
+    expect(first.desktop.roles.map((role) => role.agentId)).toEqual(["arch"]);
     expect(first.manual.nextSteps.join(" ")).toContain("claim");
     const paths = await projectPaths(root, home);
     const before = await readFile(paths.bindings, "utf8");
@@ -101,7 +102,7 @@ describe("mixed-host reconcile", () => {
     expect(doctor.participants.map((p) => p.host)).toEqual(options.roles.map((role) => role.host));
     expect(doctor.participants.every((p) => p.placement?.ok)).toBe(true);
     expect(doctor.participants.find((p) => p.agentId === "arch")?.placement?.state).toBe(
-      "unclaimed",
+      "configured",
     );
     const config = JSON.parse(await readFile(join(paths.runtime, "mcp", "cto.json"), "utf8"));
     expect(config.relayUrl).toBe(options.relayUrl);

@@ -9,6 +9,8 @@ import { initializeGenericTeam, type InitializedGenericRole } from "./generic-ho
 import { initializeTeam, parseRoleInputs, resolveLanguage } from "./initialize-team.js";
 import { initializeOpenCodeTeam } from "./opencode-host.js";
 import { coreRules } from "./role-prompt.js";
+import { DEFAULT_RELAY_URL } from "./runtime-config.js";
+import { provisionDesktopRoles } from "./codex-desktop.js";
 import type { InitializeTeamOptions, KimiWorkInitHost } from "./types.js";
 
 export type ReconcileOptions = Omit<InitializeTeamOptions, "host" | "pluginSourcePath"> & {
@@ -28,7 +30,7 @@ export async function reconcileTeam(
   const roles = parsed.map((role) => ({ ...role, host: role.host ?? ("kimi-work" as HostName) }));
   const projectRoot = await realpath(options.projectRoot);
   const language = await resolveLanguage(projectRoot, options.language);
-  const relayUrl = options.relayUrl ?? "http://127.0.0.1:4100";
+  const relayUrl = options.relayUrl ?? DEFAULT_RELAY_URL;
   if (!isLoopbackHttpUrl(relayUrl))
     throw new SynloqError("INVALID_INPUT", "relayUrl must be an explicit HTTP loopback origin");
   const paths = await projectPaths(projectRoot, options.synloqHome);
@@ -97,11 +99,21 @@ export async function reconcileTeam(
       runtimeEntrypoint: options.runtimeEntrypoint,
     });
   }
-  const manualRoles = roles.filter((role) => !HOST_CAPABILITIES[role.host].canProvisionSessions);
+  const desktopRoles = roles.filter((role) => role.host === "codex-desktop");
+  const desktop = desktopRoles.length
+    ? await provisionDesktopRoles({
+        ...common,
+        roles: desktopRoles,
+        runtimeEntrypoint: options.runtimeEntrypoint,
+      })
+    : { roles: [], nextSteps: [] };
+  const manualRoles = roles.filter(
+    (role) => !HOST_CAPABILITIES[role.host].canProvisionSessions && role.host !== "codex-desktop",
+  );
   const manual: { roles: InitializedGenericRole[]; nextSteps: string[] } = manualRoles.length
     ? await initializeGenericTeam({ ...common, roles: manualRoles })
     : { roles: [], nextSteps: [] };
-  if (manualRoles.length && !kimiRoles.length && !openCodeRoles.length) {
+  if ((manualRoles.length || desktopRoles.length) && !kimiRoles.length && !openCodeRoles.length) {
     manual.nextSteps.push(
       "Start a relay for this project with synloq serve --project-root <project> --synloq-home <home> --port <relay-port>; manual MCP inbox channels require a running relay.",
     );
@@ -111,16 +123,18 @@ export async function reconcileTeam(
     placements: {
       ...current?.placements,
       ...Object.fromEntries(
-        roles.map((role) => [
-          role.agentId,
-          {
-            host: role.host,
-            state: HOST_CAPABILITIES[role.host].canProvisionSessions
-              ? ("bound" as const)
-              : ("unclaimed" as const),
-            instructions: coreRules(role, language).join("\n"),
-          },
-        ]),
+        roles
+          .filter((role) => role.host !== "codex-desktop")
+          .map((role) => [
+            role.agentId,
+            {
+              host: role.host,
+              state: HOST_CAPABILITIES[role.host].canProvisionSessions
+                ? ("bound" as const)
+                : ("unclaimed" as const),
+              instructions: coreRules(role, language).join("\n"),
+            },
+          ]),
       ),
     },
   }));
@@ -130,5 +144,6 @@ export async function reconcileTeam(
     kimi,
     opencode,
     manual,
+    desktop,
   };
 }
