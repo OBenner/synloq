@@ -189,7 +189,9 @@ describe("Claude negotiated capabilities and fresh idle", () => {
     await observeQuietPeriod();
 
     expect(connection.notifications).toEqual([]);
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "stored",
+    );
   });
 
   it("does not poll or notify after registration until fresh hook idle arrives", async () => {
@@ -200,7 +202,9 @@ describe("Claude negotiated capabilities and fresh idle", () => {
 
     await observeQuietPeriod();
     expect(connection.notifications).toEqual([]);
-    expect(current.relay.messages.getMessage(probe.id)?.deliveryState).toBe("stored");
+    expect(current.relay.messages.getMessage(probe.id, probe.project)?.deliveryState).toBe(
+      "stored",
+    );
 
     await sessionStart(configPath);
     await vi.waitFor(() => expect(connection.notifications).toHaveLength(1), {
@@ -251,7 +255,9 @@ describe("Claude composed transport lifecycle", () => {
     await observeQuietPeriod();
     expect(first.notifications).toHaveLength(1);
     expect(restarted.notifications).toEqual([]);
-    expect(current.relay.messages.getMessage(probe.id)?.deliveryState).toBe("submitted");
+    expect(current.relay.messages.getMessage(probe.id, probe.project)?.deliveryState).toBe(
+      "submitted",
+    );
   });
 });
 

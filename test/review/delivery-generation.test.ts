@@ -147,7 +147,9 @@ describe("generation-bound HTTP delivery", () => {
 
     await rejection;
     expect(replacement.session.generation).not.toBe(old.generation);
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "stored",
+    );
   });
 
   it("rejects an old-generation delivered receipt after same-session reconnect", async () => {
@@ -165,7 +167,9 @@ describe("generation-bound HTTP delivery", () => {
     await expect(
       receipt(current.arch, message.id, { state: "delivered", clientMessageId: message.id }, old),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).not.toBe("delivered");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).not.toBe(
+      "delivered",
+    );
   });
 
   it("rejects an old-generation failure report after same-session reconnect", async () => {
@@ -179,7 +183,10 @@ describe("generation-bound HTTP delivery", () => {
       protocolVersion: PROTOCOL_VERSION,
       capabilities,
     });
-    const beforeFailure = current.relay.messages.getMessage(message.id)?.deliveryState;
+    const beforeFailure = current.relay.messages.getMessage(
+      message.id,
+      message.project,
+    )?.deliveryState;
 
     await expect(
       current.arch.deliveryFailure(message.id, {
@@ -188,7 +195,9 @@ describe("generation-bound HTTP delivery", () => {
         clientIdempotency: true,
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe(beforeFailure);
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      beforeFailure,
+    );
   });
 
   it("rejects receipt completion after the claiming session closes", async () => {
@@ -207,7 +216,9 @@ describe("generation-bound HTTP delivery", () => {
         binding,
       ),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "submitted",
+    );
   });
 
   it.each(["busy", "closed"] as const)(
@@ -238,7 +249,9 @@ describe("generation-bound HTTP delivery", () => {
 
       expect(submit).not.toHaveBeenCalled();
       expect(adapter.visible(binding.sessionId)).toEqual([]);
-      expect(current.relay.messages.getMessage(message.id)?.deliveryState).not.toBe("delivered");
+      expect(
+        current.relay.messages.getMessage(message.id, message.project)?.deliveryState,
+      ).not.toBe("delivered");
     },
   );
 
@@ -259,7 +272,9 @@ describe("generation-bound HTTP delivery", () => {
     await runner.runOnce();
 
     expect(adapter.visible(SESSION).map((entry) => entry.id)).toEqual([message.id]);
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "delivered",
+    );
   });
 
   it("releases an outstanding non-idempotent claim on restart and delivers it once", async () => {
@@ -276,7 +291,9 @@ describe("generation-bound HTTP delivery", () => {
 
     // Re-registration reconciles the outstanding claim back into the queue
     // instead of quarantining it and muting the participant (issue #28).
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "stored",
+    );
     expect(current.relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(false);
 
     const runner = new HttpAdapterRunner(current.arch, adapter, fresh, 0);
@@ -284,7 +301,9 @@ describe("generation-bound HTTP delivery", () => {
     await runner.runOnce();
 
     expect(adapter.visible(SESSION).map((entry) => entry.id)).toEqual([message.id]);
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "delivered",
+    );
   });
 });
 

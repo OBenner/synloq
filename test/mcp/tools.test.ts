@@ -266,7 +266,7 @@ describe("Synloq agent-facing MCP tools", () => {
       expectsReply: false,
       idempotencyKey: "mcp-ack-1",
     });
-    fixture.messages.setDeliveryState(message.id, "delivered");
+    fixture.messages.setDeliveryState(message.id, message.project, "delivered");
 
     const result = await fixture.mcpClient.callTool({
       name: "synloq_ack",

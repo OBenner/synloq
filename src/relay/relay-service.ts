@@ -121,7 +121,9 @@ export class RelayService {
       from: identity.operator ? "operator" : identity.agentId,
     });
     await this.requireParticipant(input.project, input.to);
-    const parent = input.inReplyTo ? this.messages.getMessage(input.inReplyTo) : undefined;
+    const parent = input.inReplyTo
+      ? this.messages.getMessage(input.inReplyTo, input.project)
+      : undefined;
     if (
       input.inReplyTo &&
       (!parent || parent.to !== identity.agentId || parent.project !== identity.project)
@@ -165,7 +167,7 @@ export class RelayService {
   async reply(identity: Identity, raw: ReplyRequest): Promise<Message> {
     try {
       this.requireWriter(identity, raw.sessionId);
-      const parent = this.messages.getMessage(raw.inReplyTo);
+      const parent = this.messages.getMessage(raw.inReplyTo, identity.project);
       if (!parent || parent.to !== identity.agentId || parent.project !== identity.project) {
         throw new SynloqError("NOT_FOUND", "reply parent not found");
       }
@@ -212,11 +214,12 @@ export class RelayService {
 
   async getMessage(identity: Identity, messageId: string): Promise<Message> {
     try {
-      const message = this.messages.getMessage(messageId);
+      const message = this.messages.getMessage(messageId, identity.project);
       if (!message) throw new SynloqError("NOT_FOUND", "message not found");
       if (
-        message.project !== identity.project ||
-        (!identity.operator && message.from !== identity.agentId && message.to !== identity.agentId)
+        !identity.operator &&
+        message.from !== identity.agentId &&
+        message.to !== identity.agentId
       ) {
         throw new SynloqError(
           "UNAUTHORIZED",

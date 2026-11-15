@@ -151,7 +151,7 @@ describe("createStatusReport wait reasons", () => {
   it("explains a delivered message awaiting acknowledgement", () => {
     register("arch", "idle");
     const id = queueMessage("arch", "2026-11-09T23:56:55.000Z", "status-ack-1");
-    fixture.messages.setDeliveryState(id, "delivered");
+    fixture.messages.setDeliveryState(id, PROJECT, "delivered");
 
     expect(report().participants[1]).toMatchObject({
       queued: 0,
@@ -171,7 +171,7 @@ describe("createStatusReport wait reasons", () => {
   it("appends the acked-without-reply counter to any reason", () => {
     register("arch", "idle");
     const id = queueMessage("arch", "2026-11-09T23:15:00.000Z", "status-unanswered-1", true);
-    fixture.messages.setDeliveryState(id, "delivered");
+    fixture.messages.setDeliveryState(id, PROJECT, "delivered");
     fixture.messages.acknowledge(id, PROJECT, "arch");
 
     const entry = report().participants[1];

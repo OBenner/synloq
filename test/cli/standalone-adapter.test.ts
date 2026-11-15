@@ -280,7 +280,9 @@ describe("standalone real-client composition", () => {
         meta: { message: message.id, thread: message.threadId },
       },
     });
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "submitted",
+    );
 
     await runStandaloneClaudeHook(configPath, {
       stdin: Readable.from([
@@ -291,7 +293,9 @@ describe("standalone real-client composition", () => {
         }),
       ]),
     });
-    expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+      "delivered",
+    );
   });
 
   it("composes OpenCode queue admission, receipts, exact binding, and shutdown", async () => {
@@ -321,7 +325,9 @@ describe("standalone real-client composition", () => {
     await vi.waitFor(
       () => {
         expect(sdk.admit).toHaveBeenCalledTimes(1);
-        expect(current.relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+        expect(current.relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe(
+          "delivered",
+        );
       },
       { timeout: 1_000, interval: 1 },
     );

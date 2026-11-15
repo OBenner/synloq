@@ -106,8 +106,8 @@ describe("SQLiteMessageStore", () => {
 
     expect(reply.inReplyTo).toBe(parent.id);
     expect(reply.threadId).toBe(parent.threadId);
-    expect(store.getMessage(reply.id)).toEqual(reply);
-    expect(store.getMessage(crypto.randomUUID())).toBeUndefined();
+    expect(store.getMessage(reply.id, reply.project)).toEqual(reply);
+    expect(store.getMessage(crypto.randomUUID(), "verdicta")).toBeUndefined();
   });
 
   it("returns stored messages in FIFO order for one recipient", () => {
@@ -117,9 +117,9 @@ describe("SQLiteMessageStore", () => {
     createAt(store, crypto.randomUUID(), "2026-11-09T00:00:00.000Z", uniqueInput({ to: "tester" }));
 
     expect(store.nextPending("verdicta", "arch")?.id).toBe(earlier.id);
-    store.setDeliveryState(earlier.id, "submitted");
+    store.setDeliveryState(earlier.id, earlier.project, "submitted");
     expect(store.nextPending("verdicta", "arch")).toBeUndefined();
-    store.setDeliveryState(earlier.id, "delivered");
+    store.setDeliveryState(earlier.id, earlier.project, "delivered");
     expect(store.nextPending("verdicta", "arch")?.id).toBe(later.id);
     expect(store.nextPending("verdicta", "tester")?.to).toBe("tester");
   });
@@ -138,9 +138,9 @@ describe("SQLiteMessageStore", () => {
     );
 
     expect(store.nextPending("verdicta", "arch")?.id).toBe(first.id);
-    store.setDeliveryState(first.id, "submitted");
+    store.setDeliveryState(first.id, first.project, "submitted");
     expect(store.nextPending("verdicta", "arch")).toBeUndefined();
-    store.setDeliveryState(first.id, "delivered");
+    store.setDeliveryState(first.id, first.project, "delivered");
     expect(store.nextPending("verdicta", "arch")?.id).toBe(second.id);
   });
 
@@ -148,18 +148,26 @@ describe("SQLiteMessageStore", () => {
     const store = makeStore();
     const message = createAt(store, crypto.randomUUID(), new Date().toISOString());
 
-    expect(store.setDeliveryState(message.id, "submitted").deliveryState).toBe("submitted");
-    expect(store.setDeliveryState(message.id, "delivered").deliveryState).toBe("delivered");
-    expect(store.setDeliveryState(message.id, "acked").deliveryState).toBe("acked");
-    expect(store.getMessage(message.id)?.deliveryState).toBe("acked");
+    expect(store.setDeliveryState(message.id, message.project, "submitted").deliveryState).toBe(
+      "submitted",
+    );
+    expect(store.setDeliveryState(message.id, message.project, "delivered").deliveryState).toBe(
+      "delivered",
+    );
+    expect(store.setDeliveryState(message.id, message.project, "acked").deliveryState).toBe(
+      "acked",
+    );
+    expect(store.getMessage(message.id, message.project)?.deliveryState).toBe("acked");
   });
 
   it("records stored to delivered through both legal transitions", () => {
     const store = makeStore();
     const message = createAt(store, crypto.randomUUID(), new Date().toISOString());
 
-    expect(store.setDeliveryState(message.id, "delivered").deliveryState).toBe("delivered");
-    expect(store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(store.setDeliveryState(message.id, message.project, "delivered").deliveryState).toBe(
+      "delivered",
+    );
+    expect(store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it.each([
@@ -170,21 +178,21 @@ describe("SQLiteMessageStore", () => {
   ] as const)("rejects an invalid %s to %s transition", (initial, target) => {
     const store = makeStore();
     const message = createAt(store, crypto.randomUUID(), new Date().toISOString());
-    if (initial !== "stored") store.setDeliveryState(message.id, "submitted");
+    if (initial !== "stored") store.setDeliveryState(message.id, message.project, "submitted");
     if (initial === "delivered" || initial === "acked") {
-      store.setDeliveryState(message.id, "delivered");
+      store.setDeliveryState(message.id, message.project, "delivered");
     }
-    if (initial === "acked") store.setDeliveryState(message.id, "acked");
+    if (initial === "acked") store.setDeliveryState(message.id, message.project, "acked");
 
-    expect(() => store.setDeliveryState(message.id, target)).toThrow(
+    expect(() => store.setDeliveryState(message.id, message.project, target)).toThrow(
       expect.objectContaining({ code: "INVALID_INPUT" }),
     );
-    expect(store.getMessage(message.id)?.deliveryState).toBe(initial);
+    expect(store.getMessage(message.id, message.project)?.deliveryState).toBe(initial);
   });
 
   it("rejects a transition for a missing message", () => {
     const store = makeStore();
-    expect(() => store.setDeliveryState(crypto.randomUUID(), "submitted")).toThrow(
+    expect(() => store.setDeliveryState(crypto.randomUUID(), "verdicta", "submitted")).toThrow(
       expect.objectContaining({ code: "NOT_FOUND" }),
     );
   });
@@ -192,16 +200,17 @@ describe("SQLiteMessageStore", () => {
   it("allows only the authenticated recipient to acknowledge", () => {
     const store = makeStore();
     const message = createAt(store, crypto.randomUUID(), new Date().toISOString());
-    store.setDeliveryState(message.id, "submitted");
-    store.setDeliveryState(message.id, "delivered");
+    store.setDeliveryState(message.id, message.project, "submitted");
+    store.setDeliveryState(message.id, message.project, "delivered");
 
     expect(() => store.acknowledge(message.id, "verdicta", "cto")).toThrow(
       expect.objectContaining({ code: "UNAUTHORIZED" }),
     );
+    // Cross-project is NOT_FOUND, not UNAUTHORIZED: no existence leak (issue #51).
     expect(() => store.acknowledge(message.id, "another-project", "arch")).toThrow(
-      expect.objectContaining({ code: "UNAUTHORIZED" }),
+      expect.objectContaining({ code: "NOT_FOUND" }),
     );
-    expect(store.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(store.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
     expect(store.acknowledge(message.id, "verdicta", "arch").deliveryState).toBe("acked");
     expect(store.acknowledge(message.id, "verdicta", "arch").deliveryState).toBe("acked");
   });
@@ -230,9 +239,12 @@ describe("SQLiteMessageStore", () => {
     const store = makeStore();
     const stored = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:00.000Z");
     const delivered = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:01.000Z");
-    store.setDeliveryState(delivered.id, "delivered");
+    store.setDeliveryState(delivered.id, delivered.project, "delivered");
     const submitted = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:02.000Z");
-    store.setDeliveryState(submitted.id, "submitted", { sessionId: "session-1", generation: 1 });
+    store.setDeliveryState(submitted.id, submitted.project, "submitted", {
+      sessionId: "session-1",
+      generation: 1,
+    });
     const acked = createAt(store, crypto.randomUUID(), "2026-11-09T00:00:03.000Z");
     store.acknowledge(acked.id, "verdicta", "arch");
 
@@ -294,12 +306,12 @@ describe("SQLiteMessageStore", () => {
       uniqueInput({ text: "excluded" }),
     );
     createAt(store, crypto.randomUUID(), "2026-11-09T00:00:03.000Z", uniqueInput({ to: "tester" }));
-    store.setDeliveryState(submitted.id, "submitted");
-    store.setDeliveryState(delivered.id, "submitted");
-    store.setDeliveryState(delivered.id, "delivered");
+    store.setDeliveryState(submitted.id, submitted.project, "submitted");
+    store.setDeliveryState(delivered.id, delivered.project, "submitted");
+    store.setDeliveryState(delivered.id, delivered.project, "delivered");
 
     expect(store.pendingUsage("verdicta", "arch")).toEqual({ count: 2, bytes: 7 });
-    expect(store.getMessage(stored.id)?.deliveryState).toBe("stored");
+    expect(store.getMessage(stored.id, stored.project)?.deliveryState).toBe("stored");
   });
 
   it("restores messages and delivery state after reopening the same file", () => {
@@ -312,11 +324,14 @@ describe("SQLiteMessageStore", () => {
       "2026-11-09T00:00:00.000Z",
       crypto.randomUUID(),
     ).message;
-    firstStore.setDeliveryState(created.id, "submitted");
+    firstStore.setDeliveryState(created.id, created.project, "submitted");
     firstStore.close();
 
     const reopened = makeStore(database);
-    expect(reopened.getMessage(created.id)).toEqual({ ...created, deliveryState: "submitted" });
+    expect(reopened.getMessage(created.id, created.project)).toEqual({
+      ...created,
+      deliveryState: "submitted",
+    });
     expect(reopened.nextPending("verdicta", "arch")).toBeUndefined();
     expect(
       reopened.create(
@@ -398,7 +413,7 @@ describe("SQLiteMessageStore", () => {
 
         expect(store.claimNextDelivery("verdicta", "arch", binding)?.message.id).toBe(messageId);
         store.reportDeliveryFailure(messageId, "verdicta", "arch", binding, code, true);
-        expect(store.getMessage(messageId)?.deliveryState).toBe("stored");
+        expect(store.getMessage(messageId, "verdicta")?.deliveryState).toBe("stored");
 
         const retry = store.claimNextDelivery("verdicta", "arch", binding);
         if (code === "RETRYABLE") {
@@ -421,9 +436,9 @@ describe("SQLiteMessageStore", () => {
     createAt(store, storedOld, "2026-11-09T00:00:00.000Z");
     createAt(store, storedNew, "2026-11-09T00:05:00.000Z");
     createAt(store, deliveredId, "2026-11-09T00:01:00.000Z");
-    store.setDeliveryState(deliveredId, "delivered");
+    store.setDeliveryState(deliveredId, "verdicta", "delivered");
     createAt(store, ackedId, "2026-11-09T00:02:00.000Z");
-    store.setDeliveryState(ackedId, "delivered");
+    store.setDeliveryState(ackedId, "verdicta", "delivered");
     store.acknowledge(ackedId, "verdicta", "arch");
 
     expect(store.oldestStoredAt("verdicta", "arch")).toBe("2026-11-09T00:00:00.000Z");
@@ -450,7 +465,7 @@ describe("SQLiteMessageStore", () => {
       [crypto.randomUUID(), "2026-11-09T00:02:00.000Z", false], // no reply expected
     ] as const) {
       createAt(store, id, createdAt, uniqueInput({ expectsReply }));
-      store.setDeliveryState(id, "delivered");
+      store.setDeliveryState(id, "verdicta", "delivered");
       store.acknowledge(id, "verdicta", "arch");
     }
     // A reply clears the answered parent.
@@ -469,6 +484,43 @@ describe("SQLiteMessageStore", () => {
     expect(store.unansweredAcked("verdicta", "arch", "2026-11-09T00:00:30.000Z")).toEqual({
       count: 1,
       oldestAt: "2026-11-09T00:00:00.000Z",
+    });
+  });
+
+  // Issue #51: project isolation is structural at the store layer, not only
+  // per-database-file. An id from project A must be invisible from project B
+  // in every id-based lookup.
+  describe("cross-project isolation (issue #51)", () => {
+    it("hides an id of project A from every project-B lookup", () => {
+      const store = makeStore();
+      const threadId = crypto.randomUUID();
+      const message = store.create(
+        uniqueInput(),
+        crypto.randomUUID(),
+        "2026-11-09T00:00:00.000Z",
+        threadId,
+      ).message;
+      // A message in another project sharing the same thread id, so the test
+      // proves the filter is the project column, not the thread.
+      store.create(
+        uniqueInput({ project: "other-project" }),
+        crypto.randomUUID(),
+        "2026-11-09T00:01:00.000Z",
+        threadId,
+      );
+
+      expect(store.getMessage(message.id, "verdicta")).toEqual(message);
+      expect(store.getMessage(message.id, "other-project")).toBeUndefined();
+      expect(store.countThreadSince(threadId, "verdicta", "2026-11-08T00:00:00.000Z")).toBe(1);
+      expect(store.countThreadSince(threadId, "other-project", "2026-11-08T00:00:00.000Z")).toBe(1);
+
+      expect(() => store.acknowledge(message.id, "other-project", "arch")).toThrow(SynloqError);
+      expect(() => store.setDeliveryState(message.id, "other-project", "delivered")).toThrow(
+        SynloqError,
+      );
+      expect(() => store.resetSubmittedForRetry(message.id, "other-project")).toThrow(SynloqError);
+      // The message in project A is untouched by the failed cross-project writes.
+      expect(store.getMessage(message.id, "verdicta")?.deliveryState).toBe("stored");
     });
   });
 });

@@ -83,8 +83,8 @@ describe("HTTP adapter failure recovery", () => {
     adapter.failNext(first.id);
 
     await expect(runner.runOnce()).resolves.toBe("failed");
-    expect(relay.messages.getMessage(first.id)?.deliveryState).toBe("stored");
-    expect(relay.messages.getMessage(second.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.getMessage(first.id, first.project)?.deliveryState).toBe("stored");
+    expect(relay.messages.getMessage(second.id, second.project)?.deliveryState).toBe("stored");
     await expect(runner.runOnce()).resolves.toBe("delivered");
     await expect(runner.runOnce()).resolves.toBe("delivered");
     expect(adapter.visible(SESSION).map((entry) => entry.id)).toEqual([first.id, second.id]);
@@ -110,13 +110,13 @@ describe("HTTP adapter failure recovery", () => {
     const runner = new HttpAdapterRunner(arch, adapter, binding, 0);
 
     await expect(runner.runOnce()).resolves.toBe("failed");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
     expect(relay.messages.isPaused(PROJECT, "participant", "arch")).toBe(false);
     expect(relay.messages.isPaused(PROJECT, "participant", "cto")).toBe(false);
 
     fail = false;
     await expect(runner.runOnce()).resolves.toBe("delivered");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
   });
 
   it("rejects a failure report from a different participant", async () => {
@@ -132,6 +132,6 @@ describe("HTTP adapter failure recovery", () => {
         clientIdempotency: true,
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("submitted");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("submitted");
   });
 });

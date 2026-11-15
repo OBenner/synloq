@@ -113,7 +113,7 @@ describe("Kimi Work adapter and real relay", () => {
     const message = await send("kimi-integration-delivered-1");
 
     await expect(runner.runOnce()).resolves.toBe("delivered");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("delivered");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("delivered");
     expect(control.send).toHaveBeenCalledTimes(1);
   });
 
@@ -126,14 +126,14 @@ describe("Kimi Work adapter and real relay", () => {
     const message = await send("kimi-integration-uncertain-1");
 
     await expect(runner.runOnce()).resolves.toBe("failed");
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
     expect(relay.messages.isPaused("synloq", "participant", "arch")).toBe(false);
 
     // The next poll retries the same message through the probe-first path
     // instead of leaving the participant muted (issue #28).
     await expect(runner.runOnce()).resolves.toBe("failed");
     expect(control.send.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(relay.messages.getMessage(message.id)?.deliveryState).toBe("stored");
+    expect(relay.messages.getMessage(message.id, message.project)?.deliveryState).toBe("stored");
     expect(relay.messages.isPaused("synloq", "participant", "arch")).toBe(false);
   });
 });

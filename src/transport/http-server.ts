@@ -377,7 +377,7 @@ export class RelayHttpServer {
     if (method === "POST" && receiptMatch) {
       const messageId = messageIdSchema.parse(decodeURIComponent(receiptMatch[1] ?? ""));
       const input = receiptSchema.parse(await this.readJson(request));
-      const existing = this.options.messages.getMessage(messageId);
+      const existing = this.options.messages.getMessage(messageId, project);
       if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
       if (existing.project !== project || existing.to !== identity.agentId) {
         throw new SynloqError(
@@ -407,7 +407,7 @@ export class RelayHttpServer {
     if (method === "POST" && failureMatch) {
       const messageId = messageIdSchema.parse(decodeURIComponent(failureMatch[1] ?? ""));
       const input = deliveryFailureSchema.parse(await this.readJson(request));
-      const existing = this.options.messages.getMessage(messageId);
+      const existing = this.options.messages.getMessage(messageId, project);
       if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
       if (existing.project !== project || existing.to !== identity.agentId) {
         throw new SynloqError(
