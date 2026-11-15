@@ -56,3 +56,16 @@ node /absolute/path/to/synloq/dist/cli/main.js claude-hook \
 Hook stdout is empty: no injected context or permission decision is emitted. Channel notification success is only `submitted`; a matching `UserPromptSubmit` hook with exact Synloq provenance supplies `delivered` evidence.
 
 See [README.md](README.md) for shared adapter configuration rules and the process topology.
+
+## Claude Desktop (Code tab)
+
+**Live status 2026-11-15: MCP inbox VERIFIED, active delivery UNSUPPORTED (disabled), per-role server isolation UNVERIFIED.** Executed runbook: `docs/runbooks/2026-11-15-claude-desktop-live-dod.md`; audited against the relay database.
+
+Desktop differs from the CLI: there are no launch flags and no development-channel loading, so the channel protocol and the activation gate above do not apply. What works is the MCP inbox pattern on per-role project folders:
+
+- One folder per role with its own `.mcp.json` declaring exactly one `synloq-<role>` server (the ADR-0004 per-role project config signal, confirmed on this second host).
+- The stdio channel configuration (`claude-<role>.json`) keeps the credential in an external token file and requires loopback relay URLs; the visible session id comes from the host's own session tool (`get_session`), never invented.
+- Roles are reactive: the chat polls `synloq_inbox` when the operator activates it. A message sent to a busy role stays `stored` until the role reads it — no injection, no loss (verified with probe `508adc44-…`).
+- Hooks (`SessionStart`, `Stop`) execute from `.claude/settings.json`; their connection to relay busy/idle state is UNVERIFIED.
+
+Open follow-ups needing a GUI window: MCP pickup screenshots, cross-server isolation (E3.5), cross-role ack rejection (`UNAUTHORIZED`).

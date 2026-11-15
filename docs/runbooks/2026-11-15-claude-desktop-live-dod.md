@@ -1,5 +1,13 @@
 # Live runbook: Claude Desktop (Code tab) verification on the real stand
 
+> **Status: EXECUTED 2026-11-15 — verdict: MCP INBOX VERIFIED, active delivery
+> UNSUPPORTED (disabled).** Audited by the Synloq dev role against the relay
+> SQLite and saved evidence. Audit outcome and doc updates:
+> `docs/client-compatibility.md` § Claude Desktop (Code tab),
+> `docs/adapters/claude-code.md` § Claude Desktop (Code tab). Remaining
+> GUI-only evidence (E3 pickup screenshots, E3.5 isolation, cross-role ack) is
+> tracked as a follow-up operator window.
+
 **Executor:** an agent running inside Claude Desktop (the **Code** tab) on this
 machine (Windows).
 **Auditor:** Synloq dev role — validates everything afterwards against the relay

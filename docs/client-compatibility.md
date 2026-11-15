@@ -84,6 +84,23 @@ This procedure has **not** been executed as part of the mock-tested implementati
 
 Until this evidence exists, Claude Code active delivery must remain disabled in ordinary operator configuration. The complete executable matrix is `test/e2e/real-clients.md`.
 
+## Claude Desktop (Code tab)
+
+**MCP inbox: VERIFIED live on 2026-11-15. Per-role server isolation: UNVERIFIED. Active delivery: UNSUPPORTED (disabled).**
+
+Live evidence from the runbook `docs/runbooks/2026-11-15-claude-desktop-live-dod.md`, executed against Claude Desktop 5.11492.5.0 (MSIX package) with project `claude-desktop-synloq` and a relay on `127.0.0.1:4303`:
+
+- Per-role `.mcp.json` files are picked up by Desktop Code-tab projects — the second host (after Codex Desktop) confirming the ADR-0004 per-role project config signal.
+- SDK handshake completed with exactly the six ordinary Synloq tools for both roles.
+- MCP inbox works in both directions: cto→arch `b278f1d3-…` and `7ab29885-…`, arch→cto replies `d006b557-…` and `efd30437-…`, all `acked` in the relay database.
+- Idempotency: re-send with the same key and text returned the original UUID; the same key with different text was refused with `IDEMPOTENCY_CONFLICT` (deny audited); after a relay restart the same key still returned the original UUID.
+- Relay restart (runbook E6): no message loss or duplication; session bindings survive.
+- Busy-session behavior: a probe sent to a busy role (`508adc44-…`) stayed `stored` with no injection and was later read and acked via manual inbox poll — the reactive role pattern.
+- Active delivery remains disabled: Desktop exposes no development-channel activation surface (no equivalent of the CLI channel flags), so the activation gate conditions above cannot be met on this host.
+- Hooks (`SessionStart`, `Stop`) execute; their link to relay busy/idle state is UNVERIFIED.
+
+Not yet verified (requires a GUI window): MCP server pickup screenshots, E3.5 cross-server isolation (one role must not see the other role's server), and cross-role ack rejection (`UNAUTHORIZED`).
+
 ## Codex
 
 **Support: authenticated MCP inbox plus lifecycle state reporting. Live verification status: UNVERIFIED. Active delivery: unsupported and disabled.** Automated tests use a mocked relay, fake hook input, and fake app-server processes. No Codex executable or visible Codex chat was launched in the implementation environment.
@@ -124,6 +141,8 @@ Metadata help/schema output is represented by byte count and SHA-256. Initialize
 Every report contains `activeDeliveryClaim:false` and `reason:"visible-session-submission-not-verified"`. Successful initialize, schema generation, resume, or read is compatibility evidence only, never active-delivery evidence. Live MCP/hooks/probe status remains UNVERIFIED until the operator matrix in `test/e2e/real-clients.md` is completed; even a successful matrix does not enable active delivery in this increment.
 
 ## Kimi Code
+
+This section covers the **Kimi Code CLI** (`kimi acp`). It is a different host from **Kimi Work** (the desktop client), which uses `KimiWorkAdapter` with active delivery through the client API and is the primary verified host. The inbox-only `KimiFallbackAdapter` described here applies only to the CLI.
 
 **Support status: `inbox-only`. Live ACP verification status: UNVERIFIED.** `KimiFallbackAdapter` reports no active delivery, state reporting, or client idempotency. Session state is always `unknown`, submission always fails with `DELIVERY_UNCERTAIN` before client or network activity, and doctor therefore reports `active-delivery-unsupported`. MCP inbox retrieval and `synloq_wait` remain available through the normal Kimi MCP connection.
 
