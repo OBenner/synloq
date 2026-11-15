@@ -1,5 +1,7 @@
 import type { KimiWorkTeamConversation } from "../config/team-state.js";
 import type { Language } from "../i18n/index.js";
+import type { HostName } from "../config/hosts.js";
+import type { ManifestRole } from "../config/manifest.js";
 import type {
   KimiWorkConversationSummary,
   KimiWorkCreateInput,
@@ -8,6 +10,7 @@ import type {
 } from "../host/kimi-work/control-client.js";
 
 export interface RoleInput {
+  host?: HostName;
   agentId: string;
   title: string;
   role: string;
@@ -22,6 +25,8 @@ export interface KimiWorkInitHost {
 }
 
 export interface InitializeTeamOptions {
+  manifestParticipants?: ManifestRole[];
+  relayUrl?: string;
   projectRoot: string;
   project: string;
   roles: RoleInput[];

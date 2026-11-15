@@ -4,11 +4,11 @@ import type { Clock } from "../adapters/types.js";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, CLAIM_CODE_TTL_MS } from "../config/claim-codes.js";
 import { CredentialStore } from "../config/credentials.js";
-import { mergeManifestParticipants } from "../config/manifest.js";
+import { mergeManifestParticipants, type ManifestRole } from "../config/manifest.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
-import type { Participant } from "../domain/message.js";
+import { coreRules } from "./role-prompt.js";
 import type { Language } from "../i18n/index.js";
 import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
@@ -17,6 +17,7 @@ import { relativeHomePaths } from "./runtime-config.js";
 import type { RoleInput } from "./types.js";
 
 export interface InitializeGenericTeamOptions {
+  manifestParticipants?: ManifestRole[];
   projectRoot: string;
   project: string;
   roles: RoleInput[];
@@ -74,22 +75,32 @@ export async function initializeGenericTeam(
   if (state && (state.project !== project || state.projectRoot !== projectRoot)) {
     throw new SynloqError("INVALID_INPUT", "Synloq project state ownership does not match");
   }
-  if (state && Object.keys(state.conversations).length > 0) {
+  if (
+    state &&
+    Object.keys(state.conversations).some(
+      (id) => !options.manifestParticipants || roles.some((role) => role.agentId === id),
+    )
+  ) {
     throw new SynloqError(
       "INVALID_INPUT",
       "roles are already bound to host sessions; re-initialize with their host (--host kimi-work|opencode)",
     );
   }
 
-  const participants: Participant[] = roles.map((role) => ({
+  const participants: ManifestRole[] = roles.map((role) => ({
     project,
     agentId: role.agentId,
     title: role.title,
     role: role.role,
+    host: role.host ?? "generic",
   }));
   // Issue #32 (gap G1): merge into the existing manifest — init --role is
   // the add-role path and must not drop roles from previous runs.
-  await mergeManifestParticipants(projectRoot, participants, language);
+  await mergeManifestParticipants(
+    projectRoot,
+    options.manifestParticipants ?? participants,
+    language,
+  );
   const credentials = new CredentialStore(
     projectRoot,
     paths.home,
@@ -123,7 +134,24 @@ export async function initializeGenericTeam(
       projectRoot,
       conversations: {},
     };
-    return { ...base, project, projectRoot };
+    return {
+      ...base,
+      project,
+      projectRoot,
+      placements: {
+        ...base.placements,
+        ...Object.fromEntries(
+          roles.map((role) => [
+            role.agentId,
+            {
+              host: role.host ?? "generic",
+              state: "unclaimed" as const,
+              instructions: coreRules(role, language).join("\n"),
+            },
+          ]),
+        ),
+      },
+    };
   });
 
   // Issue #42 (ADR-0004 layer 3): a generic host cannot bind sessions, so

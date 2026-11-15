@@ -6,6 +6,56 @@ already runs other roles.
 
 ## Steps
 
+### Choosing a host per role
+
+Each role may declare `host` in `synloq.yaml`. Omitted `host` means
+`kimi-work`. Supported values are `kimi-work`, `opencode`, `codex-desktop`,
+`zcode`, and the manual `generic` profile:
+
+```yaml
+version: 1
+project: example
+agents:
+  dev:
+    title: Developer
+    role: Implement scoped changes
+    host: opencode
+  arch:
+    title: Architect
+    role: Review architecture
+    host: codex-desktop
+```
+
+Run `synloq init --project-root <project> --synloq-home <home>` to reconcile
+the entire manifest. Kimi Work and OpenCode can provision visible sessions;
+Codex Desktop, ZCode, and generic currently prepare unclaimed role records,
+credentials, instructions, and MCP config paths. The JSON output contains a
+`roles` capability summary, host-specific `kimi`/`opencode` results, and
+`manual.roles` claim codes plus `manual.nextSteps`. Manual steps include
+wiring the channel, trusting configuration, and restarting the client.
+A manual-only stand also needs its own running relay on the configured port.
+Codex Desktop directory generation is a separate follow-up (#43).
+
+For legacy single-host setup, `--host` selects that host. When used with a
+placement manifest it explicitly overrides all desired targets; omit it to
+preserve mixed placement. Re-init preserves existing API session bindings
+and credentials, and reissues 15-minute claim codes for manual hosts, as in
+the generic profile. Each host sees only its own generated role set. The
+relay's participant API and protocol messages contain no host metadata.
+
+`synloq doctor --project-root <project> --synloq-home <home>` reports each
+role's desired `host` and `placement` consistency. A prepared manual role is
+`unclaimed` while a claim code is outstanding and `manual` afterwards;
+`manual` does not assert a verified chat binding or live delivery.
+
+Init rejects a changed host for an already prepared/bound role before
+writing files or calling host APIs. Moving a live role requires an explicit
+operator migration (including `replace-session` and corresponding local
+host configuration/state reconciliation); simply editing `host` cannot
+silently replace a session. Automated host migration is outside #44.
+
+### Extending the roster
+
 1. **Add the role to `synloq.yaml`** in the project root:
 
    ```yaml
@@ -130,7 +180,7 @@ not recorded.
 
 - The plugin channel set (`mcpServers`) cannot hot-reload without the host;
   that is an upstream Kimi Work feature request tracked in issue #36.
-- Mixed-host projects (some roles in Kimi Work, some in OpenCode) are
-  supported by the relay, and add-role merges the manifest on any host — but
-  declaring each role's host in `synloq.yaml` (ADR-0004 layers 1–2) is a
-  separate task; until then the host is chosen per init invocation.
+- Mixed-host init reconciles declared roles and add-role merges the manifest
+  on any host, preserving per-role placement. Role removal and other
+  lifecycle commands have their own host support limits; consult their
+  runbooks before removing a bound role.

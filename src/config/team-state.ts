@@ -3,6 +3,7 @@ import { z } from "zod";
 import { SynloqError } from "../domain/errors.js";
 import { agentId } from "../domain/message.js";
 import { writeJsonAtomic } from "./atomic-file.js";
+import { hostSchema } from "./hosts.js";
 
 const kimiWorkConversationSchema = z
   .object({
@@ -49,6 +50,18 @@ const teamStateSchema = z
     pluginSourcePath: z.string().min(1).optional(),
     conversations: z.record(agentId, conversationSchema),
     claims: z.record(agentId, claimCodeSchema).optional(),
+    placements: z
+      .record(
+        agentId,
+        z
+          .object({
+            host: hostSchema,
+            instructions: z.string().optional(),
+            state: z.enum(["bound", "unclaimed"]),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict();
 

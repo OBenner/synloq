@@ -4,7 +4,9 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { loadManifest } from "../config/manifest.js";
+import { loadManifestRoles } from "../config/manifest.js";
+import { hostSchema } from "../config/hosts.js";
+import { reconcileTeam } from "../init/reconcile.js";
 import { SynloqError } from "../domain/errors.js";
 import { languageSchema, SUPPORTED_LANGUAGES } from "../i18n/index.js";
 import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
@@ -116,12 +118,17 @@ async function existingManifestRoles(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
-  const participants = await loadManifest(projectRoot);
+  const participants = await loadManifestRoles(projectRoot);
   const project = participants[0]?.project;
   if (!project) invalid("manifest must declare at least one role");
   return {
     project,
-    roles: participants.map(({ agentId, title, role }) => ({ agentId, title, role })),
+    roles: participants.map(({ agentId, title, role, host }) => ({
+      agentId,
+      title,
+      role,
+      ...(host ? { host } : {}),
+    })),
   };
 }
 
@@ -149,14 +156,16 @@ export async function runGenericInit(
   });
   if (values.help) {
     io.stdout.write(
-      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode|generic] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--language en|ru] [--non-interactive]\n",
+      "Usage: synloq init [--project-root <path>] [--project <name>] [--host kimi-work|opencode|generic|codex-desktop|zcode] [--role <id:title:role> ...] [--role-instructions <id:text> ...] [--conversation <id:conversationKey> ...] [--plugin-source <path>] [--synloq-home <path>] [--relay-url <url>] [--language en|ru] [--non-interactive]\n",
     );
     return;
   }
 
   const hostName = values.host ?? "kimi-work";
-  if (hostName !== "kimi-work" && hostName !== "opencode" && hostName !== "generic") {
-    invalid("--host must be kimi-work, opencode, or generic");
+  if (!hostSchema.safeParse(hostName).success) {
+    invalid(
+      "--host must be kimi-work, opencode, or generic; codex-desktop and zcode are also supported for manual provisioning",
+    );
   }
   const languageResult = languageSchema.safeParse(values.language ?? "en");
   if (!languageResult.success) {
@@ -200,6 +209,44 @@ export async function runGenericInit(
 
   const runtimeEntrypoint =
     dependencies.runtimeEntrypoint ?? fileURLToPath(new URL("../mcp/stdio.js", import.meta.url));
+
+  if (
+    roles.some((role) => role.host !== undefined) ||
+    hostName === "codex-desktop" ||
+    hostName === "zcode"
+  ) {
+    const placed = roles.map((role) => ({
+      ...role,
+      host: values.host ? hostSchema.parse(values.host) : (role.host ?? ("kimi-work" as const)),
+    }));
+    const needsKimi = placed.some((role) => role.host === "kimi-work");
+    if (values["plugin-source"] && !needsKimi)
+      invalid("--plugin-source is only meaningful with Kimi Work roles");
+    const result = await reconcileTeam(
+      {
+        projectRoot,
+        project: project ?? basename(projectRoot),
+        roles: placed,
+        runtimeEntrypoint,
+        ...(needsKimi
+          ? {
+              pluginSourcePath: values["plugin-source"]
+                ? resolve(values["plugin-source"])
+                : defaultPluginSource(environment),
+            }
+          : {}),
+        ...(values["synloq-home"] ? { synloqHome: resolve(values["synloq-home"]) } : {}),
+        ...(values["relay-url"] ? { relayUrl: values["relay-url"] } : {}),
+        ...(language ? { language } : {}),
+      },
+      {
+        kimiWorkHost: dependencies.initHost ?? createKimiWorkInitHost,
+        openCodeHost: dependencies.openCodeHost ?? defaultOpenCodeHost,
+      },
+    );
+    io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
 
   if (hostName === "generic") {
     if (values["plugin-source"])
