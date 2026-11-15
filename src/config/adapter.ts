@@ -62,6 +62,10 @@ const openCodeSchema = z
     baseUrl: loopbackHttp,
     servicePassword: z.string().min(1).optional(),
     heartbeatIntervalMs: z.number().int().min(1).max(60_000).optional(),
+    // Issue #45: stored-ping watcher needs the relay database location and
+    // supports a per-role opt-out (default on).
+    synloqHome: z.string().min(1).optional(),
+    storedPing: z.boolean().optional(),
   })
   .strict();
 
@@ -103,6 +107,9 @@ export async function loadAdapterConfiguration(
     ...parsed.data,
     projectRoot: resolve(dirname(configPath), parsed.data.projectRoot),
     credentialPath: resolve(dirname(configPath), parsed.data.credentialPath),
+    ...("synloqHome" in parsed.data && parsed.data.synloqHome !== undefined
+      ? { synloqHome: resolve(dirname(configPath), parsed.data.synloqHome) }
+      : {}),
   };
   const token = (await readFile(configuration.credentialPath, "utf8")).trim();
   if (token === "") {

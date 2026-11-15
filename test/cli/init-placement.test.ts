@@ -39,8 +39,13 @@ describe("init per-role placement", () => {
     expect(openCodeHost).not.toHaveBeenCalled();
     const result = JSON.parse(output.join(""));
     expect(result.roles).toEqual([
-      { agentId: "arch", host: "codex-desktop", canProvisionSessions: false },
-      { agentId: "qa", host: "zcode", canProvisionSessions: false },
+      {
+        agentId: "arch",
+        host: "codex-desktop",
+        canProvisionSessions: false,
+        hasPush: false,
+      },
+      { agentId: "qa", host: "zcode", canProvisionSessions: false, hasPush: false },
     ]);
     expect(result.manual.nextSteps.join(" ")).toContain("trust");
     expect(result.manual.nextSteps.join(" ")).toContain("synloq serve");

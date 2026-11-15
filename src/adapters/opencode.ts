@@ -408,6 +408,29 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     return this.currentState();
   }
 
+  /**
+   * Stored-ping watcher surface (#45): queue a content-free nudge prompt.
+   * Same honesty rules as submit(): only a freshly idle session is nudged,
+   * and a failed admission is reported (false), never retried blindly.
+   */
+  async ping(text: string): Promise<boolean> {
+    if (this.closed) return false;
+    if (this.currentState() !== "idle") {
+      try {
+        await this.refreshStatus();
+      } catch {
+        return false;
+      }
+      if (this.currentState() !== "idle") return false;
+    }
+    try {
+      await this.api.admit(this.config.sessionId, text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private currentState(): SessionState {
     if (this.closed) return "closed";
     if (

@@ -27,6 +27,7 @@ import { RelayHttpClient } from "../transport/http-client.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { registerSynloqTools } from "./tools.js";
 import { createWatchdogDiagnostic } from "./watchdog-diagnostic.js";
+import { createStoredPingWatcher } from "./stored-ping.js";
 
 const WATCHDOG_INTERVAL_MS = 60_000;
 
@@ -39,6 +40,8 @@ const configurationSchema = z
     credentialPath: z.string().min(1),
     synloqHome: z.string().min(1).optional(),
     language: languageSchema.optional(),
+    // Issue #45: per-role opt-out for the stored-ping watcher (default on).
+    storedPing: z.boolean().optional(),
     kimiWork: kimiWorkConfigurationSchema.optional(),
     opencode: openCodeConfigurationSchema.optional(),
   })
@@ -62,7 +65,7 @@ export interface KimiWorkMcpBridge {
   runner: Pick<HttpAdapterRunner, "start" | "close"> & {
     onUnauthorized?: HttpAdapterRunner["onUnauthorized"];
   };
-  adapter: Pick<KimiWorkAdapter, "close">;
+  adapter: Pick<KimiWorkAdapter, "close" | "ping">;
 }
 
 export interface KimiWorkFactoryOptions {
@@ -95,6 +98,7 @@ interface McpConfiguration {
   token: string;
   synloqHome?: string;
   language?: Language;
+  storedPing?: boolean;
   kimiWork?: ResolvedKimiWorkBinding;
   opencode?: ResolvedOpenCodeBinding;
 }
@@ -133,6 +137,9 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
       ? { synloqHome: resolve(dirname(configPath), configuration.data.synloqHome) }
       : {}),
     ...(configuration.data.language ? { language: configuration.data.language } : {}),
+    ...(configuration.data.storedPing === undefined
+      ? {}
+      : { storedPing: configuration.data.storedPing }),
     ...(kimiWork ? { kimiWork } : {}),
     ...(opencode ? { opencode } : {}),
   };
@@ -183,6 +190,8 @@ interface KimiWorkLifecycle {
   start(): void;
   stop(): Promise<void>;
   close(): Promise<void>;
+  /** Stored-ping watcher surface (#45): nudge the visible chat, best effort. */
+  ping(text: string): Promise<boolean>;
 }
 
 function createKimiWorkLifecycle(
@@ -320,6 +329,11 @@ function createKimiWorkLifecycle(
   return {
     start,
     stop,
+    ping: async (text: string) => {
+      const current = bridge;
+      if (!current || closed) return false;
+      return current.adapter.ping(text);
+    },
     close: () => {
       if (closePromise) return closePromise;
       closed = true;
@@ -369,6 +383,7 @@ export async function startMcpStdio(
   let lifecycle: KimiWorkLifecycle | undefined;
   let supervisor: RelaySupervisorLoop | undefined;
   let watchdogTimer: ReturnType<typeof setInterval> | undefined;
+  let storedPingTimer: ReturnType<typeof setInterval> | undefined;
   if (configuration.synloqHome && hostWorkspace) {
     const participants = await loadManifest(hostWorkspace);
     const project = participants[0]?.project;
@@ -419,11 +434,33 @@ export async function startMcpStdio(
       configuration.language,
     );
     lifecycle.start();
+    // Issue #45: stored-ping watcher — nudge the visible chat when incoming
+    // mail sits stored past the threshold while the chat is live and idle.
+    // Opt-out per role: "storedPing": false in the MCP config.
+    if (configuration.synloqHome && hostWorkspace && configuration.storedPing !== false) {
+      const pingParticipants = await loadManifest(hostWorkspace);
+      const project = pingParticipants[0]?.project;
+      if (project) {
+        const paths = await projectPaths(hostWorkspace, configuration.synloqHome);
+        const watcher = createStoredPingWatcher({
+          project,
+          agentId: configuration.kimiWork.agentId,
+          participants: pingParticipants,
+          databasePath: paths.database,
+          diagnostics,
+          push: (text) => lifecycle?.ping(text) ?? Promise.resolve(false),
+          ...(configuration.language ? { language: configuration.language } : {}),
+        });
+        storedPingTimer = setInterval(() => void watcher.check(), WATCHDOG_INTERVAL_MS);
+        storedPingTimer.unref?.();
+      }
+    }
   }
   const previousClose = server.server.onclose;
   server.server.onclose = () => {
     previousClose?.();
     if (watchdogTimer) clearInterval(watchdogTimer);
+    if (storedPingTimer) clearInterval(storedPingTimer);
     void (async () => {
       await lifecycle?.close();
       await supervisor?.close();

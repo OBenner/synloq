@@ -43,6 +43,8 @@ export const en = {
     "This host has no automatic push delivery: check for messages with synloq_inbox when the session starts and after completing any task; use synloq_wait for idle waiting. Polling is your responsibility.",
   "opencode.approval":
     "The first MCP tool call in a new session may require a one-time approval in the OpenCode UI — ask the operator to approve it once.",
+  "storedPing.text":
+    "Synloq: {count} incoming message(s) waiting (oldest {age} min) — run synloq_inbox",
 } as const;
 
 export type I18nKey = keyof typeof en;

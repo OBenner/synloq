@@ -132,7 +132,7 @@ describe("Synloq MCP stdio bridge", () => {
     );
     const bridge = {
       runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-      adapter: { close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
     };
     const kimiWorkFactory = vi.fn(async () => bridge);
     const server = await startMcpStdio(configPath, {
@@ -177,7 +177,7 @@ describe("Synloq MCP stdio bridge", () => {
     );
     const bridge = {
       runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-      adapter: { close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
     };
     const kimiWorkFactory = vi.fn(async () => bridge);
     const server = await startMcpStdio(configPath, {
@@ -263,7 +263,7 @@ describe("Synloq MCP stdio bridge", () => {
     );
     const bridge = {
       runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-      adapter: { close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
     };
     const kimiWorkFactory = vi
       .fn()
@@ -301,11 +301,11 @@ describe("Synloq MCP stdio bridge", () => {
     const bridges = [
       {
         runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-        adapter: { close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
       },
       {
         runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-        adapter: { close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
       },
     ];
     const kimiWorkFactory = vi
@@ -360,11 +360,11 @@ describe("Synloq MCP stdio bridge", () => {
     const bridges = [
       {
         runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-        adapter: { close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
       },
       {
         runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-        adapter: { close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
       },
     ];
     const kimiWorkFactory = vi
@@ -418,7 +418,7 @@ describe("Synloq MCP stdio bridge", () => {
     );
     const makeBridge = () => ({
       runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-      adapter: { close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
     });
     const bridges = [makeBridge(), makeBridge(), makeBridge(), makeBridge()];
     const kimiWorkFactory = vi

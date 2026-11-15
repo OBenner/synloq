@@ -61,7 +61,7 @@ describe("MCP stdio bridge working directory", () => {
       stderr: silentStderr().stderr,
       kimiWorkFactory: async () => ({
         runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
-        adapter: { close: vi.fn(async () => undefined) },
+        adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
       }),
     });
     try {

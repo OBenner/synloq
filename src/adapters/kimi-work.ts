@@ -149,6 +149,28 @@ export class KimiWorkAdapter implements DeliveryAdapter {
     return this.currentState();
   }
 
+  /**
+   * Stored-ping watcher surface (#45): push a content-free nudge into the
+   * visible chat. Deliberately narrower than submit(): no receipts, no
+   * reconciliation, no retry — a ping either lands or is skipped, and the
+   * watcher reports the outcome to stderr. Refuses a busy or stale chat.
+   */
+  async ping(text: string): Promise<boolean> {
+    if (this.closed || this.disconnected) return false;
+    try {
+      await this.refresh();
+    } catch {
+      return false;
+    }
+    if (this.currentState() !== "idle") return false;
+    try {
+      const admitted = await this.control.send(this.binding, text);
+      return admitted.accepted === true;
+    } catch {
+      return false;
+    }
+  }
+
   async refresh(): Promise<void> {
     try {
       const metadata = await this.control.metadata(this.binding);

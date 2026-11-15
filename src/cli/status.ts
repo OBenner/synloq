@@ -1,4 +1,5 @@
 import type { Clock } from "../adapters/types.js";
+import { HOST_CAPABILITIES, type HostName } from "../config/hosts.js";
 import type { Participant } from "../domain/message.js";
 import type { AdapterSession, SessionState } from "../domain/session.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
@@ -35,6 +36,8 @@ export interface StatusReport {
 
 export interface StatusReportOptions extends DoctorReportOptions {
   unansweredThresholdMs?: number;
+  /** Manifest host per role (placement is local config, absent from the doctor entry unless probed). */
+  roleHosts?: ReadonlyMap<string, HostName>;
 }
 
 function formatAge(milliseconds: number): string {
@@ -123,6 +126,12 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
       awaitingAck,
       now,
     );
+    // Issue #45: hosts without push never get a stored-ping nudge — the
+    // honest floor is an explicit note to poll the inbox manually.
+    const host = options.roleHosts?.get(participant.agentId) ?? doctorEntry?.host;
+    if (queued > 0 && host && !HOST_CAPABILITIES[host].hasPush) {
+      reason += `; no push on host ${host} — check synloq_inbox manually`;
+    }
     if (unansweredAcked.count > 0) {
       const oldest = ageOf(now, unansweredAcked.oldestAt);
       reason += `; ${unansweredAcked.count} acked without reply${oldest === undefined ? "" : ` (oldest ${oldest})`}`;

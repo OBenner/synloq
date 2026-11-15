@@ -108,6 +108,11 @@ decision exists.
 
 ## Implementation status
 
-- Not implemented. Tracking: issue #45 (stored-ping watcher, P2), issue #46
-  (single-writer / read-only mode, P2). The headless executor gets its own
-  issue after this ADR is accepted and the LLM provider is chosen.
+- Stored-ping watcher (#45): implemented — per-channel watcher nudges a live
+  idle chat with stale stored mail on push-capable hosts (kimi-work,
+  opencode), content-free, throttled per backlog epoch; hosts without push
+  get a manual-poll note in `synloq status`. Per-role opt-out via
+  `"storedPing": false` in the channel config.
+- Single-writer / read-only mode (#46): not implemented. The headless
+  executor gets its own issue after this ADR is accepted and the LLM
+  provider is chosen.

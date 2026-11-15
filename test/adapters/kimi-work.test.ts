@@ -251,6 +251,38 @@ describe("KimiWorkAdapter state and registration", () => {
   });
 });
 
+describe("KimiWorkAdapter ping (#45)", () => {
+  it("sends a content-free nudge while the chat is idle", async () => {
+    const { adapter, control } = await idleFixture();
+
+    await expect(adapter.ping("Synloq: 2 incoming — run synloq_inbox")).resolves.toBe(true);
+    expect(control.send).toHaveBeenCalledWith(binding, "Synloq: 2 incoming — run synloq_inbox");
+  });
+
+  it("stays silent while the chat is busy", async () => {
+    const { adapter, control } = await idleFixture();
+    control.busy.mockResolvedValue(true);
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+    expect(control.send).not.toHaveBeenCalled();
+  });
+
+  it("stays silent after close", async () => {
+    const { adapter, control } = await idleFixture();
+    await adapter.close();
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+    expect(control.send).not.toHaveBeenCalled();
+  });
+
+  it("reports false when the host refuses the nudge", async () => {
+    const { adapter, control } = await idleFixture();
+    control.send.mockRejectedValueOnce(new Error("socket closed"));
+
+    await expect(adapter.ping("nudge")).resolves.toBe(false);
+  });
+});
+
 describe("KimiWorkAdapter submission", () => {
   it("sends the exact generated prompt once without automatic acknowledgement", async () => {
     const { adapter, control, relay } = await idleFixture();
