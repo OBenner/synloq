@@ -379,7 +379,7 @@ export class RelayHttpServer {
       const input = receiptSchema.parse(await this.readJson(request));
       const existing = this.options.messages.getMessage(messageId, project);
       if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
-      if (existing.project !== project || existing.to !== identity.agentId) {
+      if (existing.to !== identity.agentId) {
         throw new SynloqError(
           "UNAUTHORIZED",
           "only the authenticated recipient can post a delivery receipt",
@@ -409,7 +409,7 @@ export class RelayHttpServer {
       const input = deliveryFailureSchema.parse(await this.readJson(request));
       const existing = this.options.messages.getMessage(messageId, project);
       if (!existing) throw new SynloqError("NOT_FOUND", "message not found");
-      if (existing.project !== project || existing.to !== identity.agentId) {
+      if (existing.to !== identity.agentId) {
         throw new SynloqError(
           "UNAUTHORIZED",
           "only the authenticated recipient can report a delivery failure",
