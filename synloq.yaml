@@ -27,3 +27,13 @@ agents:
     title: Tester
     role: QA and verification, test and e2e execution, defect reports; never
       modifies production code, never commits to main
+  staff1:
+    title: Staff Developer 1
+    role: Feature implementation on scoped tasks delegated by the Lead Developer;
+      works from its own worktrees via PRs; takes tasks from dev only
+    host: codex-desktop
+  staff2:
+    title: Staff Developer 2
+    role: Feature implementation on scoped tasks delegated by the Lead Developer;
+      works from its own worktrees via PRs; takes tasks from dev only
+    host: generic
