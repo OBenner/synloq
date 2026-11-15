@@ -405,7 +405,7 @@ describe("Codex read-only app-server probe", () => {
     expect(serialized).not.toContain("SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c");
   });
 
-  it("runs directly with Node 24 TypeScript module resolution", async () => {
+  it("runs directly with Node 24 TypeScript module resolution", { timeout: 20_000 }, async () => {
     const scriptPath = fileURLToPath(
       new URL("../../scripts/probe-codex-app-server.ts", import.meta.url),
     );
@@ -413,7 +413,9 @@ describe("Codex read-only app-server probe", () => {
       execFile(
         process.execPath,
         [scriptPath, "--cwd", "relative-path"],
-        { encoding: "utf8", timeout: 5_000, killSignal: "SIGKILL" },
+        // Node cold-start under full-suite load can exceed 5 s; the probe
+        // itself is instant once the process is up (flaky CI, PR #54/#55).
+        { encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" },
         (error, _stdout, stderr) => {
           resolve({
             code: error === null ? 0 : typeof error.code === "number" ? error.code : null,
