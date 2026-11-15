@@ -34,12 +34,16 @@ uses the existing operator authorization/revocation path and removes only
 unchanged generated files; modified or additional user files are retained
 with a diagnostic. Close Desktop chats manually after removal.
 
-Live acceptance is **pending**. During an operator-approved window on an
-isolated stand: open cto/arch directories, verify each chat sees only its own
-channel (also check global MCP configuration), exchange a message and ack/reply
-via the relay, restart Desktop, and repeat. Record role/message IDs only.
-Automated generation and credential tests do not establish host-enforced
-isolation. Do not use the production relay for this acceptance run.
+Live acceptance: **VERIFIED 2026-11-15** on an isolated stand (relay
+`127.0.0.1:4399`, Codex Desktop ≥ 0.169.0-alpha.11.1) per the runbook
+`docs/runbooks/2026-11-15-codex-desktop-acceptance.md`: each chat saw only
+its own `synloq-<role>` server, the full send/inbox/ack/reply cycle worked in
+both directions, idempotent resend returned the original message ID,
+cross-role ack was rejected with `UNAUTHORIZED`, and a Desktop restart
+preserved history and operability. This is observed configuration isolation,
+not host-enforced isolation: nothing stops an operator from registering
+another role's server manually. There is no active delivery on this host —
+roles are reactive and check their inbox when activated.
 
 ## CLI reference: hooks and lifecycle reporting
 
