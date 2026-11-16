@@ -461,7 +461,8 @@ describe("DoctorReport", () => {
     const result = await doctorCommand({ projectRoot: fixture.root });
 
     expect(result.storage).toMatchObject({ ok: false });
-    expect(result.storage.error).toBe("failed to open or migrate SQLite storage");
+    // Issue #68: the diagnostic carries the underlying SQLite errcode.
+    expect(result.storage.error).toBe("failed to open or migrate SQLite storage [SQLITE_CANTOPEN]");
     expect(result.participants).toHaveLength(2);
     expect(result.participants[0]).toMatchObject({
       state: "unknown",

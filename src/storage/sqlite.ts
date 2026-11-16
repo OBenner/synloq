@@ -56,8 +56,29 @@ CREATE INDEX IF NOT EXISTS delivery_quarantine_recipient
   ON delivery_quarantine(project, recipient);
 `;
 
+// Common node:sqlite errcodes (sqlite3.h) — surfaced in STORAGE_FAILURE so a
+// live incident shows BUSY vs LOCKED vs IOERR instead of an opaque "write
+// failed" (issue #68).
+const SQLITE_ERROR_NAMES = new Map<number, string>([
+  [5, "SQLITE_BUSY"],
+  [6, "SQLITE_LOCKED"],
+  [8, "SQLITE_READONLY"],
+  [10, "SQLITE_IOERR"],
+  [11, "SQLITE_CORRUPT"],
+  [13, "SQLITE_FULL"],
+  [14, "SQLITE_CANTOPEN"],
+]);
+
+function sqliteErrorCode(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const errcode = (cause as { errcode?: unknown }).errcode;
+  if (typeof errcode !== "number") return undefined;
+  return SQLITE_ERROR_NAMES.get(errcode) ?? `SQLITE_ERROR_${errcode}`;
+}
+
 export function storageFailure(message: string, cause: unknown): SynloqError {
-  const error = new SynloqError("STORAGE_FAILURE", message);
+  const code = sqliteErrorCode(cause);
+  const error = new SynloqError("STORAGE_FAILURE", code ? `${message} [${code}]` : message);
   error.cause = cause;
   return error;
 }
@@ -80,12 +101,23 @@ export function withTransaction<T>(database: DatabaseSync, operation: () => T): 
   }
 }
 
-export function openDatabase(path: string): DatabaseSync {
+export function openDatabase(path: string, options?: { readOnly?: boolean }): DatabaseSync {
+  const readOnly = options?.readOnly === true && path !== ":memory:";
   let database: DatabaseSync | undefined;
   try {
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-    database = new DatabaseSync(path);
+    if (path !== ":memory:" && !readOnly) mkdirSync(dirname(path), { recursive: true });
+    database = new DatabaseSync(path, readOnly ? { readOnly: true } : {});
     database.exec("PRAGMA foreign_keys = ON");
+    // Issue #68: every connection — relay writer and diagnostic readers alike —
+    // waits on locks instead of failing instantly with SQLITE_BUSY. This is the
+    // bounded busy-retry, implemented inside SQLite rather than as an
+    // app-level retry loop (decision recorded in the #68 PR).
+    database.exec("PRAGMA busy_timeout = 5000");
+    if (readOnly) {
+      // Read-only consumers (watchdog, stored-ping, doctor, status) must not
+      // take a write lock: no journal_mode pragma, no migration transaction.
+      return database;
+    }
     database.exec("PRAGMA journal_mode = WAL");
 
     const version = database.prepare("PRAGMA user_version").get() as
@@ -98,6 +130,14 @@ export function openDatabase(path: string): DatabaseSync {
       version?.user_version !== 4
     ) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
+    }
+
+    // Issue #68: skip the migration write transaction entirely when the schema
+    // is already current — otherwise every connection open (including the
+    // per-tick diagnostic opens) takes a BEGIN IMMEDIATE write lock on the
+    // shared file and contends with the relay writer.
+    if (version?.user_version === 4) {
+      return database;
     }
 
     const migrated = database;

@@ -722,8 +722,10 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
-    messages = new SQLiteMessageStore(paths.database);
-    sessions = new SessionStore(paths.database, clock);
+    // Doctor only reads: open the store read-only so the diagnostic never
+    // takes a write lock on the live relay database (issue #68).
+    messages = new SQLiteMessageStore(paths.database, undefined, { readOnly: true });
+    sessions = new SessionStore(paths.database, clock, { readOnly: true });
     return createDoctorReport({
       project,
       participants,
@@ -787,8 +789,9 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
-    messages = new SQLiteMessageStore(paths.database);
-    sessions = new SessionStore(paths.database, clock);
+    // Status only reads: same read-only rationale as doctor (issue #68).
+    messages = new SQLiteMessageStore(paths.database, undefined, { readOnly: true });
+    sessions = new SessionStore(paths.database, clock, { readOnly: true });
     return createStatusReport({
       project,
       participants,
