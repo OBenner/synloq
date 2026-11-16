@@ -13,3 +13,6 @@ coverage/
 docs/superpowers/
 /synloq-agents/
 docs/local/
+
+# Machine-specific host adapter config (local test stand)
+opencode.json
