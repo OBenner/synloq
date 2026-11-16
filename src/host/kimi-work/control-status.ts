@@ -53,6 +53,8 @@ const defaultExec: KimiWorkStatusExec = (file, args, options) =>
         maxBuffer: options.maxBuffer,
         encoding: "utf8",
         windowsHide: true,
+        // Paths are argv values, never shell source; do not add manual quoting.
+        shell: false,
       },
       (error, stdout) => {
         if (error) reject(new Error("status command failed"));
