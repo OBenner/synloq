@@ -180,17 +180,19 @@ const overlaySchema = z
     version: z.literal(1).default(1),
     language: languageSchema.optional(),
     retention: retentionSchema.optional(),
-    agents: z.record(
-      agentId,
-      z
-        .object({
-          title: z.string().optional(),
-          role: z.string().optional(),
-          host: hostSchema.optional(),
-          placement: z.string().min(1).optional(),
-        })
-        .strict(),
-    ),
+    agents: z
+      .record(
+        agentId,
+        z
+          .object({
+            title: z.string().optional(),
+            role: z.string().optional(),
+            host: hostSchema.optional(),
+            placement: z.string().min(1).optional(),
+          })
+          .strict(),
+      )
+      .default({}),
   })
   .strict();
 

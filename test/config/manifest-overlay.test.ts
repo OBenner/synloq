@@ -93,6 +93,15 @@ agents:
     await expect(loadManifestRoles(root)).rejects.toThrow(/'dev' without title and role/);
   });
 
+  it("allows a defaults-only overlay without explicit empty agents", async () => {
+    const root = await projectWith(base, "language: ru\n");
+    expect(await loadManifestLanguage(root)).toBe("ru");
+    expect((await loadManifestRoles(root)).map((role) => role.agentId).sort()).toEqual([
+      "arch",
+      "cto",
+    ]);
+  });
+
   it("rejects unknown overlay keys instead of ignoring them", async () => {
     const root = await projectWith(base, "agents: {}\nsurprise: true\n");
     await expect(loadManifestRoles(root)).rejects.toThrow(/overlay schema/);
