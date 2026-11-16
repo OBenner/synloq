@@ -29,10 +29,16 @@ export interface ChannelConfigHealthReport {
  * Offline health check of one generated channel config (issue #7): the
  * config parses, and every embedded path still resolves — the credential
  * file (relative paths resolve against the config directory, as the stdio
- * loader does) and the bound project root. Reports the exact broken entry.
+ * loader does) and the bound project root (same resolution — the loader
+ * resolves kimiWork.projectRoot/opencode.projectRoot against the config
+ * directory too). Reports the exact broken entry.
  */
 export async function inspectChannelConfig(configPath: string): Promise<ChannelConfigHealthReport> {
-  let parsed: { credentialPath?: unknown; kimiWork?: { projectRoot?: unknown } };
+  let parsed: {
+    credentialPath?: unknown;
+    kimiWork?: { projectRoot?: unknown };
+    opencode?: { projectRoot?: unknown };
+  };
   try {
     parsed = JSON.parse(await readFile(configPath, "utf8"));
   } catch (error) {
@@ -51,12 +57,14 @@ export async function inspectChannelConfig(configPath: string): Promise<ChannelC
       };
     }
   }
-  if (typeof parsed.kimiWork?.projectRoot === "string") {
-    if (!(await pathExists(parsed.kimiWork.projectRoot))) {
+  const projectRoot = parsed.kimiWork?.projectRoot ?? parsed.opencode?.projectRoot;
+  if (typeof projectRoot === "string") {
+    const resolved = resolve(dirname(configPath), projectRoot);
+    if (!(await pathExists(resolved))) {
       return {
         path: configPath,
         ok: false,
-        issue: `project root does not resolve: ${parsed.kimiWork.projectRoot}`,
+        issue: `project root does not resolve: ${resolved}`,
       };
     }
   }
@@ -114,6 +122,7 @@ export async function repairTeamConfigs(options: {
       projectKey: paths.key,
       language: preservedLanguage(existing, language),
       projectRoot: state.projectRoot,
+      configDir: dirname(configPath),
       agentId,
       binding: conversation,
     });

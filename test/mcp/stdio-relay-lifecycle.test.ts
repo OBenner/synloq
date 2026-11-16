@@ -121,4 +121,68 @@ describe("MCP automatic relay lifecycle", () => {
     expect(events.indexOf("runner-close")).toBeLessThan(events.lastIndexOf("relay-close"));
     expect(events.indexOf("adapter-close")).toBeLessThan(events.lastIndexOf("relay-close"));
   });
+
+  it("wires a re-reading token provider into the relay supervisor (self-heal after reissue)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "synloq-mcp-relay-project-"));
+    const home = await mkdtemp(join(tmpdir(), "synloq-mcp-relay-home-"));
+    await writeManifest(root, [
+      { project: "example", agentId: "reviewer", title: "Reviewer", role: "Review evidence" },
+    ]);
+    const credentialPath = join(home, "reviewer.token");
+    const configPath = join(home, "mcp.json");
+    await writeFile(credentialPath, "token-one\n", { mode: 0o600 });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://127.0.0.1:4100",
+        credentialPath,
+        synloqHome: home,
+        kimiWork: {
+          projectRoot: root,
+          agentId: "reviewer",
+          conversationKey,
+          workAgentId: "main",
+        },
+      }),
+    );
+
+    let lifecycleOptions: StartRelaySupervisorOptions | undefined;
+    const supervisor: RelaySupervisorLoop = {
+      client: new RelayHttpClient("http://127.0.0.1:4100", () => "token-one"),
+      owned: true,
+      close: vi.fn(async () => undefined),
+    };
+    const relayFactory = vi.fn(async (options: StartRelaySupervisorOptions) => {
+      lifecycleOptions = options;
+      return supervisor;
+    });
+    const kimiWorkFactory = vi.fn(async () => ({
+      runner: { start: vi.fn(), close: vi.fn(async () => undefined) },
+      adapter: { close: vi.fn(async () => undefined), ping: vi.fn(async () => false) },
+    }));
+    const server = await startMcpStdio(configPath, {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new Writable({ write: (_chunk, _encoding, callback) => callback() }),
+      relayFactory,
+      kimiWorkFactory,
+    });
+
+    // The supervisor must receive a provider, not a frozen string…
+    const token = lifecycleOptions?.token;
+    expect(typeof token).toBe("function");
+    const provider = token as () => Promise<string>;
+    expect(await provider()).toBe("token-one");
+
+    // …and a repair/rotate rewriting the file takes effect without a restart.
+    await writeFile(credentialPath, "token-two\n", { mode: 0o600 });
+    expect(await provider()).toBe("token-two");
+
+    // The host bridge learns the masking set through knownTokens.
+    expect(kimiWorkFactory).toHaveBeenCalledWith(
+      expect.objectContaining({ knownTokens: expect.any(Function) }),
+    );
+
+    await server.close();
+  });
 });

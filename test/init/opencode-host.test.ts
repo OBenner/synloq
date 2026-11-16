@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { projectPaths } from "../../src/config/paths.js";
 import { TeamStateStore, type TeamState } from "../../src/config/team-state.js";
@@ -48,13 +48,19 @@ describe("initializeOpenCodeTeam", () => {
       synloqHome: "../../..",
       language: "en",
       opencode: {
-        projectRoot: root,
+        projectRoot: expect.any(String),
         agentId: "cto",
       },
     });
     // The relative credential path resolves to the real token file.
     const { resolve } = await import("node:path");
-    await readFile(resolve(join(paths.runtime, "mcp"), ctoConfig.credentialPath as string), "utf8");
+    const configDir = join(paths.runtime, "mcp");
+    await readFile(resolve(configDir, ctoConfig.credentialPath as string), "utf8");
+    // projectRoot is rendered relative to the config directory as well and
+    // resolves back to the project root (relocation-safe).
+    const renderedRoot = (ctoConfig.opencode as { projectRoot: string }).projectRoot;
+    expect(renderedRoot).not.toBe(root);
+    expect(resolve(configDir, renderedRoot)).toBe(root);
     await readFile(result.roles[0]!.credentialPath, "utf8");
 
     const opencode = JSON.parse(await readFile(join(root, "opencode.json"), "utf8")) as {
@@ -287,11 +293,15 @@ describe("initializeOpenCodeTeam with a live server API", () => {
       const ctoConfig = JSON.parse(
         await readFile(join(paths.runtime, "mcp", "cto.json"), "utf8"),
       ) as Record<string, unknown>;
-      expect(ctoConfig["opencode"]).toEqual({
-        projectRoot: root,
-        agentId: "cto",
-        sessionId: "ses_1",
-      });
+      const opencodeBinding = ctoConfig["opencode"] as {
+        projectRoot: string;
+        agentId: string;
+        sessionId: string;
+      };
+      expect(opencodeBinding).toMatchObject({ agentId: "cto", sessionId: "ses_1" });
+      // projectRoot is rendered relative to the config directory.
+      expect(opencodeBinding.projectRoot).not.toBe(root);
+      expect(resolve(join(paths.runtime, "mcp"), opencodeBinding.projectRoot)).toBe(root);
       expect(typeof ctoConfig["synloqHome"]).toBe("string");
     } finally {
       await close();

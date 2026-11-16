@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CredentialStore } from "../../src/config/credentials.js";
+import { CredentialStore, createTokenFileProvider } from "../../src/config/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
 import type { SecurityAuditLog, SecurityEvent } from "../../src/relay/audit-log.js";
 
@@ -254,5 +254,51 @@ describe("CredentialStore audit (issue #3, M4-min)", () => {
     await store.issue("verdicta", "cto");
     await store.rotate("verdicta", "cto");
     // no throw, no output — nothing to assert beyond completion
+  });
+});
+
+describe("createTokenFileProvider (401/reissue self-heal)", () => {
+  it("re-reads the credential file per call so a rotation takes effect live", async () => {
+    const home = await mkdtemp(join(tmpdir(), "synloq-token-provider-"));
+    const tokenPath = join(home, "agent.token");
+    await writeFile(tokenPath, "token-one\n", "utf8");
+    const { provider, knownTokens } = createTokenFileProvider(tokenPath, "token-one");
+
+    expect(await provider()).toBe("token-one");
+
+    // Simulate rotate-token / doctor --repair rewriting the file.
+    await writeFile(tokenPath, "token-two\n", "utf8");
+    expect(await provider()).toBe("token-two");
+    expect(knownTokens()).toEqual(["token-one", "token-two"]);
+  });
+
+  it("falls back to the last good token when the file is unreadable", async () => {
+    const home = await mkdtemp(join(tmpdir(), "synloq-token-provider-"));
+    const tokenPath = join(home, "agent.token");
+    await writeFile(tokenPath, "token-one\n", "utf8");
+    const { provider } = createTokenFileProvider(tokenPath, "token-one");
+
+    await rm(tokenPath, { force: true });
+    // A transient ENOENT (mid-rewrite, sharing violation) must not break a
+    // working channel.
+    expect(await provider()).toBe("token-one");
+
+    await writeFile(tokenPath, "token-two\n", "utf8");
+    expect(await provider()).toBe("token-two");
+  });
+
+  it("treats an empty file as mid-rewrite and keeps the last good token", async () => {
+    const home = await mkdtemp(join(tmpdir(), "synloq-token-provider-"));
+    const tokenPath = join(home, "agent.token");
+    const { provider } = createTokenFileProvider(tokenPath, "token-one");
+
+    await writeFile(tokenPath, "", "utf8");
+    expect(await provider()).toBe("token-one");
+  });
+
+  it("fails loudly when no token was ever read", async () => {
+    const home = await mkdtemp(join(tmpdir(), "synloq-token-provider-"));
+    const { provider } = createTokenFileProvider(join(home, "missing.token"), "");
+    await expect(provider()).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });
