@@ -4,7 +4,7 @@ import { z } from "zod";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { loadManifestLanguage, mergeManifestParticipants } from "../config/manifest.js";
-import { hostSchema } from "../config/hosts.js";
+import { hostSchema, HOST_CAPABILITIES } from "../config/hosts.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { projectPaths } from "../config/paths.js";
 import {
@@ -39,6 +39,7 @@ const roleSchema = z
   .object({
     agentId,
     host: hostSchema.optional(),
+    placement: z.string().min(1).optional(),
     title: z.string().min(1).max(128),
     role: z.string().min(1).max(8_000),
     instructions: z.string().min(1).max(16_000).optional(),
@@ -52,6 +53,18 @@ export function parseRoleInputs(
 ): { project: string; roles: RoleInput[] } {
   const parsedProject = z.string().min(1).max(128).parse(project);
   const parsedRoles = z.array(roleSchema).min(1).parse(roles) as RoleInput[];
+  if (
+    parsedRoles.some(
+      (role) =>
+        role.placement !== undefined &&
+        !HOST_CAPABILITIES[role.host ?? "kimi-work"].canProvisionConfig,
+    )
+  ) {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      "placement is only supported by config-provisionable hosts",
+    );
+  }
   const ids = new Set(parsedRoles.map((role) => role.agentId));
   if (ids.size !== parsedRoles.length) {
     throw new SynloqError("INVALID_INPUT", "Synloq role IDs must be unique");

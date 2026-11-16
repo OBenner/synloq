@@ -145,7 +145,10 @@ export async function initializeGenericTeam(
             role.agentId,
             {
               host: role.host ?? "generic",
-              state: "unclaimed" as const,
+              state:
+                base.placements?.[role.agentId]?.state === "bound"
+                  ? ("bound" as const)
+                  : ("unclaimed" as const),
               instructions: coreRules(role, language).join("\n"),
             },
           ]),
@@ -159,7 +162,9 @@ export async function initializeGenericTeam(
   // chat (or runs synloq claim locally) to pick up the role's credential.
   // Re-running init re-issues codes, voiding previously printed ones.
   const claimCodes = new ClaimCodeStore(stateStore, options.clock ?? { now: () => Date.now() });
+  const currentState = await stateStore.read();
   for (const role of initializedRoles) {
+    if (currentState?.placements?.[role.agentId]?.state === "bound") continue;
     const issued = await claimCodes.issue(role.agentId);
     role.claimCode = issued.code;
     role.claimCodeExpiresAt = issued.expiresAt;

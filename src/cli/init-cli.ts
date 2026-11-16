@@ -123,11 +123,12 @@ async function existingManifestRoles(
   if (!project) invalid("manifest must declare at least one role");
   return {
     project,
-    roles: participants.map(({ agentId, title, role, host }) => ({
+    roles: participants.map(({ agentId, title, role, host, placement }) => ({
       agentId,
       title,
       role,
       ...(host ? { host } : {}),
+      ...(placement ? { placement } : {}),
     })),
   };
 }

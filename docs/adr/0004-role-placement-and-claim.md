@@ -125,7 +125,16 @@ claim layer (#42) remains for hosts without config provisioning.
   recorded), token rotation/revocation voids outstanding codes. Runbook:
   `docs/add-role.md` → "Claiming a role on a host without session
   provisioning".
-- Layers 1 (per-role `host` in the manifest) and 2 (capability matrix with
-  `canProvisionSessions`) are **not implemented yet** — a separate task.
-  Until they land, claim codes are issued by the generic-host init path
-  (`--host generic`), the only host without session provisioning today.
+- Layers 1 and 2 landed with per-role `host` reconciliation (#43/#44).
+- The config-provisioner increment (#58) adds `canProvisionConfig` and a
+  `provision`/`inspect`/`remove` registry. Codex Desktop owns only its MCP table
+  subtree in TOML; host/user settings outside it are preserved. `AGENTS.md`
+  remains protected by its complete file hash.
+- Optional manifest `placement` selects a config role directory; the existing
+  runtime directory remains the default. Init persists the resolved location,
+  rejects redirects/service paths and implicit moves, and doctor/remove read
+  the recorded location. No project-specific folder layout is imposed.
+- Successful claim persists `bound` (or `configured` for config hosts) in
+  placement state. Doctor reports that state directly; re-init preserves a
+  claimed role instead of manufacturing another claim code. Explicit
+  `claim-issue` remains available when the operator intends to reissue a code.

@@ -64,6 +64,14 @@ stdio channels authenticated by bearer tokens.
   still re-register the same session without the exclusive flag, and omission of
   optional heartbeat/close generation retains legacy behavior. Expired leases
   permit exclusive registration; cross-role session-ID reuse is still refused.
+- **Config placement (#58)**: custom role directories are explicit manifest
+  configuration. Init refuses redirected ancestors, project roots, Synloq
+  service paths, overlapping role directories, and implicit placement moves.
+  Doctor/removal use the recorded location. Codex edits/removal are confined to
+  the owned MCP TOML subtree and unchanged generated instructions; foreign
+  settings and modified files are retained. These are accidental-overwrite
+  protections, not protection against an owning OS user racing filesystem
+  changes between validation and writing.
 
 ## Known limitations (accepted, tracked in `docs/backlog.md`)
 

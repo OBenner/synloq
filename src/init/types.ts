@@ -11,6 +11,7 @@ import type {
 
 export interface RoleInput {
   host?: HostName;
+  placement?: string;
   agentId: string;
   title: string;
   role: string;

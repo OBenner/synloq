@@ -10,28 +10,57 @@ synloq init --project-root <source-project> --synloq-home <home> --relay-url htt
 ```
 
 The `desktop.roles` result lists directories under
-`<home>/runtime/<project-key>/roles/<role>`. Open each directory as a separate
+`<home>/runtime/<project-key>/roles/<role>` by default. A role may opt into a
+different directory with `placement` in `synloq.yaml`:
+
+```yaml
+agents:
+  arch:
+    title: Architect
+    role: Design
+    host: codex-desktop
+    placement: role-projects/arch
+```
+
+Relative placement paths resolve against the source project; absolute paths are
+also accepted. No project-local layout is imposed by default. Init saves the
+resolved path in team state, which doctor and remove-role use even if the manifest
+later changes. Re-init refuses a placement move until the operator performs an
+explicit migration. Project-root/ancestor paths, Synloq service directories,
+redirected paths (including symlinks/junctions), and overlapping role directories
+are refused. The standard generated directory is the service-path exception.
+
+Open each returned directory as a separate
 trusted Codex Desktop project and start a chat, following `desktop.nextSteps`.
-Each `.codex/config.toml` declares only `synloq-<role>`; `AGENTS.md` contains
+Synloq owns only `[mcp_servers.synloq-<role>]` and its child tables in
+`.codex/config.toml`; other settings and server tables are preserved verbatim.
+`AGENTS.md` contains
 the shared role prompt and source-project location. Credentials stay in the
 Synloq home; the runtime JSON uses `relativeHomePaths`. The TOML contains
 paths, never tokens. Re-run init after relocating the home/runtime binary
 because the Desktop launcher arguments contain absolute paths.
 
 Desktop configuration provisioning does not create a chat, report session
-state, or wake an inactive model. `canProvisionSessions` remains false.
+state, or wake an inactive model. `canProvisionSessions` remains false;
+`canProvisionConfig` is true. Config-only hosts dispatch through the
+`ConfigProvisioner` registry (`provision`, `inspect`, `remove`).
 Desktop roles do not require claim codes; generic/ZCode roles retain the
 existing claim flow. The role is reactive: activate it to check its inbox.
 A manual-only stand requires an operator-started relay on its configured
 port (or an existing compatible relay supervised by another host).
 
-`doctor` reports `placement.state: configured` for intact Desktop files;
-this is configuration evidence, not a live chat binding. Missing directories,
-missing files, and edited generated files produce a failed placement check.
-Re-init preserves credentials and refuses to overwrite drifted files.
+`doctor` reports the saved placement state (`configured` for Desktop), with
+`ok` reflecting inspection; this is configuration evidence, not a live chat
+binding. Missing directories/files, an edited owned table, or an edited
+`AGENTS.md` produce a failed placement check. Host additions outside the owned
+table no longer count as drift. Re-init preserves credentials and refuses to
+overwrite drifted owned content. Ambiguous TOML (duplicate owned headers,
+overlapping inline definitions, or unsupported lexical forms) fails closed
+instead of being reserialized. `AGENTS.md` still uses a full-file SHA-256 hash.
 Back up deliberate edits and resolve drift before re-init. `remove-role`
 uses the existing operator authorization/revocation path and removes only
-unchanged generated files; modified or additional user files are retained
+unchanged generated content; the owned TOML table is removed while other tables
+and settings remain. Modified or additional user files are retained
 with a diagnostic. Close Desktop chats manually after removal.
 
 Live acceptance: **VERIFIED 2026-11-15** on an isolated stand (relay
