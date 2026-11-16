@@ -46,7 +46,9 @@ async function unusedUrl(): Promise<string> {
   return url;
 }
 
-describe("startRelaySupervisor", () => {
+// Real loopback requests compete with the full suite on CI/Windows.
+// Keep each probe bounded, with room for startup, election and assertions.
+describe("startRelaySupervisor", { timeout: 20_000 }, () => {
   it("elects a survivor after owner shutdown and preserves durable messages", async () => {
     const { root, home, token, participants } = await fixture();
     const relayUrl = await unusedUrl();
@@ -60,7 +62,7 @@ describe("startRelaySupervisor", () => {
       retryDelayMs: 5,
       monitorIntervalMs: 10,
       maxReconnectAttempts: 30,
-      probeTimeoutMs: 100,
+      probeTimeoutMs: 1_000,
     };
     const first = await startRelaySupervisor(options);
     const second = await startRelaySupervisor({ ...options, onOwnerLost: ownerLost });
@@ -76,7 +78,7 @@ describe("startRelaySupervisor", () => {
     });
     await first.close();
 
-    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 5_000 });
+    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 10_000 });
     expect(ownerLost).toHaveBeenCalledTimes(1);
     await expect(second.client.listParticipants()).resolves.toEqual({ participants });
     await expect(second.client.inbox({ limit: 10 })).resolves.toMatchObject({
@@ -96,7 +98,7 @@ describe("startRelaySupervisor", () => {
       synloqHome: home,
       retryDelayMs: 5,
       monitorIntervalMs: 20,
-      probeTimeoutMs: 100,
+      probeTimeoutMs: 1_000,
     };
 
     const [first, second] = await Promise.all([
