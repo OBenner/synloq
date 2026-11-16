@@ -136,6 +136,11 @@ checklist.
    MCP config path. The credential file is picked up locally and is never
    transmitted through chat.
 
+   Prefer this CLI path over pasting the code into a chat: a code pasted
+   into an _existing_ chat is read as plain text and does not claim the
+   role. If a chat-based claim is ever used, the code must go into a _new_
+   chat of that role's project.
+
 2. Wire the printed config path into the host's MCP configuration, approve
    the host's trust dialogs, and restart the host client so the channel
    starts.
@@ -159,6 +164,12 @@ not recorded.
   changes. A manifest that fails to parse is ignored — the relay keeps the
   last good registry and records a `directory`/`degraded` event in the
   security audit log (`<synloq-home>/data/<project>-audit.jsonl`).
+  Caveat: hot-reload holds only while the running relay understands the
+  current manifest schema. After upgrading Synloq itself to a version that
+  extends the schema (a new field in `synloq.yaml`), restart the host once
+  before adding roles — otherwise the old process rejects the newer manifest
+  and new roles stay unreachable (`UNKNOWN_RECIPIENT`) until the restart
+  (issue #69).
 - **Role tokens.** Credentials are re-read on every request; a rotated or
   newly issued token works as soon as the channel using it restarts.
 
@@ -170,6 +181,11 @@ not recorded.
   never installed from this source.
 - A role chat that stays empty after Install/Update usually means the client
   needs a restart so the new MCP channel is spawned.
+- A freshly added role that can send but whose incoming messages fail with
+  `UNKNOWN_RECIPIENT` means the running relay rejected the updated manifest:
+  check for a `directory`/`degraded` event in the audit log
+  (`<synloq-home>/data/<project-key>-audit.jsonl`) and restart the host once
+  (rolling-upgrade caveat above, issue #69).
 - For OpenCode-bound roles, `synloq doctor` shows a `hostCheck` section:
   whether the `opencode.json` MCP entry is present and the credential file is
   healthy. Add `--check-host` to also probe the OpenCode service for session
