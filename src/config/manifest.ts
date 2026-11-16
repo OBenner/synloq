@@ -96,8 +96,103 @@ async function readManifest(projectRoot: string) {
   if (!manifest.success) {
     throw new SynloqError("INVALID_INPUT", "manifest does not match the version 1 schema");
   }
-  return manifest.data;
+  return applyLocalOverlay(projectRoot, manifest.data);
 }
+
+export const LOCAL_OVERLAY_FILENAME = "synloq.local.yaml";
+
+/**
+ * A gitignored personal overlay merged over the committed manifest (issue #37).
+ * Key-level precedence: an overlay agent overrides only the fields it names and
+ * may add roles; `project` is the shared namespace and must not be overridden.
+ * A malformed overlay fails loud — it never silently falls back to the
+ * committed manifest.
+ */
+async function applyLocalOverlay(
+  projectRoot: string,
+  base: z.infer<typeof manifestSchema>,
+): Promise<z.infer<typeof manifestSchema>> {
+  let source: string;
+  try {
+    source = await readFile(join(projectRoot, LOCAL_OVERLAY_FILENAME), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return base;
+    throw error;
+  }
+  let input: unknown;
+  try {
+    input = YAML.parse(source);
+  } catch (error) {
+    const line = (error as { linePos?: [{ line: number }] }).linePos?.[0]?.line;
+    throw new SynloqError(
+      "INVALID_INPUT",
+      `${LOCAL_OVERLAY_FILENAME} contains malformed YAML${line ? ` at line ${line}` : ""}`,
+    );
+  }
+  if (typeof input === "object" && input !== null && "project" in input) {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      `${LOCAL_OVERLAY_FILENAME} must not override 'project'; the namespace is shared`,
+    );
+  }
+  const overlay = overlaySchema.safeParse(input);
+  if (!overlay.success) {
+    throw new SynloqError(
+      "INVALID_INPUT",
+      `${LOCAL_OVERLAY_FILENAME} does not match the overlay schema`,
+    );
+  }
+  const agents = { ...base.agents };
+  for (const [id, patch] of Object.entries(overlay.data.agents)) {
+    const existing = agents[id];
+    if (!existing) {
+      if (patch.title === undefined || patch.role === undefined) {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `${LOCAL_OVERLAY_FILENAME} adds role '${id}' without title and role`,
+        );
+      }
+      agents[id] = {
+        title: patch.title,
+        role: patch.role,
+        ...(patch.host ? { host: patch.host } : {}),
+        ...(patch.placement ? { placement: patch.placement } : {}),
+      };
+    } else {
+      agents[id] = {
+        title: patch.title ?? existing.title,
+        role: patch.role ?? existing.role,
+        host: patch.host ?? existing.host,
+        placement: patch.placement ?? existing.placement,
+      };
+    }
+  }
+  return {
+    ...base,
+    agents,
+    language: overlay.data.language ?? base.language,
+    retention: overlay.data.retention ?? base.retention,
+  };
+}
+
+const overlaySchema = z
+  .object({
+    version: z.literal(1).default(1),
+    language: languageSchema.optional(),
+    retention: retentionSchema.optional(),
+    agents: z.record(
+      agentId,
+      z
+        .object({
+          title: z.string().optional(),
+          role: z.string().optional(),
+          host: hostSchema.optional(),
+          placement: z.string().min(1).optional(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
 
 /** Unknown keys are accepted by the relay but shown as doctor warnings. */
 export async function manifestUnknownFields(projectRoot: string): Promise<string[]> {

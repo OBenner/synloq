@@ -16,3 +16,6 @@ docs/local/
 
 # Machine-specific host adapter config (local test stand)
 opencode.json
+
+# Personal manifest overlay (issue #37): local role/host deviations, never committed
+synloq.local.yaml
