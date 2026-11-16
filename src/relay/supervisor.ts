@@ -1,12 +1,12 @@
 import { serveCommand, type ServeHandle } from "../cli/commands.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
-import { RelayHttpClient } from "../transport/http-client.js";
+import { RelayHttpClient, type TokenProvider } from "../transport/http-client.js";
 import { parseLoopbackHttpUrl } from "../transport/loopback.js";
 
 export type RelayProbe = (
   relayUrl: string,
-  token: string,
+  token: TokenProvider,
   timeoutMs: number,
 ) => Promise<Participant[]>;
 
@@ -14,7 +14,8 @@ export interface EnsureRelayOptions {
   projectRoot: string;
   project: string;
   relayUrl: string;
-  token: string;
+  /** Static token or a re-reading provider (rotate/repair self-heal). */
+  token: string | TokenProvider;
   synloqHome?: string;
   probeTimeoutMs?: number;
   serve?: typeof serveCommand;
@@ -43,7 +44,7 @@ function unavailable(): SynloqError {
 }
 
 const defaultProbe: RelayProbe = async (relayUrl, token, timeoutMs) => {
-  const client = new RelayHttpClient(relayUrl, () => token);
+  const client = new RelayHttpClient(relayUrl, token);
   // Verify the unauthenticated health marker before any credential is sent:
   // a port-squatting listener must never receive the bearer token.
   await client.health(timeoutMs);
@@ -54,9 +55,11 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
   const target = parseLoopbackHttpUrl(options.relayUrl);
   const probe = options.probe ?? defaultProbe;
   const timeoutMs = options.probeTimeoutMs ?? 750;
-  const client = new RelayHttpClient(target.baseUrl, () => options.token);
+  const token: TokenProvider =
+    typeof options.token === "function" ? options.token : () => options.token as string;
+  const client = new RelayHttpClient(target.baseUrl, token);
   const compatible = async (): Promise<RelaySupervisorHandle> => {
-    const participants = await probe(target.baseUrl, options.token, timeoutMs);
+    const participants = await probe(target.baseUrl, token, timeoutMs);
     if (
       participants.length === 0 ||
       participants.some((participant) => participant.project !== options.project)

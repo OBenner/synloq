@@ -18,6 +18,8 @@ export interface OpenCodeFactoryOptions {
   binding: ResolvedOpenCodeBinding;
   relay: RelayHttpClient;
   token: string;
+  /** Every token this channel has served (rotation history) — for masking. */
+  knownTokens?: () => string[];
   signal: AbortSignal;
   onUnauthorized: (error: SynloqError) => void;
   outstanding: OutstandingTracker;
@@ -59,7 +61,10 @@ export async function defaultOpenCodeFactory(
       undefined,
       undefined,
       options.outstanding,
-      { output: options.diagnostics, secrets: [options.token, endpoint.authToken ?? ""] },
+      {
+        output: options.diagnostics,
+        secrets: [...(options.knownTokens?.() ?? [options.token]), endpoint.authToken ?? ""],
+      },
     ),
   };
 }
@@ -90,6 +95,7 @@ export function createOpenCodeLifecycle(
   relay: RelayHttpClient,
   token: string,
   options: OpenCodeLifecycleOptions,
+  knownTokens?: () => string[],
 ) {
   const factory = options.openCodeFactory ?? defaultOpenCodeFactory;
   const output = options.stderr ?? process.stderr;
@@ -106,9 +112,12 @@ export function createOpenCodeLifecycle(
 
   const diagnostic = (message: string) => {
     try {
-      output.write(
-        `${formatDiagnostic(`Synloq OpenCode ${binding.agentId}: ${token ? message.split(token).join("[redacted]") : message}`)}\n`,
-      );
+      // Mask every token this channel has ever served (rotation history).
+      let masked = message;
+      for (const known of knownTokens?.() ?? (token === "" ? [] : [token])) {
+        if (known !== "") masked = masked.split(known).join("[redacted]");
+      }
+      output.write(`${formatDiagnostic(`Synloq OpenCode ${binding.agentId}: ${masked}`)}\n`);
     } catch {
       /* Diagnostics must not take down MCP tools. */
     }
@@ -154,6 +163,7 @@ export function createOpenCodeLifecycle(
             binding,
             relay,
             token,
+            ...(knownTokens ? { knownTokens } : {}),
             signal: controller.signal,
             onUnauthorized: unauthorized,
             outstanding,

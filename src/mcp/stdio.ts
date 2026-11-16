@@ -8,6 +8,7 @@ import { z } from "zod";
 import { runKimiWorkAdapter, type KimiWorkAdapter } from "../adapters/kimi-work.js";
 import { HttpAdapterRunner, OutstandingTracker } from "../adapters/http-runner.js";
 import { loadManifest } from "../config/manifest.js";
+import { createTokenFileProvider } from "../config/credentials.js";
 import { projectPaths } from "../config/paths.js";
 import { formatDiagnostic } from "../diagnostics.js";
 import { SynloqError } from "../domain/errors.js";
@@ -77,6 +78,8 @@ export interface KimiWorkFactoryOptions {
   binding: ResolvedKimiWorkBinding;
   relay: RelayHttpClient;
   token: string;
+  /** Every token this channel has served (rotation history) — for masking. */
+  knownTokens?: () => string[];
   signal: AbortSignal;
   onUnauthorized: (error: SynloqError) => void;
   outstanding: OutstandingTracker;
@@ -101,6 +104,8 @@ export interface McpStdioOptions extends OpenCodeLifecycleOptions {
 interface McpConfiguration {
   relayUrl: string;
   token: string;
+  /** Absolute path to the credential file — feeds the re-reading provider. */
+  credentialPath: string;
   synloqHome?: string;
   language?: Language;
   storedPing?: boolean;
@@ -139,6 +144,7 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
   return {
     relayUrl: configuration.data.relayUrl,
     token,
+    credentialPath,
     ...(configuration.data.synloqHome
       ? { synloqHome: resolve(dirname(configPath), configuration.data.synloqHome) }
       : {}),
@@ -176,7 +182,10 @@ async function defaultKimiWorkFactory(options: KimiWorkFactoryOptions): Promise<
       undefined,
       undefined,
       options.outstanding,
-      { output: options.diagnostics ?? process.stderr, secrets: [options.token] },
+      {
+        output: options.diagnostics ?? process.stderr,
+        secrets: options.knownTokens?.() ?? [options.token],
+      },
     ),
   };
 }
@@ -208,9 +217,19 @@ function createKimiWorkLifecycle(
   token: string,
   options: McpStdioOptions,
   language?: Language,
+  knownTokens?: () => string[],
 ): KimiWorkLifecycle {
   const factory = options.kimiWorkFactory ?? defaultKimiWorkFactory;
   const diagnostics = options.stderr ?? process.stderr;
+  // Mask every token this channel has ever served: a mid-flight rotation
+  // (repair/rotate) must not leak the old or the new token into diagnostics.
+  const mask = (text: string): string => {
+    let masked = text;
+    for (const known of knownTokens?.() ?? (token === "" ? [] : [token])) {
+      if (known !== "") masked = masked.split(known).join("[redacted]");
+    }
+    return masked;
+  };
   const attempts = Math.max(1, Math.floor(options.kimiWorkStartupAttempts ?? 5));
   const retryDelay = Math.max(0, options.kimiWorkRetryDelayMs ?? 200);
   // Recovery storms burn relay generations (observed: 1.5-3 re-registrations
@@ -232,7 +251,7 @@ function createKimiWorkLifecycle(
     if (closed || recovering) return;
     recovering = true;
     const raw = `${error.code}: ${error.message}`;
-    const detail = token === "" ? raw : raw.split(token).join("[redacted]");
+    const detail = mask(raw);
     diagnostics.write(
       `${formatDiagnostic(`Synloq Kimi Work binding rejected by the relay for ${binding.conversationKey}, re-registering: ${detail}`)}\n`,
     );
@@ -283,6 +302,7 @@ function createKimiWorkLifecycle(
             signal: controller.signal,
             onUnauthorized: recover,
             outstanding,
+            ...(knownTokens ? { knownTokens } : {}),
             ...(language ? { language } : {}),
           });
           if (controller.signal.aborted || closed) {
@@ -301,7 +321,7 @@ function createKimiWorkLifecycle(
               : error instanceof Error
                 ? error.message
                 : String(error);
-          const detail = token === "" ? raw : raw.split(token).join("[redacted]");
+          const detail = mask(raw);
           diagnostics.write(
             `${formatDiagnostic(`Synloq Kimi Work startup attempt ${attempt}/${attempts} failed for ${binding.conversationKey}: ${detail}`)}\n`,
           );
@@ -358,6 +378,10 @@ export async function startMcpStdio(
 ): Promise<McpServer> {
   const configuration = await readConfiguration(configPath);
   const diagnostics = options.stderr ?? process.stderr;
+  // Self-heal after a token rotation/repair: the provider re-reads the
+  // credential file per request (with a last-good fallback), so a live
+  // channel recovers from a reissue without a host process restart.
+  const tokens = createTokenFileProvider(configuration.credentialPath, configuration.token);
   const hostWorkspace =
     configuration.kimiWork?.workspacePath ?? configuration.opencode?.workspacePath;
   let restoreCwd: (() => void) | undefined;
@@ -402,7 +426,7 @@ export async function startMcpStdio(
       projectRoot: hostWorkspace,
       project,
       relayUrl: configuration.relayUrl,
-      token: configuration.token,
+      token: tokens.provider,
       synloqHome: configuration.synloqHome,
       // OpenCode keeps its generation during relay failover. Its HTTP runner
       // retries transport failures; stale-generation rejection stops it for good.
@@ -427,8 +451,7 @@ export async function startMcpStdio(
     }
   }
 
-  const client =
-    supervisor?.client ?? new RelayHttpClient(configuration.relayUrl, () => configuration.token);
+  const client = supervisor?.client ?? new RelayHttpClient(configuration.relayUrl, tokens.provider);
   const server = new McpServer({ name: "synloq", version: "0.1.0" });
   // Issue #46: writer-session proof for write tools — the visible chat's own
   // session id, so a second chat of the same role stays read-only.
@@ -451,6 +474,7 @@ export async function startMcpStdio(
       configuration.token,
       options,
       configuration.language,
+      tokens.knownTokens,
     );
   } else if (configuration.opencode) {
     lifecycle = createOpenCodeLifecycle(
@@ -458,6 +482,7 @@ export async function startMcpStdio(
       client,
       configuration.token,
       options,
+      tokens.knownTokens,
     );
   }
   if (lifecycle) {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { SynloqError } from "../domain/errors.js";
 import { agentId as agentIdSchema } from "../domain/message.js";
 import type { SecurityAuditLog } from "../relay/audit-log.js";
+import type { TokenProvider } from "../transport/http-client.js";
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-file.js";
 import { projectPaths } from "./paths.js";
 import { withFileLock } from "./file-lock.js";
@@ -33,6 +34,45 @@ export interface EnsuredCredential {
 
 function tokenDigest(token: string): Buffer {
   return createHash("sha256").update(token).digest();
+}
+
+/**
+ * Token provider backed by the credential file (UX task: recovery after a
+ * 401/token reissue). Re-reads the file on every call so a `rotate-token` or
+ * `doctor --repair` reissue takes effect in a running channel without a
+ * process restart. A transient read failure (Windows sharing violation, a
+ * torn rename mid-rewrite) must not break a live channel: the last
+ * successfully read token is returned instead. `knownTokens` accumulates
+ * every token ever served so diagnostics can mask old and new alike.
+ */
+export function createTokenFileProvider(
+  tokenPath: string,
+  initial: string,
+): { provider: TokenProvider; knownTokens: () => string[] } {
+  let lastGood = initial;
+  const known = new Set<string>(initial === "" ? [] : [initial]);
+  return {
+    provider: async () => {
+      try {
+        const token = (await readFile(tokenPath, "utf8")).trim();
+        if (token !== "") {
+          lastGood = token;
+          known.add(token);
+        }
+      } catch {
+        // Fall through to the last good token: a momentary read failure must
+        // not drop a working channel.
+      }
+      if (lastGood === "") {
+        throw new SynloqError(
+          "INVALID_INPUT",
+          `credential file is empty or unreadable: ${tokenPath}`,
+        );
+      }
+      return lastGood;
+    },
+    knownTokens: () => [...known],
+  };
 }
 
 export class CredentialStore {
