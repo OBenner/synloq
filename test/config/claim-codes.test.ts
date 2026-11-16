@@ -137,15 +137,23 @@ describe("ClaimCodeStore", () => {
     expect(state?.claims?.arch).toBeDefined();
     await expect(codes.consume("arch", arch.code)).resolves.toEqual({ status: "claimed" });
   });
-  it("always issues well-formed 8-char base32 codes (1000-iteration pin)", async () => {
-    const { store } = await fixture();
-    const codes = new ClaimCodeStore(store, clockAt(T0));
+  it(
+    "always issues well-formed 8-char base32 codes (100-iteration pin)",
+    { timeout: 20000 },
+    async () => {
+      const { store } = await fixture();
+      const codes = new ClaimCodeStore(store, clockAt(T0));
 
-    for (let i = 0; i < 1000; i++) {
-      const issued = await codes.issue("dev");
-      expect(issued.code).toMatch(/^synloq-claim-dev-[a-z2-7]{8}$/);
-    }
-  });
+      // 100 iterations are ample: the output length is invariant by
+      // construction (5 bytes = 40 bits = exactly 8 base32 chars); this pins
+      // the shape against regressions, not statistics. 1000 iterations of
+      // atomic state writes flaked under parallel verify load on Windows.
+      for (let i = 0; i < 100; i++) {
+        const issued = await codes.issue("dev");
+        expect(issued.code).toMatch(/^synloq-claim-dev-[a-z2-7]{8}$/);
+      }
+    },
+  );
 });
 
 describe("team state claims schema", () => {
