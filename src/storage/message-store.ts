@@ -5,6 +5,7 @@ import type { Message, SendMessageInput } from "../domain/message.js";
 import type { SessionBinding } from "../domain/session.js";
 import { openDatabase, storageFailure, withTransaction } from "./sqlite.js";
 import { contentHash, DAY_MS, DEDUP_WINDOW_MS } from "./dedup.js";
+import { clearReleasedQuarantine } from "./delivery-quarantine.js";
 
 interface DedupRow extends Omit<MessageRow, "text"> {
   content_hash: string;
@@ -663,9 +664,10 @@ export class SQLiteMessageStore {
   }
 
   /**
-   * Releases quarantined deliveries of a participant back into the FIFO queue.
-   * Called on (re)registration: a fresh generation is the natural reconcile
-   * point, and resubmission is probe-gated by the receiving adapter.
+   * Explicitly releases retryable quarantined deliveries back into the FIFO queue.
+   * Consumed acceptance submissions stay quarantined and cannot be retried or
+   * become FIFO blockers. Registration uses the same quarantine cleanup policy.
+   * See docs/storage-delivery.md for the distinction from read acknowledgement.
    */
   releaseQuarantinedDeliveries(project: string, recipient: string): number {
     return this.write(() => {
@@ -683,9 +685,7 @@ export class SQLiteMessageStore {
              )`,
         )
         .run(project, recipient);
-      this.database
-        .prepare("DELETE FROM delivery_quarantine WHERE project = ? AND recipient = ?")
-        .run(project, recipient);
+      clearReleasedQuarantine(this.database, project, recipient);
       return Number(released.changes);
     });
   }
@@ -777,6 +777,7 @@ export class SQLiteMessageStore {
     return toMessage(updated);
   }
 
+  /** Internal fixture/setup helper; production delivery uses scoped claim/receipt methods. */
   setDeliveryState(
     id: string,
     project: string,
@@ -892,6 +893,7 @@ export class SQLiteMessageStore {
     });
   }
 
+  /** Internal fixture/setup helper; production retries use reportDeliveryFailure. */
   resetSubmittedForRetry(id: string, project: string): Message {
     return this.write(() => {
       const row = this.findById(id, project);
@@ -912,6 +914,11 @@ export class SQLiteMessageStore {
     });
   }
 
+  /**
+   * A recipient's read acknowledgement, not a transport receipt (v1 section 3).
+   * Inbox-only readers need no delivery claim; RelayService enforces writer proof
+   * when a writer exists, and storage enforces project/recipient below.
+   */
   acknowledge(id: string, project: string, recipient: string): Message {
     return this.write(() => {
       const row = this.findById(id, project);

@@ -9,6 +9,7 @@ import {
 } from "../domain/session.js";
 import type { SQLiteMessageStore } from "./message-store.js";
 import { openDatabase, storageFailure, withTransaction } from "./sqlite.js";
+import { clearReleasedQuarantine } from "./delivery-quarantine.js";
 
 const LEASE_DURATION_MS = 15_000;
 const STATE_FRESHNESS_MS = 5_000;
@@ -152,9 +153,10 @@ export class SessionStore {
       const observedAt = new Date(now).toISOString();
       const leaseExpiresAt = new Date(now + LEASE_DURATION_MS).toISOString();
       if (existing) {
-        // A fresh generation reconciles outstanding claims: every lingering
-        // submitted delivery (including previously quarantined ones) returns to
-        // the FIFO queue. Resubmission is probe-gated by the receiving adapter
+        // A fresh generation reconciles retryable outstanding claims, including
+        // previously quarantined ones. Consumed acceptance submissions stay
+        // quarantined: their one-message allowance must not be restored (#90).
+        // Resubmission is probe-gated by the receiving adapter
         // (history reconcile or client idempotency), so no pause gate and no
         // quarantine entry is created here — an ambiguous host response must not
         // silently mute the participant (issue #28).
@@ -166,9 +168,7 @@ export class SessionStore {
                AND acceptance_consumed_generation IS NULL`,
           )
           .run(registration.project, registration.agentId);
-        this.database
-          .prepare("DELETE FROM delivery_quarantine WHERE project = ? AND recipient = ?")
-          .run(registration.project, registration.agentId);
+        clearReleasedQuarantine(this.database, registration.project, registration.agentId);
       }
 
       const acceptanceConsumed =
