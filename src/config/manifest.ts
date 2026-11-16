@@ -12,7 +12,23 @@ export interface ManifestRole extends Participant {
   host?: HostName;
 }
 
-const manifestSchema = z
+// Readers strip unknown fields so an older live relay can accept a newer,
+// additive manifest. Doctor still reports these fields to catch typos.
+const manifestSchema = z.object({
+  version: z.literal(1).default(1),
+  project: z.string().min(1).max(128),
+  language: languageSchema.default(DEFAULT_LANGUAGE),
+  agents: z.record(
+    agentId,
+    z.object({
+      title: z.string(),
+      role: z.string(),
+      host: hostSchema.optional(),
+    }),
+  ),
+});
+
+const strictManifestSchema = z
   .object({
     version: z.literal(1).default(1),
     project: z.string().min(1).max(128),
@@ -69,6 +85,25 @@ async function readManifest(projectRoot: string) {
     throw new SynloqError("INVALID_INPUT", "manifest does not match the version 1 schema");
   }
   return manifest.data;
+}
+
+/** Unknown keys are accepted by the relay but shown as doctor warnings. */
+export async function manifestUnknownFields(projectRoot: string): Promise<string[]> {
+  const source = await readFile(join(projectRoot, "synloq.yaml"), "utf8");
+  let input: unknown;
+  try {
+    input = YAML.parse(source);
+  } catch {
+    return [];
+  }
+  const result = strictManifestSchema.safeParse(input);
+  if (result.success) return [];
+  return result.error.issues
+    .filter((issue) => issue.code === "unrecognized_keys")
+    .flatMap((issue) => {
+      const prefix = issue.path.length === 0 ? "" : `${issue.path.join(".")}.`;
+      return issue.keys.map((key) => `${prefix}${key}`);
+    });
 }
 
 export async function writeManifest(

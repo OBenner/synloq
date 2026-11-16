@@ -12,6 +12,7 @@ import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
+import { auditLogPath } from "../../src/relay/audit-log.js";
 
 const PROJECT = "verdicta";
 const secretMessageBody = "secret-message-body-do-not-print";
@@ -102,6 +103,31 @@ async function captureDoctor(): Promise<string> {
 }
 
 describe("DoctorReport", () => {
+  it("surfaces the latest directory degradation from the audit log", async () => {
+    const paths = await projectPaths(fixture.root);
+    const auditPath = auditLogPath(paths.home, paths.key);
+    await mkdir(dirname(auditPath), { recursive: true });
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        at: "2026-11-10T00:00:00.000Z",
+        project: PROJECT,
+        agentId: "relay",
+        action: "directory",
+        decision: "degraded",
+        reasonCode: "INVALID_INPUT",
+        detail: "manifest does not match the version 1 schema",
+      })}\n`,
+    );
+
+    const result = await doctorCommand({ projectRoot: fixture.root, clock: fixture.clock });
+    expect(result.directory).toEqual({
+      state: "degraded",
+      since: "2026-11-10T00:00:00.000Z",
+      reason: "INVALID_INPUT: manifest does not match the version 1 schema",
+    });
+  });
+
   it("flags a stale installed plugin copy from the team state source (issue #36)", async () => {
     const paths = await projectPaths(fixture.root);
     const source = join(fixture.home, "plugin-source");

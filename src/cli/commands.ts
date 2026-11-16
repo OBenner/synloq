@@ -4,7 +4,12 @@ import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
-import { loadManifest, loadManifestRoles, removeManifestParticipant } from "../config/manifest.js";
+import {
+  loadManifest,
+  loadManifestRoles,
+  manifestUnknownFields,
+  removeManifestParticipant,
+} from "../config/manifest.js";
 import { HOST_CAPABILITIES } from "../config/hosts.js";
 import { inspectDesktopDirectory, removeDesktopDirectory } from "../init/codex-desktop.js";
 import { projectPaths } from "../config/paths.js";
@@ -579,6 +584,10 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   // scenario is reproducible from audit entries alone. Offline-safe read.
   const auditPath = auditLogPath(paths.home, paths.key);
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
+  const lastDirectoryDegradation = [...audit.entries]
+    .reverse()
+    .find((entry) => entry.action === "directory" && entry.decision === "degraded");
+  const manifestWarnings = await manifestUnknownFields(options.projectRoot);
 
   // Issue #6: repair first so the report reflects the post-repair state.
   let repair: DoctorReport["repair"];
@@ -719,6 +728,14 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       sessions,
       clock,
       audit,
+      directory: lastDirectoryDegradation
+        ? {
+            state: "degraded",
+            since: lastDirectoryDegradation.at,
+            reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
+          }
+        : { state: "ok" },
+      ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -735,6 +752,14 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       storageError: storageError(error),
       clock,
       audit,
+      directory: lastDirectoryDegradation
+        ? {
+            state: "degraded",
+            since: lastDirectoryDegradation.at,
+            reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
+          }
+        : { state: "ok" },
+      ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -758,6 +783,18 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
+  const auditPath = auditLogPath(paths.home, paths.key);
+  const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
+  const lastDirectoryDegradation = [...audit.entries]
+    .reverse()
+    .find((entry) => entry.action === "directory" && entry.decision === "degraded");
+  const directory = lastDirectoryDegradation
+    ? {
+        state: "degraded" as const,
+        since: lastDirectoryDegradation.at,
+        reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
+      }
+    : { state: "ok" as const };
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
@@ -772,6 +809,8 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       sessions,
       clock,
       roleHosts,
+      audit,
+      directory,
       ...(options.unansweredThresholdMs === undefined
         ? {}
         : { unansweredThresholdMs: options.unansweredThresholdMs }),
@@ -785,6 +824,8 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       storageError: storageError(error),
       clock,
       roleHosts,
+      audit,
+      directory,
     });
   } finally {
     sessions?.close();

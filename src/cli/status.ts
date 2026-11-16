@@ -6,6 +6,7 @@ import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import { createDoctorReport, type DoctorReportOptions, type SynloqHomeProbe } from "./doctor.js";
 import type { WatchdogFinding } from "../diagnostics/watchdog.js";
+import type { SecurityEvent } from "../relay/audit-log.js";
 
 const DEFAULT_UNANSWERED_THRESHOLD_MS = 30 * 60_000;
 
@@ -31,6 +32,8 @@ export interface StatusReport {
   storage: { ok: boolean; path: string; error?: string };
   home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
+  audit?: { path: string; entries: SecurityEvent[] };
+  directory?: { state: "ok" | "degraded"; since?: string; reason?: string };
   participants: StatusParticipant[];
 }
 
@@ -158,6 +161,8 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
     generatedAt: new Date(now).toISOString(),
     storage: doctor.storage,
     ...(doctor.home ? { home: doctor.home } : {}),
+    ...(doctor.audit ? { audit: doctor.audit } : {}),
+    ...(doctor.directory ? { directory: doctor.directory } : {}),
     watchdog: doctor.watchdog,
     participants,
   };

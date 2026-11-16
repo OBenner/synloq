@@ -47,6 +47,8 @@ export interface DoctorReport {
   plugin?: PluginFreshness;
   /** Issue #3 (M4-min): tail of the security audit log (path + last events). */
   audit?: { path: string; entries: SecurityEvent[] };
+  directory?: { state: "ok" | "degraded"; since?: string; reason?: string };
+  manifestWarnings?: string[];
   repair?: {
     actions: Array<{ agentId: string; token: "reused" | "reissued"; config: string }>;
   };
@@ -86,6 +88,8 @@ export interface DoctorReportOptions {
   watchdogThresholdMs?: number;
   plugin?: PluginFreshness;
   audit?: DoctorReport["audit"];
+  directory?: DoctorReport["directory"];
+  manifestWarnings?: string[];
 }
 
 function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
@@ -136,6 +140,8 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
     ...(options.home ? { home: options.home } : {}),
     ...(options.plugin ? { plugin: options.plugin } : {}),
     ...(options.audit ? { audit: options.audit } : {}),
+    ...(options.directory ? { directory: options.directory } : {}),
+    ...(options.manifestWarnings?.length ? { manifestWarnings: options.manifestWarnings } : {}),
     ...(options.repair ? { repair: options.repair } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);

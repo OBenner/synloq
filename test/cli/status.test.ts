@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Clock } from "../../src/adapters/types.js";
 import { statusCommand } from "../../src/cli/commands.js";
@@ -12,6 +12,7 @@ import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
+import { auditLogPath } from "../../src/relay/audit-log.js";
 
 const PROJECT = "verdicta";
 const secretMessageBody = "secret-status-body-do-not-print";
@@ -222,6 +223,30 @@ describe("formatStatusReport", () => {
 });
 
 describe("statusCommand", () => {
+  it("surfaces directory degradation from the audit log", async () => {
+    const paths = await projectPaths(fixture.root);
+    const path = auditLogPath(paths.home, paths.key);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(
+      path,
+      `${JSON.stringify({
+        at: "2026-11-10T00:00:00.000Z",
+        project: PROJECT,
+        agentId: "relay",
+        action: "directory",
+        decision: "degraded",
+        reasonCode: "INVALID_INPUT",
+        detail: "manifest does not match the version 1 schema",
+      })}\n`,
+    );
+
+    const result = await statusCommand({ projectRoot: fixture.root, clock: fixture.clock });
+    expect(result.directory).toMatchObject({
+      state: "degraded",
+      since: "2026-11-10T00:00:00.000Z",
+    });
+  });
+
   it("reads the project storage read-only and matches the direct report", async () => {
     register("arch", "idle");
     queueMessage("arch", "2026-11-09T23:58:00.000Z", "status-command-1");

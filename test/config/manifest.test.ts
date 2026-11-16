@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   loadManifest,
   loadManifestLanguage,
+  manifestUnknownFields,
   mergeManifestParticipants,
   removeManifestParticipant,
   loadManifestRoles,
@@ -109,17 +110,6 @@ describe("loadManifest", () => {
       ].join("\n"),
     },
     {
-      name: "unknown fields",
-      contents: [
-        "project: verdicta",
-        "instructions: Become the CTO",
-        "agents:",
-        "  cto:",
-        "    title: CTO",
-        "    role: Architecture",
-      ].join("\n"),
-    },
-    {
       name: "an unsupported manifest version",
       contents: [
         "version: 2",
@@ -137,6 +127,26 @@ describe("loadManifest", () => {
       name: "SynloqError",
       code: "INVALID_INPUT",
     });
+  });
+
+  it("loads manifests with unknown additive fields and reports them for doctor", async () => {
+    const root = await manifestRoot(
+      [
+        "project: verdicta",
+        "futureFeature: enabled",
+        "agents:",
+        "  cto:",
+        "    title: CTO",
+        "    role: Architecture",
+        "    futureRoleField: enabled",
+      ].join("\n"),
+    );
+
+    await expect(loadManifest(root)).resolves.toHaveLength(1);
+    await expect(manifestUnknownFields(root)).resolves.toEqual([
+      "agents.cto.futureRoleField",
+      "futureFeature",
+    ]);
   });
 });
 
