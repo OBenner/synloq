@@ -84,6 +84,12 @@ is not ready yet.
 
 ## Diagnosing 401 / UNAUTHORIZED after init or rotation
 
+Fresh credential issuance during init is audited for every supported host,
+including Codex Desktop's operator and role credentials. Re-running init with
+valid credentials reuses them and does not append another `issue` event. These
+events use the same project audit file and doctor readout as `rotate` and
+`revoke`; token values and hashes are never included.
+
 0. Run `synloq doctor --project-root <path>` first: every Kimi Work-bound role
    carries a `credential` section (`ok` / `missing` / `stale`) — a `stale` or
    `missing` status is exactly the post-rotation/post-revoke state. `synloq

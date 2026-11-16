@@ -8,6 +8,7 @@ import { projectPaths } from "../config/paths.js";
 import { ClaimCodeStore } from "../config/claim-codes.js";
 import { TeamStateStore } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
+import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { coreRules } from "./role-prompt.js";
 import { relativeHomePaths } from "./runtime-config.js";
 import type { ReconcileOptions } from "./reconcile.js";
@@ -59,7 +60,11 @@ export async function inspectDesktopDirectory(
 export async function provisionDesktopRoles(options: ReconcileOptions) {
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const store = new TeamStateStore(paths.bindings);
-  const credentials = new CredentialStore(options.projectRoot, paths.home);
+  const credentials = new CredentialStore(
+    options.projectRoot,
+    paths.home,
+    new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
+  );
   const roles = [];
   await mergeManifestParticipants(
     options.projectRoot,
