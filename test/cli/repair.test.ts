@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctorCommand } from "../../src/cli/commands.js";
 import { repairTeamConfigs } from "../../src/cli/repair.js";
@@ -135,7 +135,7 @@ describe("doctor --repair (issue #6)", () => {
     const config = JSON.parse(await readFile(configPath("arch"), "utf8")) as {
       credentialPath: string;
       synloqHome: string;
-      kimiWork: { agentId: string; conversationKey: string };
+      kimiWork: { agentId: string; conversationKey: string; projectRoot: string };
     };
     expect(config.kimiWork.agentId).toBe("arch");
     expect(config.kimiWork.conversationKey).toContain("conversation:arch");
@@ -143,6 +143,26 @@ describe("doctor --repair (issue #6)", () => {
     // config file, so moving the home keeps channels valid.
     expect(config.credentialPath).toBe(`../../../credentials/${fixture.paths.key}/arch.token`);
     expect(config.synloqHome).toBe("../../..");
+    // The project root is rendered relative to the config directory too and
+    // resolves back to the real root (absolute fallback only across drives).
+    expect(config.kimiWork.projectRoot).not.toBe(fixture.root);
+    expect(resolve(join(fixture.paths.runtime, "mcp"), config.kimiWork.projectRoot)).toBe(
+      fixture.root,
+    );
+  });
+
+  it("doctor flags a config whose relative project root no longer resolves", async () => {
+    await repairTeamConfigs({ projectRoot: fixture.root });
+    const config = JSON.parse(await readFile(configPath("arch"), "utf8")) as {
+      kimiWork: { projectRoot: string };
+    };
+    config.kimiWork.projectRoot = "../../../../definitely-not-a-project-root";
+    await writeFile(configPath("arch"), JSON.stringify(config), "utf8");
+
+    const flagged = await doctorCommand({ projectRoot: fixture.root });
+    const arch = flagged.participants.find((p) => p.agentId === "arch");
+    expect(arch?.config?.ok).toBe(false);
+    expect(arch?.config?.issue).toContain("project root does not resolve");
   });
 
   it("reports nothing to repair when the project was never initialized", async () => {

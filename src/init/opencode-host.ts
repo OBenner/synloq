@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { mergeManifestParticipants, type ManifestRole } from "../config/manifest.js";
@@ -16,7 +16,7 @@ import type { OpenCodeSessionHost } from "../host/opencode/client.js";
 import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { parseRoleInputs, resolveLanguage } from "./initialize-team.js";
-import { relativeHomePaths } from "./runtime-config.js";
+import { relativeConfigPath, relativeHomePaths } from "./runtime-config.js";
 import { rolePromptOpenCode } from "./role-prompt.js";
 import type { RoleInput } from "./types.js";
 
@@ -177,13 +177,14 @@ export async function initializeOpenCodeTeam(
     // The opencode binding lets the MCP channel host the relay itself
     // (supervisor election), so no manual `synloq serve` is needed (#30).
     // sessionId is absent only when init ran without a reachable service.
-    // Paths under the Synloq home are relative to the config file (#7/#32).
+    // Paths under the Synloq home are relative to the config file (#7/#32);
+    // projectRoot is relative the same way, with an absolute fallback.
     await writeJsonAtomic(configPath, {
       relayUrl,
       ...relativeHomePaths(paths.key, role.agentId),
       language,
       opencode: {
-        projectRoot,
+        projectRoot: relativeConfigPath(dirname(configPath), projectRoot),
         agentId: role.agentId,
         ...(boundSessionId ? { sessionId: boundSessionId } : {}),
       },

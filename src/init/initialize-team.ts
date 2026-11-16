@@ -1,5 +1,5 @@
 import { realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
@@ -289,6 +289,7 @@ export async function initializeTeam(
         projectKey: paths.key,
         language,
         projectRoot,
+        configDir: dirname(configPath),
         agentId: role.agentId,
         binding: roleBinding,
       }),

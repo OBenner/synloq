@@ -1,3 +1,4 @@
+import { relative, resolve, sep } from "node:path";
 import type { KimiWorkTeamConversation } from "../config/team-state.js";
 import type { Language } from "../i18n/index.js";
 
@@ -19,12 +20,28 @@ export function relativeHomePaths(
   };
 }
 
+/**
+ * Renders an absolute target relative to the generated config's directory,
+ * so moving the project root or the Synloq home keeps configs valid (the
+ * stdio loader resolves relative paths against the config directory).
+ * Falls back to the absolute path when no relative form exists — different
+ * drive roots on Windows make path.relative return the absolute target.
+ * Forward slashes keep the JSON portable across platforms.
+ */
+export function relativeConfigPath(configDir: string, target: string): string {
+  const rendered = relative(resolve(configDir), resolve(target));
+  if (rendered === "") return target;
+  return rendered.split(sep).join("/");
+}
+
 export interface RoleRuntimeConfigInput {
   relayUrl: string;
   /** Project key — used to render the credential path relative to the config. */
   projectKey: string;
   language: Language;
   projectRoot: string;
+  /** Directory the config is written to — anchors the relative projectRoot. */
+  configDir: string;
   agentId: string;
   binding: KimiWorkTeamConversation;
 }
@@ -37,8 +54,8 @@ export interface RoleRuntimeConfigInput {
  * Issue #7: paths under the Synloq home are rendered relative to the config
  * file location (<home>/runtime/<key>/mcp/<role>.json), so moving the home
  * directory keeps channels valid; the stdio loader resolves them against the
- * config directory. kimiWork.projectRoot stays absolute by nature — doctor
- * flags it when it stops resolving.
+ * config directory. kimiWork.projectRoot is rendered relative the same way
+ * (UX hardening) with an absolute fallback across drive roots.
  */
 export function roleRuntimeConfig(input: RoleRuntimeConfigInput): Record<string, unknown> {
   return {
@@ -46,7 +63,7 @@ export function roleRuntimeConfig(input: RoleRuntimeConfigInput): Record<string,
     ...relativeHomePaths(input.projectKey, input.agentId),
     language: input.language,
     kimiWork: {
-      projectRoot: input.projectRoot,
+      projectRoot: relativeConfigPath(input.configDir, input.projectRoot),
       agentId: input.agentId,
       conversationKey: input.binding.conversationKey,
       workAgentId: input.binding.workAgentId,
