@@ -103,7 +103,7 @@ function makeRelay(): RelayHttpClient {
     heartbeat: vi.fn().mockResolvedValue({}),
     closeSession: vi.fn().mockResolvedValue({}),
     registerSession: vi.fn().mockResolvedValue({
-      session: { sessionId: SESSION_ID, generation: 1 },
+      session: { ...config, generation: 1 },
     }),
   } as unknown as RelayHttpClient;
 }
@@ -180,6 +180,52 @@ async function expectState(adapter: OpenCodeAdapter, expected: string): Promise<
 }
 
 describe("OpenCode queued prompt adapter", () => {
+  it("does not start host loops when an exclusive registration is refused", async () => {
+    const api = new FakeApi();
+    const relay = makeRelay();
+    vi.mocked(relay.registerSession).mockRejectedValue(
+      new SynloqError("DUPLICATE_SESSION", "manual owner"),
+    );
+    await expect(
+      runOpenCodeAdapter(
+        { ...config, baseUrl: "http://127.0.0.1:4096", ownership: "exclusive" },
+        relay,
+        api,
+      ),
+    ).rejects.toMatchObject({ code: "DUPLICATE_SESSION" });
+    expect(relay.registerSession).toHaveBeenCalledWith(
+      expect.objectContaining({ ownership: "exclusive", surface: "opencode-mcp" }),
+    );
+    expect(api.subscribeEvents).not.toHaveBeenCalled();
+    expect(relay.heartbeat).not.toHaveBeenCalled();
+    expect(relay.closeSession).not.toHaveBeenCalled();
+  });
+
+  it("stops heartbeat and host activity on stale generation, notifying only once", async () => {
+    const api = new FakeApi();
+    const relay = makeRelay();
+    const onUnauthorized = vi.fn();
+    vi.mocked(relay.heartbeat).mockRejectedValue(
+      new SynloqError("UNAUTHORIZED", "session generation is stale"),
+    );
+    vi.mocked(relay.closeSession).mockRejectedValue(
+      new SynloqError("UNAUTHORIZED", "session generation is stale"),
+    );
+    const adapter = await runOpenCodeAdapter(
+      { ...config, baseUrl: "http://127.0.0.1:4096", ownership: "exclusive" },
+      relay,
+      api,
+      onUnauthorized,
+    );
+    closers.push(() => adapter.close());
+    await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledTimes(1));
+    expect(await adapter.state(SESSION_ID)).toBe("closed");
+    expect(await adapter.ping("reminder")).toBe(false);
+    await adapter.close();
+    expect(api.admit).not.toHaveBeenCalled();
+    expect(relay.closeSession).toHaveBeenCalledWith({ sessionId: SESSION_ID, generation: 1 });
+  });
+
   it("admits the framed message through the queued prompt API", async () => {
     const { adapter, api } = await makeIdleFixture();
 
@@ -564,7 +610,10 @@ describe("OpenCode queued prompt adapter", () => {
     expect(vi.mocked(relay.heartbeat)).toHaveBeenCalledWith({
       sessionId: SESSION_ID,
       state: "idle",
+      generation: 1,
     });
+    await adapter.close();
+    expect(relay.closeSession).toHaveBeenCalledWith({ sessionId: SESSION_ID, generation: 1 });
   });
 
   it("close completes while a status observation never settles", async () => {

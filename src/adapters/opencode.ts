@@ -31,6 +31,7 @@ export interface OpenCodeAdapterConfig {
 export interface OpenCodeRunConfig extends OpenCodeAdapterConfig {
   baseUrl: string;
   authToken?: string;
+  ownership?: "exclusive";
 }
 
 // The desktop service authenticates with HTTP Basic (username "opencode").
@@ -380,6 +381,8 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   private closePromise: Promise<void> | undefined;
   private reportQueue: Promise<void> = Promise.resolve();
   private closed = false;
+  private revoked = false;
+  private generation: number | undefined;
 
   constructor(
     private readonly api: OpenCodeApi,
@@ -391,12 +394,17 @@ export class OpenCodeAdapter implements DeliveryAdapter {
       clientIdempotency: true,
     },
     private readonly clock: Clock = { now: () => Date.now() },
+    private readonly onUnauthorized?: (error: SynloqError) => void,
   ) {
     this.capabilities = { ...capabilities };
   }
 
+  setGeneration(generation: number): void {
+    this.generation = generation;
+  }
+
   start(): void {
-    if (this.closed || this.abortController) return;
+    if (this.closed || this.revoked || this.abortController) return;
     this.abortController = new AbortController();
     const { signal } = this.abortController;
     this.heartbeatTask = this.heartbeatLoop(signal);
@@ -414,7 +422,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
    * and a failed admission is reported (false), never retried blindly.
    */
   async ping(text: string): Promise<boolean> {
-    if (this.closed) return false;
+    if (this.closed || this.revoked) return false;
     if (this.currentState() !== "idle") {
       try {
         await this.refreshStatus();
@@ -432,7 +440,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
   }
 
   private currentState(): SessionState {
-    if (this.closed) return "closed";
+    if (this.closed || this.revoked) return "closed";
     if (
       this.observedState === "idle" &&
       (!Number.isFinite(this.observedAt) || this.clock.now() - this.observedAt > STATE_FRESHNESS_MS)
@@ -458,7 +466,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
       throw new SynloqError("UNAUTHORIZED", "session ID does not match the visible binding");
     }
     if (this.uncertainMessages.has(message.id)) throw this.deliveryUncertain(message.id);
-    if (this.closed) {
+    if (this.closed || this.revoked) {
       throw new SynloqError("INVALID_INPUT", "OpenCode adapter is closed");
     }
     if (this.currentState() === "closed") {
@@ -527,14 +535,28 @@ export class OpenCodeAdapter implements DeliveryAdapter {
 
   private report(state: SessionState): Promise<void> {
     const request = this.reportQueue.then(async () => {
-      await this.relay.heartbeat({ sessionId: this.config.sessionId, state });
+      if (this.revoked) return;
+      try {
+        await this.relay.heartbeat({
+          sessionId: this.config.sessionId,
+          state,
+          ...(this.generation === undefined ? {} : { generation: this.generation }),
+        });
+      } catch (error) {
+        if (error instanceof SynloqError && error.code === "UNAUTHORIZED") {
+          this.revoked = true;
+          this.abortController?.abort();
+          this.onUnauthorized?.(error);
+        }
+        throw error;
+      }
     });
     this.reportQueue = request.catch(() => undefined);
     return request;
   }
 
   private async observe(state: SessionState): Promise<void> {
-    if (this.closed) return;
+    if (this.closed || this.revoked) return;
     this.observedState = state;
     this.observedAt = this.clock.now();
     try {
@@ -585,6 +607,7 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     while (!signal.aborted) {
       try {
         await this.observe("unknown");
+        if (signal.aborted) break;
         const events = await this.api.subscribeEvents(signal);
         await this.refreshStatus(signal);
         for await (const event of events) {
@@ -640,7 +663,19 @@ export class OpenCodeAdapter implements DeliveryAdapter {
     );
     await Promise.allSettled(tasks);
     await this.reportQueue;
-    await this.relay.closeSession({ sessionId: this.config.sessionId });
+    try {
+      await this.relay.closeSession({
+        sessionId: this.config.sessionId,
+        ...(this.generation === undefined ? {} : { generation: this.generation }),
+      });
+    } catch (error) {
+      // A superseded child must not close the successor's binding.
+      if (!(
+        error instanceof SynloqError &&
+        (error.code === "UNAUTHORIZED" || error.code === "NOT_FOUND")
+      ))
+        throw error;
+    }
   }
 }
 
@@ -652,6 +687,7 @@ export async function runOpenCodeAdapter(
   config: OpenCodeRunConfig,
   relay: RelayHttpClient,
   api?: OpenCodeApi,
+  onUnauthorized?: (error: SynloqError) => void,
 ): Promise<RegisteredOpenCodeAdapter> {
   const resolved =
     api ??
@@ -660,13 +696,29 @@ export async function runOpenCodeAdapter(
         ? { fetch: openCodeBasicAuthFetch(config.authToken) }
         : {}),
     });
-  const adapter = new OpenCodeAdapter(resolved, relay, config);
+  const adapter = new OpenCodeAdapter(
+    resolved,
+    relay,
+    config,
+    undefined,
+    undefined,
+    onUnauthorized,
+  );
   const { session } = await relay.registerSession({
     sessionId: config.sessionId,
     protocolVersion: PROTOCOL_VERSION,
     capabilities: adapter.capabilities,
-    surface: "opencode",
+    surface: config.ownership === "exclusive" ? "opencode-mcp" : "opencode",
+    ...(config.ownership ? { ownership: config.ownership } : {}),
   });
+  if (
+    session.project !== config.project ||
+    session.agentId !== config.agentId ||
+    session.sessionId !== config.sessionId
+  ) {
+    throw new SynloqError("UNAUTHORIZED", "relay registration does not match the OpenCode role");
+  }
+  adapter.setGeneration(session.generation);
   adapter.start();
   return Object.assign(adapter, {
     sessionBinding: { sessionId: session.sessionId, generation: session.generation },

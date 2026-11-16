@@ -25,6 +25,7 @@ import {
   auditLogPath,
   readAuditTail,
   readDirectoryHealth,
+  readOpenCodeRegistrations,
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
@@ -597,6 +598,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
   const directoryHealth = await readDirectoryHealth(auditPath, project);
   const manifestWarnings = await manifestUnknownFields(options.projectRoot);
+  const openCodeRegistrations = await readOpenCodeRegistrations(auditPath, project);
 
   // Issue #6: repair first so the report reflects the post-repair state.
   let repair: DoctorReport["repair"];
@@ -734,6 +736,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       credentials: credentialsHealth,
       configs: configsHealth,
       hostChecks,
+      openCodeRegistrations,
       placements,
       messages,
       sessions,
@@ -753,6 +756,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       credentials: credentialsHealth,
       configs: configsHealth,
       hostChecks,
+      openCodeRegistrations,
       placements,
       storageError: storageError(error),
       clock,

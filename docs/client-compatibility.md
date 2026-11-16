@@ -182,7 +182,19 @@ The probe never sends `session/prompt` and never prompts an already open TUI. It
 
 ## OpenCode
 
-**Live verification status: UNVERIFIED.** The automated tests use fake normal and v2 SDK clients with controllable event streams. They verify Synloq's queued request, response validation, event handling, reconnect, receipt, and lifecycle behavior against `@opencode-ai/sdk` 1.19.5 types. No real OpenCode server or visible session was launched, and these tests do not establish support in any released OpenCode version.
+The generated role MCP child now owns an in-process delivery sidecar (#67),
+started only after exclusive session registration. Live manual registrations
+take priority; stale-generation rejection stops the child without re-registering.
+This wiring is covered by automated lifecycle and HTTP tests; its separate live
+window is pending. Existing desktop 2.2.7 active-delivery evidence is recorded in
+`docs/runbooks/2026-11-13-opencode-adapter-matrix.md` (r3/r3b). See
+[the adapter guide](adapters/opencode.md) for the current desktop API contract
+(`POST /api/session/{id}/prompt`, queue, `resume: true`) and
+[the operator checklist](testing/opencode-mcp-sidecar.md) for the new lifecycle.
+
+The following SDK acceptance notes describe the earlier mock-tested contract;
+they do not supersede the desktop API evidence or establish automatic MCP
+lifecycle conformance.
 
 ### Queued prompt admission
 

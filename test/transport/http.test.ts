@@ -133,6 +133,48 @@ function receiptArch(messageId: string, receipt: DeliveryReceipt) {
 }
 
 describe("RelayHttpServer authentication and participant routes", () => {
+  it("atomically admits only one competing exclusive registration", async () => {
+    const input = {
+      sessionId: "session-arch-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+      ownership: "exclusive" as const,
+    };
+    const outcomes = await Promise.allSettled([
+      fixture.arch.registerSession(input),
+      fixture.arch.registerSession(input),
+    ]);
+    expect(outcomes.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ code: "DUPLICATE_SESSION" }) }),
+    ]);
+    expect(archBinding().generation).toBe(1);
+  });
+
+  it("manual registration takes priority and stale close cannot close its new generation", async () => {
+    const input = { sessionId: "session-arch-a", protocolVersion: PROTOCOL_VERSION, capabilities };
+    const { session: child } = await fixture.arch.registerSession({
+      ...input,
+      ownership: "exclusive",
+    });
+    const { session: manual } = await fixture.arch.registerSession(input);
+    await expect(
+      fixture.arch.closeSession({ sessionId: child.sessionId, generation: child.generation }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      fixture.arch.heartbeat({
+        sessionId: child.sessionId,
+        generation: child.generation,
+        state: "idle",
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      fixture.arch.registerSession({ ...input, ownership: "exclusive" }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_SESSION" });
+    expect(archBinding().generation).toBe(manual.generation);
+    await fixture.arch.closeSession({ sessionId: manual.sessionId, generation: manual.generation });
+  });
+
   it("serves an unauthenticated health marker before any credential check", async () => {
     const anonymous = await fetch(`${fixture.baseUrl}/v1/health`);
     expect(anonymous.status).toBe(200);

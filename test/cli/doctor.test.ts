@@ -56,6 +56,37 @@ interface Fixture {
 let fixture: Fixture;
 const temporaryDirectories: string[] = [];
 
+it("shows the last OpenCode MCP registration conflict beyond the audit display tail and clears it on registration", async () => {
+  const paths = await projectPaths(fixture.root, fixture.home);
+  const path = auditLogPath(paths.home, paths.key);
+  const denied = {
+    at: "2026-11-10T00:00:00.000Z",
+    project: PROJECT,
+    agentId: "arch",
+    action: "registerSession",
+    decision: "deny",
+    reasonCode: "DUPLICATE_SESSION",
+    detail: "live owner (attempted session 'ses_arch', surface 'opencode-mcp')",
+  };
+  await writeFile(path, `${JSON.stringify(denied)}\n`);
+  for (let i = 0; i < 25; i++)
+    await appendFile(path, `${JSON.stringify({ ...denied, action: "inbox" })}\n`);
+  let report = await doctorCommand({ projectRoot: fixture.root, synloqHome: fixture.home });
+  expect(report.participants.find((p) => p.agentId === "arch")?.openCodeRegistration).toEqual({
+    state: "blocked",
+    at: denied.at,
+    reasonCode: "DUPLICATE_SESSION",
+  });
+  await appendFile(
+    path,
+    `${JSON.stringify({ ...denied, decision: "accept", reasonCode: "REGISTERED" })}\n`,
+  );
+  report = await doctorCommand({ projectRoot: fixture.root, synloqHome: fixture.home });
+  expect(report.participants.find((p) => p.agentId === "arch")?.openCodeRegistration?.state).toBe(
+    "registered",
+  );
+});
+
 beforeEach(async () => {
   const root = await mkdtemp(join(tmpdir(), "synloq-doctor-project-"));
   const home = await mkdtemp(join(tmpdir(), "synloq-doctor-home-"));

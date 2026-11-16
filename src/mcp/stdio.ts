@@ -28,6 +28,7 @@ import { isLoopbackHttpUrl } from "../transport/loopback.js";
 import { registerSynloqTools } from "./tools.js";
 import { createWatchdogDiagnostic } from "./watchdog-diagnostic.js";
 import { createStoredPingWatcher } from "./stored-ping.js";
+import { createOpenCodeLifecycle, type OpenCodeLifecycleOptions } from "./opencode-lifecycle.js";
 
 const WATCHDOG_INTERVAL_MS = 60_000;
 
@@ -84,7 +85,7 @@ export interface KimiWorkFactoryOptions {
 
 export type KimiWorkFactory = (options: KimiWorkFactoryOptions) => Promise<KimiWorkMcpBridge>;
 
-export interface McpStdioOptions {
+export interface McpStdioOptions extends OpenCodeLifecycleOptions {
   stdin?: Readable;
   stdout?: Writable;
   stderr?: Writable;
@@ -403,7 +404,11 @@ export async function startMcpStdio(
       relayUrl: configuration.relayUrl,
       token: configuration.token,
       synloqHome: configuration.synloqHome,
-      onOwnerLost: async () => lifecycle?.stop(),
+      // OpenCode keeps its generation during relay failover. Its HTTP runner
+      // retries transport failures; stale-generation rejection stops it for good.
+      onOwnerLost: async () => {
+        if (!configuration.opencode) await lifecycle?.stop();
+      },
       onRecovered: () => lifecycle?.start(),
       onDiagnostic: (message) => diagnostics.write(`${formatDiagnostic(message)}\n`),
     });
@@ -447,6 +452,15 @@ export async function startMcpStdio(
       options,
       configuration.language,
     );
+  } else if (configuration.opencode) {
+    lifecycle = createOpenCodeLifecycle(
+      configuration.opencode,
+      client,
+      configuration.token,
+      options,
+    );
+  }
+  if (lifecycle) {
     lifecycle.start();
     // Issue #45: stored-ping watcher — nudge the visible chat when incoming
     // mail sits stored past the threshold while the chat is live and idle.
@@ -458,7 +472,7 @@ export async function startMcpStdio(
         const paths = await projectPaths(hostWorkspace, configuration.synloqHome);
         const watcher = createStoredPingWatcher({
           project,
-          agentId: configuration.kimiWork.agentId,
+          agentId: configuration.kimiWork?.agentId ?? configuration.opencode!.agentId,
           participants: pingParticipants,
           databasePath: paths.database,
           diagnostics,

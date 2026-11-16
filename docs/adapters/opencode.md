@@ -9,7 +9,9 @@
 > MCP path and the session/prompt API primitives this adapter relies on were verified
 > live on 2026-11-13.
 
-The visible OpenCode chat uses the ordinary `synloq mcp` stdio command for the six tools. Run active delivery as a separate, operator-configured process:
+The visible OpenCode chat uses the ordinary `synloq mcp` stdio command for the six tools. With a generated `opencode` binding containing `sessionId`, the MCP child also starts its own in-process delivery adapter and runner after exclusive relay registration. It discovers the running desktop endpoint and service authentication using the same discovery as init. A separate process is no longer required. This automatic lifecycle (#67) is automated-test verified; its operator live window is pending, separate from the existing 2.2.7 prompt API evidence above.
+
+The manual sidecar remains available and has priority over automatic MCP registration:
 
 ```bash
 node /absolute/path/to/synloq/dist/cli/main.js adapter \
@@ -76,6 +78,34 @@ Known limitations on this host:
   only.
 
 ## Relay auto-start
+
+The MCP child registers with optional `ownership: "exclusive"`. The relay
+atomically refuses registration while any owner of the role has an unexpired
+lease, including the same visible session ID. Expired leases allow registration;
+manual CLI registration keeps its existing behavior. A conflict leaves MCP tools
+available with their normal writer checks, but disables the child's delivery and
+stored-ping transport. No replacement is attempted automatically.
+
+Both heartbeat and close carry the registered generation. A takeover rejection
+stops the child sidecar permanently for that process. Transport failures use the
+existing runner backoff and retain its outstanding receipt/failure tracker; relay
+supervisor recovery does not create a new registration for a running sidecar.
+Startup has five attempts with exponential backoff (200 ms initial delay).
+After exhausted retries or an ownership conflict, resolve the cause and restart
+the MCP child. Stop the prior transport first and wait for its lease to expire
+(currently 15 seconds from its last heartbeat or close); a live or stuck owner
+requires an operator's explicit `replace-session`. A binding without `sessionId`
+remains inbox-only until init supplies the exact visible session.
+
+`doctor` exposes `participants[].openCodeRegistration`: the last MCP registration
+outcome (`registered` or `blocked`), timestamp, and reason code from the audit log,
+even beyond its display tail. This is historical registration evidence, not
+current host liveness. Read it together with `adapterConnected`, heartbeat time,
+and the optional host check. The audit surface is `opencode-mcp`; manual sidecars
+retain `opencode`.
+
+See the [operator checklist](../testing/opencode-mcp-sidecar.md) for the pending
+automatic-lifecycle live window.
 
 No manual `synloq serve` is needed: the generated MCP configs carry an
 `opencode` binding, and the first role channel to start elects itself as the

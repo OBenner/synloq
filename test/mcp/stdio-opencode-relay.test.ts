@@ -49,6 +49,9 @@ describe("MCP automatic relay lifecycle for OpenCode bindings", () => {
       return supervisor;
     });
     const kimiWorkFactory = vi.fn();
+    const runner = { start: vi.fn(), close: vi.fn(async () => undefined) };
+    const adapter = { close: vi.fn(async () => undefined), ping: vi.fn(async () => true) };
+    const openCodeFactory = vi.fn(async () => ({ runner, adapter }));
 
     const server = await startMcpStdio(configPath, {
       stdin: new PassThrough(),
@@ -56,6 +59,7 @@ describe("MCP automatic relay lifecycle for OpenCode bindings", () => {
       stderr: stderr(),
       relayFactory,
       kimiWorkFactory: kimiWorkFactory as never,
+      openCodeFactory,
     });
 
     expect(events).toEqual(["relay-start"]);
@@ -66,9 +70,16 @@ describe("MCP automatic relay lifecycle for OpenCode bindings", () => {
       synloqHome: home,
     });
     expect(kimiWorkFactory).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(runner.start).toHaveBeenCalledTimes(1));
+    await supervisorOptions?.onOwnerLost?.();
+    supervisorOptions?.onRecovered?.();
+    expect(openCodeFactory).toHaveBeenCalledTimes(1);
+    expect(runner.close).not.toHaveBeenCalled();
 
     await server.close();
     await vi.waitFor(() => expect(events).toContain("relay-close"));
+    expect(runner.close).toHaveBeenCalledTimes(1);
+    expect(adapter.close).toHaveBeenCalledTimes(1);
   });
 
   it("accepts an opencode binding without a sessionId (init before the service is reachable)", async () => {

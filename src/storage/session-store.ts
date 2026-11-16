@@ -98,7 +98,11 @@ export class SessionStore {
       .get(sessionId) as SessionRow | undefined;
   }
 
-  register(registration: SessionRegistration, replace: boolean): AdapterSession {
+  register(
+    registration: SessionRegistration,
+    replace: boolean,
+    ownership?: "exclusive",
+  ): AdapterSession {
     return this.write(() => {
       if (registration.protocolVersion !== PROTOCOL_VERSION) {
         throw new SynloqError(
@@ -108,7 +112,26 @@ export class SessionStore {
       }
 
       const existing = this.find(registration.project, registration.agentId);
-      if (existing && existing.session_id !== registration.sessionId && !replace) {
+      const now = this.clock.now();
+      // The lease check and generation update share this write transaction.
+      // Even the same visible session can have a different delivery process.
+      if (
+        !replace &&
+        ownership === "exclusive" &&
+        existing &&
+        Date.parse(existing.lease_expires_at) > now
+      ) {
+        throw new SynloqError(
+          "DUPLICATE_SESSION",
+          "a delivery owner has an unexpired lease; use explicit replace-session for takeover",
+        );
+      }
+      if (
+        existing &&
+        existing.session_id !== registration.sessionId &&
+        !replace &&
+        ownership !== "exclusive"
+      ) {
         throw new SynloqError(
           "DUPLICATE_SESSION",
           "a different visible session is already bound to this role",
@@ -126,7 +149,6 @@ export class SessionStore {
         );
       }
 
-      const now = this.clock.now();
       const observedAt = new Date(now).toISOString();
       const leaseExpiresAt = new Date(now + LEASE_DURATION_MS).toISOString();
       if (existing) {
@@ -244,10 +266,15 @@ export class SessionStore {
   }
 
   close(): void;
-  close(project: string, agentId: string, sessionId: string): AdapterSession;
-  close(project?: string, agentId?: string, sessionId?: string): AdapterSession | void {
+  close(project: string, agentId: string, sessionId: string, generation?: number): AdapterSession;
+  close(
+    project?: string,
+    agentId?: string,
+    sessionId?: string,
+    generation?: number,
+  ): AdapterSession | void {
     if (project !== undefined && agentId !== undefined && sessionId !== undefined) {
-      return this.observe(project, agentId, sessionId, "closed");
+      return this.observe(project, agentId, sessionId, "closed", generation);
     }
     if (project !== undefined || agentId !== undefined || sessionId !== undefined) {
       throw new SynloqError(

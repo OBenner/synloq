@@ -55,6 +55,15 @@ stdio channels authenticated by bearer tokens.
   the participant instead of replaying blindly.
 - **Storage**: SQLite WAL with immediate transactions; dedup on
   `(project, sender, idempotencyKey)`.
+- **OpenCode MCP delivery ownership (#67)**: opt-in exclusive registration
+  checks the role's lease in the registration transaction, including same-session
+  attempts. Generation-fenced heartbeat and close prevent a superseded child
+  from updating or closing its successor. A rejected child stops delivery while
+  its MCP tools retain their ordinary writer checks. This is cooperative process
+  coordination, not a new credential boundary: legacy/manual role clients can
+  still re-register the same session without the exclusive flag, and omission of
+  optional heartbeat/close generation retains legacy behavior. Expired leases
+  permit exclusive registration; cross-role session-ID reuse is still refused.
 
 ## Known limitations (accepted, tracked in `docs/backlog.md`)
 

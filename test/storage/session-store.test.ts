@@ -113,6 +113,41 @@ afterEach(() => {
 });
 
 describe("SessionStore", () => {
+  it.each(["session-a", "session-b"])(
+    "exclusive registration rejects a live owner, including %s",
+    (id) => {
+      const { store } = makeStore();
+      const original = store.register(ctoSession("session-a"), false);
+      expect(() => store.register(ctoSession(id), false, "exclusive")).toThrow(
+        expect.objectContaining({ code: "DUPLICATE_SESSION" }),
+      );
+      expect(store.list("verdicta")).toEqual([original]);
+    },
+  );
+
+  it.each(["session-a", "session-b"])("exclusive registration allows %s at lease expiry", (id) => {
+    const { store, clock } = makeStore();
+    const old = store.register(ctoSession("session-a"), false);
+    clock.advance(Date.parse(old.leaseExpiresAt) - clock.now());
+    const next = store.register(ctoSession(id), false, "exclusive");
+    expect(next.sessionId).toBe(id);
+    expect(next.generation).toBe(old.generation + 1);
+  });
+
+  it("a superseded generation cannot heartbeat or close the same visible session", () => {
+    const { store } = makeStore();
+    const old = store.register(ctoSession("session-a"), false, "exclusive");
+    const manual = store.register(ctoSession("session-a"), false);
+    expect(() => store.heartbeat("verdicta", "cto", "session-a", "idle", old.generation)).toThrow(
+      expect.objectContaining({ code: "UNAUTHORIZED" }),
+    );
+    expect(() => store.close("verdicta", "cto", "session-a", old.generation)).toThrow(
+      expect.objectContaining({ code: "UNAUTHORIZED" }),
+    );
+    expect(store.list("verdicta")).toEqual([manual]);
+    expect(store.close("verdicta", "cto", "session-a", manual.generation).state).toBe("closed");
+  });
+
   it("rejects a second visible session for the same role", () => {
     const { store } = makeStore();
     store.register(ctoSession("session-a"), false);

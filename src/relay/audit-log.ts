@@ -103,3 +103,33 @@ export async function readDirectoryHealth(
     ? { state: "degraded", since: latest.at, reason: `${latest.reasonCode}: ${latest.detail}` }
     : { state: "ok" };
 }
+
+export interface OpenCodeRegistrationStatus {
+  state: "registered" | "blocked";
+  at: string;
+  reasonCode: string;
+}
+
+/** Last MCP registration outcome, not a claim that the host is currently reachable. */
+export async function readOpenCodeRegistrations(
+  path: string,
+  project: string,
+): Promise<Map<string, OpenCodeRegistrationStatus>> {
+  const statuses = new Map<string, OpenCodeRegistrationStatus>();
+  for (const event of await readAuditTail(path, Number.MAX_SAFE_INTEGER)) {
+    if (
+      event?.project !== project ||
+      event.action !== "registerSession" ||
+      typeof event.detail !== "string" ||
+      !event.detail.includes("surface 'opencode-mcp'") ||
+      (event.decision !== "accept" && event.decision !== "deny")
+    )
+      continue;
+    statuses.set(event.agentId, {
+      state: event.decision === "accept" ? "registered" : "blocked",
+      at: event.at,
+      reasonCode: event.reasonCode,
+    });
+  }
+  return statuses;
+}
