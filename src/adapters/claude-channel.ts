@@ -185,7 +185,10 @@ export async function runClaudeAdapter(
   relay?: RelayHttpClient,
 ): Promise<RunningClaudeAdapter> {
   const server = createClaudeChannelServer(
-    relay ? (mcpServer) => registerSynloqTools(mcpServer, relay) : undefined,
+    // Issue #86: the standalone channel's session is the role's writer —
+    // without this proof every write is denied NOT_WRITER once the session
+    // registers (single-writer, issue #46).
+    relay ? (mcpServer) => registerSynloqTools(mcpServer, relay, config.sessionId) : undefined,
   );
   const adapter = new ClaudeChannelAdapter(server, config);
   let markInitialized!: () => void;
