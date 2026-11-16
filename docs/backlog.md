@@ -49,6 +49,10 @@ Open work after the 2026-11-12 acceptance. Sources: `docs/security/review-2026-1
 | Memory M3: re-evaluate external MCP memory server (option C) and marketplace once #9 per-conversation scoping is answered — folded into issue #9 follow-up                                                                                                                         | P3       | open                                                                                                                                                                                              |
 | L-findings: dead-code `initCommand`, lock on credentials.json, fsync, spec↔impl reconciliation (hops, NOTICE to operator, strict zod)                                                                                                                                              | P2       | open                                                                                                                                                                                              |
 
+L2/L3 (#15) are addressed by the credential lock and flush-before-rename changes;
+see the [durability follow-up](security/credential-durability-2026-11-16.md)
+for evidence, orphan-lock recovery and platform limits. Other L-findings remain open.
+
 ## OpenCode host
 
 | Item                                                                                                                                                                                                                                                                                                           | Priority | Status                                    |

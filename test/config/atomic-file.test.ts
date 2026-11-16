@@ -12,7 +12,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
-    writeFile: vi.fn(async (path: unknown) => {
+    open: vi.fn(async (path: unknown) => {
       throw Object.assign(new Error(`EPERM: operation not permitted, open '${String(path)}'`), {
         code: "EPERM",
       });

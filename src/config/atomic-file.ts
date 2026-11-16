@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isPermissionError, permissionDenied } from "../domain/errors.js";
 
@@ -8,8 +8,24 @@ export async function writeTextAtomic(path: string, value: string, mode = 0o600)
     await mkdir(dirname(path), { recursive: true });
     const temporary = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
-      await writeFile(temporary, value, { encoding: "utf8", flag: "wx", mode });
+      const file = await open(temporary, "wx", mode);
+      try {
+        await file.writeFile(value, "utf8");
+        await file.sync();
+      } finally {
+        await file.close();
+      }
       await rename(temporary, path);
+      // Windows does not expose directory fsync through node:fs. On POSIX,
+      // persist the rename too; an error here means publication may have happened.
+      if (process.platform !== "win32") {
+        const directory = await open(dirname(path), "r");
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
+      }
     } finally {
       await rm(temporary, { force: true });
     }
