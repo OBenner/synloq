@@ -1,4 +1,5 @@
 import { SynloqError } from "../domain/errors.js";
+import { formatDiagnostic } from "../diagnostics.js";
 import type { SessionBinding } from "../domain/session.js";
 import type { DeliveryFailureRequest, RelayHttpClient } from "../transport/http-client.js";
 import type { DeliveryAdapter, DeliveryReceipt } from "./types.js";
@@ -7,6 +8,11 @@ const INITIAL_BACKOFF_MS = 200;
 const MAX_BACKOFF_MS = 30_000;
 
 export type AdapterPollResult = "inactive" | "empty" | "submitted" | "delivered" | "failed";
+
+export interface RunnerDiagnostics {
+  output?: { write(chunk: string): unknown };
+  secrets?: readonly string[];
+}
 
 export type OutstandingOperation =
   | { kind: "receipt"; messageId: string; receipt: DeliveryReceipt }
@@ -59,7 +65,33 @@ export class HttpAdapterRunner {
     private readonly waitMs = 25_000,
     private readonly closeTimeoutMs = 5_000,
     private readonly tracker: OutstandingTracker = new OutstandingTracker(),
+    private readonly diagnostics: RunnerDiagnostics = {},
   ) {}
+
+  private reportFailure(stage: "authorize" | "submit", error: unknown): void {
+    try {
+      const code = error instanceof SynloqError ? error.code : "RETRYABLE";
+      let detail = error instanceof Error ? error.message : "unknown error";
+      for (const secret of [...(this.diagnostics.secrets ?? [])]
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length)) {
+        detail = detail.split(secret).join("[redacted]");
+      }
+      detail = detail
+        .replace(/\b(Bearer|Basic)\s+[^\s,;]+/gi, "$1 [redacted]")
+        .replace(
+          /(["']?(?:token|password|secret|api[_-]?key|authorization|cookie)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+          "$1[redacted]",
+        )
+        .replace(/[\x00-\x1f\x7f]/g, " ")
+        .slice(0, 2000);
+      (this.diagnostics.output ?? process.stderr).write(
+        `${formatDiagnostic(`Synloq delivery ${stage} failed: ${code}: ${detail}`)}\n`,
+      );
+    } catch {
+      // Logging must never interrupt failure reporting or retry tracking.
+    }
+  }
 
   start(): void {
     if (this.task || this.abortController.signal.aborted) return;
@@ -86,8 +118,9 @@ export class HttpAdapterRunner {
 
     try {
       await this.relay.authorizeDelivery(message.id, this.binding);
-    } catch {
+    } catch (error) {
       if (this.abortController.signal.aborted) return "inactive";
+      this.reportFailure("authorize", error);
       this.tracker.set({
         kind: "failure",
         messageId: message.id,
@@ -109,6 +142,7 @@ export class HttpAdapterRunner {
       });
     } catch (error) {
       if (this.abortController.signal.aborted) return "inactive";
+      this.reportFailure("submit", error);
       const uncertain = error instanceof SynloqError && error.code === "DELIVERY_UNCERTAIN";
       this.tracker.set({
         kind: "failure",

@@ -69,6 +69,9 @@ export async function startStandaloneAdapter(
       adapter,
       adapter.sessionBinding,
       dependencies.deliveryWaitMs,
+      undefined,
+      undefined,
+      { secrets: [loaded.token, authToken ?? ""] },
     );
     runner.start();
     // Issue #45: stored-ping watcher for the OpenCode adapter process —
@@ -155,6 +158,9 @@ export async function startStandaloneAdapter(
       running.adapter,
       { sessionId: session.sessionId, generation: session.generation },
       dependencies.deliveryWaitMs,
+      undefined,
+      undefined,
+      { secrets: [loaded.token] },
     );
     runner.start();
     let markClosed!: () => void;

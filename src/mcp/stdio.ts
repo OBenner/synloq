@@ -72,6 +72,7 @@ export interface KimiWorkMcpBridge {
 }
 
 export interface KimiWorkFactoryOptions {
+  diagnostics?: { write(chunk: string): unknown };
   binding: ResolvedKimiWorkBinding;
   relay: RelayHttpClient;
   token: string;
@@ -174,6 +175,7 @@ async function defaultKimiWorkFactory(options: KimiWorkFactoryOptions): Promise<
       undefined,
       undefined,
       options.outstanding,
+      { output: options.diagnostics ?? process.stderr, secrets: [options.token] },
     ),
   };
 }
@@ -273,6 +275,7 @@ function createKimiWorkLifecycle(
       for (let attempt = 1; attempt <= attempts && !controller.signal.aborted; attempt += 1) {
         try {
           const created = await factory({
+            diagnostics,
             binding,
             relay,
             token,
