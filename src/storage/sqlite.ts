@@ -2,8 +2,9 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isPermissionError, permissionDenied, SynloqError } from "../domain/errors.js";
+import { contentHash } from "./dedup.js";
 
-const schema = `
+const messageTable = `
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
@@ -12,17 +13,36 @@ CREATE TABLE IF NOT EXISTS messages (
   recipient TEXT NOT NULL,
   text TEXT NOT NULL,
   expects_reply INTEGER NOT NULL,
-  in_reply_to TEXT REFERENCES messages(id),
+  in_reply_to TEXT,
   created_at TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   delivery_state TEXT NOT NULL CHECK (delivery_state IN ('stored','submitted','delivered','acked')),
   claim_session_id TEXT,
   claim_generation INTEGER,
-  acceptance_consumed_generation INTEGER,
-  UNIQUE(project, sender, idempotency_key)
-);
+  acceptance_consumed_generation INTEGER
+);`;
+
+const schema = `${messageTable}
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages(project, recipient, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS messages_fifo ON messages(project, recipient, created_at, id);
+CREATE INDEX IF NOT EXISTS messages_retention ON messages(project, delivery_state, created_at, id);
+CREATE TABLE IF NOT EXISTS message_dedup (
+  project TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  expects_reply INTEGER NOT NULL,
+  in_reply_to TEXT,
+  created_at TEXT NOT NULL,
+  delivery_state TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  first_accepted_at TEXT NOT NULL,
+  PRIMARY KEY(project, sender, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS dedup_expiry ON message_dedup(project, first_accepted_at);
+CREATE INDEX IF NOT EXISTS dedup_message ON message_dedup(id);
 CREATE TABLE IF NOT EXISTS pause_gates (
   project TEXT NOT NULL,
   scope TEXT NOT NULL CHECK (scope IN ('project','participant','thread')),
@@ -113,13 +133,6 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
     // bounded busy-retry, implemented inside SQLite rather than as an
     // app-level retry loop (decision recorded in the #68 PR).
     database.exec("PRAGMA busy_timeout = 5000");
-    if (readOnly) {
-      // Read-only consumers (watchdog, stored-ping, doctor, status) must not
-      // take a write lock: no journal_mode pragma, no migration transaction.
-      return database;
-    }
-    database.exec("PRAGMA journal_mode = WAL");
-
     const version = database.prepare("PRAGMA user_version").get() as
       { user_version: number } | undefined;
     if (
@@ -127,21 +140,38 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
       version?.user_version !== 1 &&
       version?.user_version !== 2 &&
       version?.user_version !== 3 &&
-      version?.user_version !== 4
+      version?.user_version !== 4 &&
+      version?.user_version !== 5
     ) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
+
+    if (readOnly) {
+      // Diagnostics never migrate or take a write lock, even on older schemas.
+      return database;
+    }
+    database.exec("PRAGMA journal_mode = WAL");
 
     // Issue #68: skip the migration write transaction entirely when the schema
     // is already current — otherwise every connection open (including the
     // per-tick diagnostic opens) takes a BEGIN IMMEDIATE write lock on the
     // shared file and contends with the relay writer.
-    if (version?.user_version === 4) {
+    if (version?.user_version === 5) {
       return database;
     }
 
     const migrated = database;
+    // Rebuild messages to remove both the parent FK and permanent key uniqueness.
+    // Foreign keys are disabled only on this connection and outside the transaction;
+    // validate the remaining quarantine FK before committing the forward migration.
+    migrated.exec("PRAGMA foreign_keys = OFF");
     withTransaction(migrated, () => {
+      // Another process may have migrated while BEGIN IMMEDIATE waited.
+      const lockedVersion = migrated.prepare("PRAGMA user_version").get()?.user_version;
+      if (lockedVersion === 5) return;
+      if (typeof lockedVersion !== "number" || lockedVersion < 0 || lockedVersion > 4) {
+        throw new Error(`unsupported SQLite user_version: ${lockedVersion}`);
+      }
       migrated.exec(schema);
       const additions = [
         ["messages", "claim_session_id", "TEXT"],
@@ -158,8 +188,44 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
           migrated.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
         }
       }
-      migrated.exec("PRAGMA user_version = 4");
+      migrated.exec(messageTable.replace("IF NOT EXISTS messages", "messages_v5"));
+      migrated.exec(`INSERT INTO messages_v5 SELECT
+        id, project, thread_id, sender, recipient, text, expects_reply, in_reply_to,
+        created_at, idempotency_key, delivery_state, claim_session_id, claim_generation,
+        acceptance_consumed_generation FROM messages`);
+      migrated.exec("DROP TABLE messages; ALTER TABLE messages_v5 RENAME TO messages;");
+      migrated.exec(schema);
+      const insertDedup = migrated.prepare(`INSERT INTO message_dedup
+        (project, sender, idempotency_key, id, thread_id, recipient, expects_reply,
+         in_reply_to, created_at, delivery_state, content_hash, first_accepted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const row of migrated.prepare("SELECT * FROM messages").iterate()) {
+        insertDedup.run(
+          row.project!,
+          row.sender!,
+          row.idempotency_key!,
+          row.id!,
+          row.thread_id!,
+          row.recipient!,
+          row.expects_reply!,
+          row.in_reply_to!,
+          row.created_at!,
+          row.delivery_state!,
+          contentHash({
+            to: row.recipient as string,
+            text: row.text as string,
+            expectsReply: row.expects_reply === 1,
+            ...(row.in_reply_to === null ? {} : { inReplyTo: row.in_reply_to as string }),
+          }),
+          row.created_at!,
+        );
+      }
+      if (migrated.prepare("PRAGMA foreign_key_check").all().length > 0) {
+        throw new Error("foreign key validation failed during retention migration");
+      }
+      migrated.exec("PRAGMA user_version = 5");
     });
+    migrated.exec("PRAGMA foreign_keys = ON");
     return database;
   } catch (error) {
     if (database?.isOpen) {
