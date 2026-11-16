@@ -48,6 +48,31 @@ let seq = 0;
 const key = (prefix: string) => `${prefix}-conf-${++seq}`;
 
 describe("cross-channel conformance", () => {
+  it("rejects cross-project inbox before reading and retains the original message", async () => {
+    const { relay, audit } = makeRelay();
+    const message = await relay.send(as("cto"), {
+      to: "arch",
+      text: "project private",
+      expectsReply: false,
+      idempotencyKey: key("project"),
+    });
+    await expect(
+      relay.inbox(as("arch", "other"), {
+        project: "synloq",
+        agentId: "arch",
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]).toMatchObject({
+      project: "other",
+      action: "inbox",
+      reasonCode: "UNAUTHORIZED",
+    });
+    expect(
+      (await relay.inbox(as("arch"), { project: "synloq", agentId: "arch", limit: 10 })).messages,
+    ).toEqual([message]);
+  });
   it("inbox of a foreign role is UNAUTHORIZED and audited", async () => {
     const { relay, audit } = makeRelay();
     await expect(

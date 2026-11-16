@@ -229,7 +229,7 @@ describe("serveCommand audit wiring", () => {
       }
     });
 
-    it("records a denied duplicate registration with the attempted session id", async () => {
+    it("records a denied duplicate registration without the unverified session id", async () => {
       const { handle, headers, auditPath } = await startRelayWithRole();
       try {
         const first = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
@@ -262,7 +262,7 @@ describe("serveCommand audit wiring", () => {
         const denied = events.find(
           (event) => event.action === "registerSession" && event.decision === "deny",
         );
-        expect(denied?.detail).toContain("ses_cto_2");
+        expect(denied?.detail).not.toContain("ses_cto_2");
         expect(denied?.detail).toContain("opencode");
       } finally {
         await handle.close();
@@ -341,7 +341,7 @@ describe("serveCommand audit wiring", () => {
       }
     });
 
-    it("does not audit schema rejections (consistent with replace-session)", async () => {
+    it("audits registration schema rejections without copying invalid input", async () => {
       const { handle, headers, auditPath } = await startRelayWithRole();
       try {
         // Valid JSON, but no capabilities → zod rejection, not a SynloqError.
@@ -351,7 +351,14 @@ describe("serveCommand audit wiring", () => {
           body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1 }),
         });
         expect(response.status).toBe(400);
-        await expect(async () => readFileSync(await auditPath(), "utf8")).rejects.toThrow();
+        const events = readEvents(await auditPath());
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+          action: "registerSession",
+          decision: "deny",
+          reasonCode: "INVALID_INPUT",
+          detail: "registerSession request denied",
+        });
       } finally {
         await handle.close();
       }

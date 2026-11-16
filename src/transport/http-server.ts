@@ -5,7 +5,12 @@ import type { CredentialStore, Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Message } from "../domain/message.js";
 import { PROTOCOL_VERSION, type SessionBinding } from "../domain/session.js";
-import { NullSecurityAuditLog, type SecurityAuditLog } from "../relay/audit-log.js";
+import {
+  denialDetail,
+  NullSecurityAuditLog,
+  type AuditedAction,
+  type SecurityAuditLog,
+} from "../relay/audit-log.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { ProtectionPolicy } from "../relay/protection.js";
 import type { RelayService } from "../relay/relay-service.js";
@@ -144,6 +149,32 @@ interface ErrorResponse {
   error: SynloqError;
 }
 
+// Only routes whose domain failures have no audit owner below HTTP belong here.
+// RelayService, register/replace and long-poll admission own their own denials.
+// Match fixed route classes, never put raw URLs or message/session ids in events.
+function transportDenyAction(method: string | undefined, path: string): AuditedAction | undefined {
+  if (method === "GET") {
+    if (path === "/v1/deliveries/next") return "claim";
+    if (path === "/v1/operator/doctor") return "doctor";
+  }
+  if (method === "POST") {
+    if (path === "/v1/sessions/heartbeat") return "heartbeat";
+    if (path === "/v1/sessions/close") return "close";
+    if (/^\/v1\/deliveries\/[^/]+\/authorize$/.test(path)) return "authorizeDelivery";
+    if (/^\/v1\/deliveries\/[^/]+\/receipt$/.test(path)) return "deliveryReceipt";
+    if (/^\/v1\/deliveries\/[^/]+\/failure$/.test(path)) return "deliveryFailure";
+  }
+  return undefined;
+}
+
+// Audit-only, untrusted surface hints are reduced to a fixed vocabulary. Keep
+// opencode-mcp for the existing doctor diagnostic, never echo arbitrary input.
+function auditedSurface(surface: string | undefined): string {
+  if (surface === undefined) return "";
+  const known = ["kimi-work", "opencode", "opencode-mcp", "claude", "codex-hook"];
+  return ` (surface '${known.includes(surface) ? surface : "other"}')`;
+}
+
 export class RelayHttpServer {
   private readonly http: Server;
   private readonly events = new EventEmitter();
@@ -215,7 +246,7 @@ export class RelayHttpServer {
           action: "authenticate",
           decision: "deny",
           reasonCode: error.code,
-          detail: error.message,
+          detail: denialDetail("authenticate"),
         });
       }
       this.sendError(response, error, true);
@@ -225,6 +256,15 @@ export class RelayHttpServer {
     try {
       await this.route(request, response, url, identity);
     } catch (error) {
+      const action = transportDenyAction(request.method, url.pathname);
+      // acquireLongPollSlot already emitted the admission denial. Storage's
+      // binding/claim checks do not raise RATE_LIMITED; never duplicate that event.
+      if (
+        action &&
+        !(action === "claim" && error instanceof SynloqError && error.code === "RATE_LIMITED")
+      ) {
+        this.recordTransportDeny(identity, action, error);
+      }
       this.sendError(response, error, false);
     }
   }
@@ -233,6 +273,24 @@ export class RelayHttpServer {
     const match = header === undefined ? undefined : /^Bearer ([^\s]+)$/.exec(header);
     if (!match?.[1]) throw new SynloqError("UNAUTHORIZED", "a bearer credential is required");
     return this.options.credentials.authenticate(this.options.project, match[1]);
+  }
+
+  private recordTransportDeny(
+    identity: Identity,
+    action: AuditedAction,
+    error: unknown,
+    suffix = "",
+  ): void {
+    if (!(error instanceof SynloqError) && !(error instanceof z.ZodError)) return;
+    this.audit.record({
+      at: new Date().toISOString(),
+      project: identity.project,
+      agentId: identity.agentId,
+      action,
+      decision: "deny",
+      reasonCode: error instanceof SynloqError ? error.code : "INVALID_INPUT",
+      detail: denialDetail(action) + suffix,
+    });
   }
 
   private async route(
@@ -342,22 +400,12 @@ export class RelayHttpServer {
         this.changed(project, identity.agentId);
         this.sendJson(response, 200, { session });
       } catch (error) {
-        if (error instanceof SynloqError) {
-          this.audit.record({
-            at: new Date().toISOString(),
-            project,
-            agentId: identity.agentId,
-            action: "registerSession",
-            decision: "deny",
-            reasonCode: error.code,
-            detail:
-              input === undefined
-                ? error.message
-                : `${error.message} (attempted session '${input.sessionId}'` +
-                  (input.surface === undefined ? "" : `, surface '${input.surface}'`) +
-                  ")",
-          });
-        }
+        this.recordTransportDeny(
+          identity,
+          "registerSession",
+          error,
+          auditedSurface(input?.surface),
+        );
         throw error;
       }
       return;
@@ -516,17 +564,7 @@ export class RelayHttpServer {
         this.changed(project, input.agentId);
         this.sendJson(response, 200, { session });
       } catch (error) {
-        if (error instanceof SynloqError) {
-          this.audit.record({
-            at: new Date().toISOString(),
-            project,
-            agentId: identity.agentId,
-            action: "replaceSession",
-            decision: "deny",
-            reasonCode: error.code,
-            detail: error.message,
-          });
-        }
+        this.recordTransportDeny(identity, "replaceSession", error);
         throw error;
       }
       return;

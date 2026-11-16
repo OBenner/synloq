@@ -130,8 +130,8 @@ describe("RelayService single-writer enforcement (#46)", () => {
       (event) => event.decision === "deny" && event.reasonCode === "NOT_WRITER",
     );
     expect(denied.map((event) => event.action).sort()).toEqual(["acknowledge", "reply", "send"]);
-    expect(denied[0]?.detail).toContain("ses-cto-main");
-    expect(denied[0]?.detail).toContain("replace-session");
+    expect(denied[0]?.detail).toBe("send request denied");
+    expect(JSON.stringify(denied)).not.toContain("ses-cto-mirror");
   });
 
   it("rejects token-only writes once a writer session exists", async () => {

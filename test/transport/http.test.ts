@@ -56,9 +56,22 @@ beforeEach(async () => {
   const messages = new SQLiteMessageStore(database);
   const sessions = new SessionStore(database);
   const protection = new ProtectionPolicy(messages);
-  const relay = new RelayService(participants, messages, sessions, protection);
-  const dispatcher = new Dispatcher(messages, sessions, new Map());
   const audit: SecurityEvent[] = [];
+  const auditLog = {
+    record: (event: SecurityEvent) => {
+      audit.push(event);
+    },
+  };
+  const relay = new RelayService(
+    participants,
+    messages,
+    sessions,
+    protection,
+    undefined,
+    undefined,
+    auditLog,
+  );
+  const dispatcher = new Dispatcher(messages, sessions, new Map());
   const server = new RelayHttpServer({
     project: PROJECT,
     relay,
@@ -67,7 +80,7 @@ beforeEach(async () => {
     dispatcher,
     messages,
     protection,
-    audit: { record: (event) => audit.push(event) },
+    audit: auditLog,
   });
   const baseUrl = await server.listen("127.0.0.1", 0);
   fixture = {
@@ -97,6 +110,248 @@ afterEach(async () => {
   ]);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+});
+
+describe("binding denial audit (#96)", () => {
+  it("rechecks a parked delivery poll after operator replacement and denies once", async () => {
+    const binding = await registerArch();
+    fixture.audit.length = 0;
+    const claim = vi.spyOn(fixture.messages, "claimNextDelivery");
+    const pending = fixture.arch.nextDelivery({ ...binding, waitMs: 5000 }).then(
+      (value) => ({ value, error: undefined }),
+      (error) => ({ value: undefined, error }),
+    );
+    await vi.waitFor(() => expect(claim).toHaveBeenCalledTimes(1));
+    await fixture.operator.replaceSession({
+      agentId: "arch",
+      sessionId: "arch-replacement",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+    const result = await pending;
+    expect(result.error).toMatchObject({ code: "UNAUTHORIZED" });
+    expect(claim).toHaveBeenCalledTimes(2);
+    const denied = fixture.audit.filter((event) => event.decision === "deny");
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ action: "claim", reasonCode: "UNAUTHORIZED" });
+    expect(fixture.sessions.list(PROJECT)[0]?.sessionId).toBe("arch-replacement");
+    expect(
+      await fixture.arch.nextDelivery({ ...binding, generation: 2, sessionId: "arch-replacement" }),
+    ).toMatchObject({ message: null });
+  });
+
+  it.each(["missing", "stale"] as const)(
+    "rejects %s delivery generation without claiming",
+    async (mode) => {
+      const { message, binding } = await setup();
+      const query = new URLSearchParams({ sessionId: binding.sessionId });
+      if (mode === "stale") query.set("generation", String(binding.generation + 1));
+      const response = await fetch(`${fixture.baseUrl}/v1/deliveries/next?${query}`, {
+        headers: authorized(fixture.archToken),
+      });
+      const code = mode === "missing" ? "INVALID_INPUT" : "UNAUTHORIZED";
+      expect(response.status).toBe(mode === "missing" ? 400 : 403);
+      expect(await response.json()).toMatchObject({ error: { code } });
+      expect(fixture.messages.getMessage(message.id, PROJECT)).toEqual(message);
+      expect(fixture.audit).toHaveLength(1);
+      expect(fixture.audit[0]).toMatchObject({ action: "claim", reasonCode: code });
+    },
+  );
+
+  it("preserves own binding, mirror reads, and one audit per foreign ack/reply", async () => {
+    const { message, binding } = await setup();
+    const mirror = await fixture.arch.inbox();
+    expect(mirror.messages).toContainEqual(message);
+    await expect(fixture.arch.acknowledge(message.id)).rejects.toMatchObject({
+      code: "NOT_WRITER",
+    });
+    await expect(fixture.cto.acknowledge(message.id, "session-cto-a")).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    await expect(
+      fixture.cto.reply({
+        inReplyTo: message.id,
+        sessionId: "session-cto-a",
+        text: "foreign reply",
+        expectsReply: false,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(fixture.audit.map((event) => [event.action, event.reasonCode])).toEqual([
+      ["acknowledge", "NOT_WRITER"],
+      ["acknowledge", "UNAUTHORIZED"],
+      ["reply", "NOT_FOUND"],
+    ]);
+    expect(fixture.messages.getMessage(message.id, PROJECT)).toEqual(message);
+    const claimed = await fixture.arch.nextDelivery(binding);
+    expect(claimed.message?.id).toBe(message.id);
+    await fixture.arch.authorizeDelivery(message.id, binding);
+    await fixture.arch.receipt(message.id, { state: "submitted" }, binding);
+    await fixture.arch.acknowledge(message.id, binding.sessionId);
+    expect(fixture.audit).toHaveLength(3);
+  });
+
+  it("audits a foreign recipient receipt once and preserves the claim", async () => {
+    const { message, binding } = await setup();
+    await fixture.arch.nextDelivery(binding);
+    const before = fixture.messages.getMessage(message.id, PROJECT);
+    await expect(
+      fixture.cto.receipt(
+        message.id,
+        { state: "submitted" },
+        {
+          sessionId: "session-cto-a",
+          generation: 1,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(fixture.messages.getMessage(message.id, PROJECT)).toEqual(before);
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({ agentId: "cto", action: "deliveryReceipt" });
+  });
+
+  it("keeps whitelisted surface diagnostics but drops attempted binding from deny", async () => {
+    await setup();
+    await expect(
+      fixture.arch.registerSession({
+        sessionId: "unknown-conversation",
+        surface: "opencode-mcp",
+        ownership: "exclusive",
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities,
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_SESSION" });
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]?.detail).toBe(
+      "registerSession request denied (surface 'opencode-mcp')",
+    );
+  });
+
+  it("does not audit a valid session-less channel as a caller-chat violation", async () => {
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "token-only",
+      expectsReply: false,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    expect((await fixture.arch.inbox()).messages).toContainEqual(message);
+    await fixture.arch.acknowledge(message.id);
+    expect(fixture.audit).toEqual([]);
+  });
+
+  async function setup() {
+    const { message } = await fixture.cto.send({
+      to: "arch",
+      text: "private-body-marker",
+      expectsReply: false,
+      idempotencyKey: crypto.randomUUID(),
+    });
+    const binding = await registerArch();
+    await fixture.cto.registerSession({
+      sessionId: "session-cto-a",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
+    const beforeSessions = fixture.sessions.list(PROJECT);
+    fixture.audit.length = 0;
+    return { message, binding, beforeSessions };
+  }
+
+  it.each([
+    ["heartbeat", "POST", "/v1/sessions/heartbeat"],
+    ["close", "POST", "/v1/sessions/close"],
+    ["claim", "GET", "/v1/deliveries/next"],
+    ["authorizeDelivery", "POST", "/v1/deliveries/ID/authorize"],
+    ["deliveryReceipt", "POST", "/v1/deliveries/ID/receipt"],
+    ["deliveryFailure", "POST", "/v1/deliveries/ID/failure"],
+  ])("audits %s foreign binding once without mutation", async (action, method, route) => {
+    const { message, binding, beforeSessions } = await setup();
+    const path = route.replace("ID", message.id);
+    const foreign = { sessionId: "session-cto-a", generation: binding.generation };
+    const response =
+      method === "GET"
+        ? await fetch(
+            `${fixture.baseUrl}${path}?${new URLSearchParams({
+              sessionId: foreign.sessionId,
+              generation: String(foreign.generation),
+            })}`,
+            { headers: authorized(fixture.archToken) },
+          )
+        : await post(
+            path,
+            fixture.archToken,
+            JSON.stringify({
+              ...foreign,
+              ...(action === "heartbeat" ? { state: "idle" } : {}),
+              ...(action === "deliveryReceipt" ? { state: "submitted" } : {}),
+              ...(action === "deliveryFailure"
+                ? { code: "RETRYABLE", clientIdempotency: true }
+                : {}),
+            }),
+          );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: "UNAUTHORIZED" } });
+    expect(fixture.messages.getMessage(message.id, PROJECT)).toEqual(message);
+    expect(fixture.sessions.list(PROJECT)).toEqual(beforeSessions);
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({
+      project: PROJECT,
+      agentId: "arch",
+      action,
+      decision: "deny",
+      reasonCode: "UNAUTHORIZED",
+    });
+    expect(JSON.stringify(fixture.audit)).not.toContain("session-cto-a");
+    expect(JSON.stringify(fixture.audit)).not.toContain(fixture.archToken);
+    expect(JSON.stringify(fixture.audit)).not.toContain(message.text);
+  });
+
+  it("audits operator doctor rejection without revealing sessions", async () => {
+    await setup();
+    const response = await fetch(`${fixture.baseUrl}/v1/operator/doctor`, {
+      headers: authorized(fixture.archToken),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: { code: "UNAUTHORIZED", message: "operator credential required" },
+    });
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({ action: "doctor", reasonCode: "UNAUTHORIZED" });
+    expect(await fixture.operator.doctor()).toHaveProperty("sessions");
+    expect(fixture.audit).toHaveLength(1);
+  });
+
+  it("keeps one bounded event for writer and registration denials", async () => {
+    await setup();
+    const marker = "unverified-secret-marker";
+    await expect(
+      fixture.arch.send({
+        to: "cto",
+        text: marker,
+        sessionId: marker,
+        expectsReply: false,
+        idempotencyKey: marker,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_WRITER" });
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({ action: "send", reasonCode: "NOT_WRITER" });
+    expect(JSON.stringify(fixture.audit)).not.toContain(marker);
+    fixture.audit.length = 0;
+    await expect(
+      fixture.arch.registerSession({
+        sessionId: marker,
+        surface: marker,
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities,
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_SESSION" });
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({
+      action: "registerSession",
+      reasonCode: "DUPLICATE_SESSION",
+    });
+    expect(JSON.stringify(fixture.audit)).not.toContain(marker);
+  });
 });
 
 function authorized(token: string): Record<string, string> {

@@ -3,6 +3,14 @@
 Date: 2026-11-12. Author: Architect. Per Developer TASK `b1da52af-7e67-4878-9b70-f11154cf5620` (thread `9437ac41-5995-46b4-b290-68d6825d3a4a`).
 Status: research only, no implementation. Team: 4 roles (cto, arch, security, dev), relay on :4100, protocol v1 accepted (`docs/protocol/v1.md`).
 
+> Historical research, partially superseded (2026-11-16, #96). In particular,
+> §1's claim that invoking a foreign visible MCP channel rejects the call is
+> incorrect for the shared Kimi Work plugin path (#27). Adapter delivery binding
+> does not authenticate the chat invoking a tool. The current source of truth is
+> [the threat model](../security/threat-model-2026-11-12.md), including host-specific
+> limitations, and the [relay route matrix](../security/2026-11-16-relay-binding-audit.md).
+> This historical text is not a statement of current caller-chat isolation.
+
 ---
 
 ## 1. Status quo (verified against code and a live session)

@@ -9,7 +9,12 @@ import {
 } from "../domain/message.js";
 import type { PauseScope, SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
-import { NullSecurityAuditLog, type AuditedAction, type SecurityAuditLog } from "./audit-log.js";
+import {
+  denialDetail,
+  NullSecurityAuditLog,
+  type AuditedAction,
+  type SecurityAuditLog,
+} from "./audit-log.js";
 import { StaticParticipantDirectory, type ParticipantDirectory } from "./participant-directory.js";
 import type { ProtectionPolicy } from "./protection.js";
 
@@ -60,7 +65,7 @@ export class RelayService {
       action,
       decision: "deny",
       reasonCode: error.code,
-      detail: error.message,
+      detail: denialDetail(action),
     });
   }
 
