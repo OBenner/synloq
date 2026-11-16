@@ -35,8 +35,8 @@ matrix of the CLI runbook must pass separately before `activationVerifiedAt`.
 
 ```powershell
 $SynloqRepo = "<path to this repository checkout>"   # the Synloq repo
-$Stand      = "<path to the claude-desktop-synloq stand>"
-$SynloqHome = "$env:USERPROFILE\.synloq"
+$Stand      = "I:\git\claude-desktop-stand"          # NEW project folder, outside the Synloq repo
+$SynloqHome = "$Stand\synloq-home"                   # isolated home: never touch the operator's real ~\.synloq
 $Secure     = "$Stand\evidence"                      # stand-local, never committed to the Synloq repo
 $RoleCto    = "$Stand\role-cto"                      # per-role project dir (ADR-0004 placement)
 $RoleArch   = "$Stand\role-arch"
@@ -99,16 +99,18 @@ node $SynloqRepo\dist\cli\main.js init --host generic `
   --project-root $Stand --project claude-desktop-synloq `
   --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
   --role "arch:Architect:Architecture review, risks, and verification" `
-  --relay-url http://127.0.0.1:4303 --non-interactive `
+  --relay-url http://127.0.0.1:4303 --synloq-home $SynloqHome --non-interactive `
   2>&1 | Tee-Object $Secure\e1-init.json
 
-Start-Process node -ArgumentList "$SynloqRepo\dist\cli\main.js serve --project-root $Stand --host 127.0.0.1 --port 4303" -RedirectStandardOutput $Secure\e1-relay.log -RedirectStandardError $Secure\e1-relay.err
+Start-Process node -ArgumentList "$SynloqRepo\dist\cli\main.js serve --project-root $Stand --host 127.0.0.1 --port 4303 --synloq-home $SynloqHome" -RedirectStandardOutput $Secure\e1-relay.log -RedirectStandardError $Secure\e1-relay.err
 Start-Sleep 3
-curl http://127.0.0.1:4303/v1/health 2>&1 | Tee-Object $Secure\e1-health.json
+curl.exe http://127.0.0.1:4303/v1/health 2>&1 | Tee-Object $Secure\e1-health.json
 ```
 
 Expect: `{"service":"synloq-relay","protocolVersion":1}`. Save from the init
-JSON: `roles[*].configPath` and `roles[*].credentialPath`.
+JSON: `roles[*].configPath` and `roles[*].credentialPath`. Redact every
+`claimCode` value in `e1-init.json` before saving it: claim codes are one-time
+secrets and the evidence rules forbid credentials in evidence.
 
 Note: `--host generic` is required (no host bindings, `registrationRequired:
 false`); see the Codex runbook D1 for the rationale.
@@ -116,14 +118,19 @@ false`); see the Codex runbook D1 for the rationale.
 ## E2. Automated layer (no Desktop)
 
 1. `pnpm verify` in `$SynloqRepo` → `e2-verify.txt`. Expect all green.
-2. SDK handshake per role, without any Desktop involvement: connect to
-   `node $SynloqRepo\dist\cli\main.js adapter --config $Secure\claude-<role>.json`
-   with the official MCP SDK stdio client (already in repo dependencies). Save
-   a script `e2-sdk-handshake.mjs` under `$Secure` that:
-   - starts the adapter as a child process with the role config
+2. Run the ready script (no Desktop involved; Node 24):
+   `node $Secure\..\e2-sdk-handshake.mjs --repo $SynloqRepo --project-root $Stand --project claude-desktop-synloq --agent-id cto --session-id <E0.3 throwaway id> --relay-url http://127.0.0.1:4303 --credential <cto credentialPath> --synloq-home $SynloqHome --secure $Secure --out $Secure\e2-handshake-cto.json`
+   Repeat with `--agent-id arch`. Expect `"ok": true` and exactly six tools.
+   Verified in a sandbox stand on 2026-11-15 (relay + adapter + SDK): ok, six tools.
+   The script (`e2-sdk-handshake.mjs`, stored in the stand's `evidence` folder)
+   starts the adapter as a stdio child through the official MCP SDK from the
+   repo dependencies and:
+   - starts the adapter as a child process with a handshake config
      (`kind: "claude"`, project `claude-desktop-synloq`, the role's
      credentialPath, relay `http://127.0.0.1:4303`, `protocolVersion: 1`, NO
-     activation fields — delivery disabled);
+     activation fields — delivery disabled). Its `sessionId` is the throwaway
+     session id from E0.3: no role session exists yet, so this file is for the
+     handshake only and is replaced in E3;
    - performs initialize and `tools/list`;
    - asserts the tool list is exactly `synloq_list`, `synloq_send`,
      `synloq_reply`, `synloq_inbox`, `synloq_wait`, `synloq_ack` — no
@@ -148,11 +155,16 @@ Desktop. For EACH role:
            "adapter",
            "--config",
            "<Secure>\\claude-cto.json"
-         ]
+         ],
+         "env": { "SYNLOQ_HOME": "<SynloqHome>" }
        }
      }
    }
    ```
+
+   `adapter` has no `--synloq-home` flag: it resolves credentials only from
+   `SYNLOQ_HOME`, so `env` is mandatory (without it the child fails with
+   `UNAUTHORIZED invalid project credential`).
 
    (Server name `synloq-arch` and `claude-arch.json` for the other role.)
 
@@ -160,14 +172,17 @@ Desktop. For EACH role:
    name to use, the reactive rule (poll `synloq_inbox` / bounded
    `synloq_wait`; active delivery is disabled on this surface), protocol rules
    (ack after reading, RESULT/BLOCKED prefixes), evidence hygiene.
-3. Create the adapter config `$Secure\claude-<role>.json` per
-   `docs/adapters/claude-code.md` with the role's session id discovered via the
-   E0 source. No `acceptanceMessageId`, no `activationVerifiedAt`.
-4. Open a NEW visible Desktop Code-tab session with project folder `$Role<X>`.
-   Record: whether the `.mcp.json` server is detected (approval prompt or
-   server list) → screenshot/log to `e3-mcp-pickup-<role>.*`; the real session
-   id → `e3-session-<role>.txt`; the visible tool list (must be exactly the six
-   `synloq_*` tools of THIS role's server) → `e3-tools-<role>.txt`.
+3. Open a NEW visible Desktop Code-tab session with project folder `$Role<X>`.
+   The MCP child is launched at session start and needs the session id, so
+   the order is fixed: (a) start the session; (b) record its real session id
+   (E0.3 source) → `e3-session-<role>.txt`; (c) write
+   `$Secure\claude-<role>.json` per `docs/adapters/claude-code.md` with that
+   id, no `acceptanceMessageId`, no `activationVerifiedAt`; (d) restart the
+   session so the MCP child reads the new config.
+4. Record: whether the `.mcp.json` server is detected (approval prompt or
+   server list) → screenshot/log to `e3-mcp-pickup-<role>.*` (no tokens on
+   screen); the visible tool list (must be exactly the six `synloq_*` tools of
+   THIS role's server) → `e3-tools-<role>.txt`.
 5. **Isolation check (the shared-config risk).** In the cto session confirm the
    arch server is NOT visible, and vice versa. If project-scope config is not
    honored (both servers appear in every session, or none appear), STOP the
@@ -182,8 +197,10 @@ Desktop. For EACH role:
 
 ## E4. Six-tool exercise and message cycle
 
-In the visible Desktop sessions (no human copies text between chats), save
-JSON per call (`e4-*.json`):
+The executor cannot drive the role sessions. The operator starts each scripted
+action by pasting a fixed prompt into the named visible session (prompts are
+saved to `$Secure\e4-prompts.md` beforehand); the operator never relays Synloq
+message text between sessions. Save JSON per call (`e4-*.json`):
 
 - `synloq_list` → both roles, no registration/permission tools;
 - `synloq_send` cto→arch (`"Please review the storage boundary"`,
