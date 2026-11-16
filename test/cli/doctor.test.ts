@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,9 @@ import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
+import { auditLogPath } from "../../src/relay/audit-log.js";
+import { statusCommand } from "../../src/cli/commands.js";
+import { formatStatusReport } from "../../src/cli/status.js";
 
 const PROJECT = "verdicta";
 const secretMessageBody = "secret-message-body-do-not-print";
@@ -102,6 +105,54 @@ async function captureDoctor(): Promise<string> {
 }
 
 describe("DoctorReport", () => {
+  it("surfaces the latest directory degradation from the audit log", async () => {
+    const paths = await projectPaths(fixture.root);
+    const auditPath = auditLogPath(paths.home, paths.key);
+    await mkdir(dirname(auditPath), { recursive: true });
+    await writeFile(
+      auditPath,
+      `${JSON.stringify({
+        at: "2026-11-10T00:00:00.000Z",
+        project: PROJECT,
+        agentId: "relay",
+        action: "directory",
+        decision: "degraded",
+        reasonCode: "INVALID_INPUT",
+        detail: "manifest does not match the version 1 schema",
+      })}\n`,
+    );
+
+    const result = await doctorCommand({ projectRoot: fixture.root, clock: fixture.clock });
+    expect(result.directory).toEqual({
+      state: "degraded",
+      since: "2026-11-10T00:00:00.000Z",
+      reason: "INVALID_INPUT: manifest does not match the version 1 schema",
+    });
+    await appendFile(
+      auditPath,
+      (JSON.stringify({ action: "send", project: PROJECT }) + "\n").repeat(25),
+    );
+    const degraded = await statusCommand({ projectRoot: fixture.root });
+    expect(formatStatusReport(degraded)).toContain("directory degraded since");
+    expect((await doctorCommand({ projectRoot: fixture.root })).directory?.state).toBe("degraded");
+    await appendFile(
+      auditPath,
+      JSON.stringify({
+        at: "2026-11-10T00:01:00.000Z",
+        project: PROJECT,
+        agentId: "relay",
+        action: "directory",
+        decision: "accept",
+        reasonCode: "RECOVERED",
+        detail: "recovered",
+      }) + "\n",
+    );
+    expect((await doctorCommand({ projectRoot: fixture.root })).directory?.state).toBe("ok");
+    const recovered = await statusCommand({ projectRoot: fixture.root });
+    expect(recovered.directory?.state).toBe("ok");
+    expect(formatStatusReport(recovered)).not.toContain("directory degraded");
+  });
+
   it("flags a stale installed plugin copy from the team state source (issue #36)", async () => {
     const paths = await projectPaths(fixture.root);
     const source = join(fixture.home, "plugin-source");

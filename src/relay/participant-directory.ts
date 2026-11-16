@@ -39,6 +39,7 @@ export interface ManifestParticipantDirectoryOptions {
   // Called once per transition into the degraded state (a reload failed while
   // serving). Repeated failures do not re-trigger the hook.
   onDegraded?: (error: unknown) => void;
+  onRecovered?: () => void;
 }
 
 export class ManifestParticipantDirectory implements ParticipantDirectory {
@@ -107,6 +108,7 @@ export class ManifestParticipantDirectory implements ParticipantDirectory {
       const participants = await loadManifest(this.projectRoot);
       this.snapshot = participants;
       this.loadedMtimeMs = mtimeMs ?? (await this.mtimeMs());
+      if (this.degraded) this.options.onRecovered?.();
       this.degraded = false;
       return true;
     } catch (error) {

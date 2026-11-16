@@ -4,7 +4,12 @@ import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
 import { CredentialStore, type Identity } from "../config/credentials.js";
-import { loadManifest, loadManifestRoles, removeManifestParticipant } from "../config/manifest.js";
+import {
+  loadManifest,
+  loadManifestRoles,
+  manifestUnknownFields,
+  removeManifestParticipant,
+} from "../config/manifest.js";
 import { HOST_CAPABILITIES } from "../config/hosts.js";
 import { inspectDesktopDirectory, removeDesktopDirectory } from "../init/codex-desktop.js";
 import { projectPaths } from "../config/paths.js";
@@ -19,6 +24,7 @@ import {
   FileSecurityAuditLog,
   auditLogPath,
   readAuditTail,
+  readDirectoryHealth,
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
@@ -123,6 +129,16 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   // synloq.yaml takes effect without a relay restart. A manifest that fails
   // to re-parse degrades to the last good snapshot and is audited.
   const directory = await ManifestParticipantDirectory.load(options.projectRoot, {
+    onRecovered: () =>
+      audit.record({
+        at: new Date(clock.now()).toISOString(),
+        project,
+        agentId: "relay",
+        action: "directory",
+        decision: "accept",
+        reasonCode: "RECOVERED",
+        detail: "manifest directory recovered",
+      }),
     onDegraded: (error) =>
       audit.record({
         at: new Date(clock.now()).toISOString(),
@@ -579,6 +595,8 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   // scenario is reproducible from audit entries alone. Offline-safe read.
   const auditPath = auditLogPath(paths.home, paths.key);
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
+  const directoryHealth = await readDirectoryHealth(auditPath, project);
+  const manifestWarnings = await manifestUnknownFields(options.projectRoot);
 
   // Issue #6: repair first so the report reflects the post-repair state.
   let repair: DoctorReport["repair"];
@@ -719,6 +737,8 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       sessions,
       clock,
       audit,
+      directory: directoryHealth,
+      ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -735,6 +755,8 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       storageError: storageError(error),
       clock,
       audit,
+      directory: directoryHealth,
+      ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -758,6 +780,10 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
+  const auditPath = auditLogPath(paths.home, paths.key);
+  const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
+  const directoryHealth = await readDirectoryHealth(auditPath, project);
+  const directory = directoryHealth;
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
@@ -772,6 +798,8 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       sessions,
       clock,
       roleHosts,
+      audit,
+      directory,
       ...(options.unansweredThresholdMs === undefined
         ? {}
         : { unansweredThresholdMs: options.unansweredThresholdMs }),
@@ -785,6 +813,8 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       storageError: storageError(error),
       clock,
       roleHosts,
+      audit,
+      directory,
     });
   } finally {
     sessions?.close();
