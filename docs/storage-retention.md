@@ -1,5 +1,19 @@
 # Message retention
 
+Set the optional policy in `synloq.yaml`:
+
+```yaml
+retention:
+  days: 7
+```
+
+The default is 7 days; explicit values must be integers from 1 to 36500.
+Init, add-role and remove-role preserve this setting. Restart the relay after a
+policy change. Serve sweeps once at startup and every minute, processing at most
+250 acknowledged bodies and 250 expired ledger entries per transaction. Shutdown
+stops the timer before closing storage. Failures produce a timestamped error code
+without content and retry on the next interval. No automatic VACUUM is run.
+
 Storage schema 5 separates message bodies from a seven-day idempotency ledger.
 The ledger keeps a SHA-256 hash of `(to, text, expectsReply, inReplyTo)`, original
 message metadata and first acceptance time, never the body. Matching retries use
