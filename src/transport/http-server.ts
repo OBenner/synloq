@@ -73,6 +73,7 @@ const acknowledgeSchema = z
 const registerSchema = z
   .object({
     ...sessionFields,
+    ownership: z.literal("exclusive").optional(),
     acceptanceMessageId: z.string().uuid().optional(),
     // Audit-only client surface hint ("kimi-work", "opencode", …); never
     // persisted to the session store (issue #53).
@@ -86,7 +87,12 @@ const heartbeatSchema = z
     generation: z.coerce.number().int().positive().optional(),
   })
   .strict();
-const closeSchema = z.object({ sessionId: sessionFields.sessionId }).strict();
+const closeSchema = z
+  .object({
+    sessionId: sessionFields.sessionId,
+    generation: z.coerce.number().int().positive().optional(),
+  })
+  .strict();
 const messageIdSchema = z.string().uuid();
 const receiptEvidenceSchema = z
   .object({
@@ -318,6 +324,7 @@ export class RelayHttpServer {
             agentId: identity.agentId,
           },
           false,
+          input.ownership,
         );
         this.audit.record({
           at: new Date().toISOString(),
@@ -372,7 +379,12 @@ export class RelayHttpServer {
 
     if (method === "POST" && path === "/v1/sessions/close") {
       const input = closeSchema.parse(await this.readJson(request));
-      const session = this.options.sessions.close(project, identity.agentId, input.sessionId);
+      const session = this.options.sessions.close(
+        project,
+        identity.agentId,
+        input.sessionId,
+        input.generation,
+      );
       this.changed(project, identity.agentId);
       this.sendJson(response, 200, { session });
       return;

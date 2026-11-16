@@ -35,6 +35,7 @@ const errorResponseSchema = z.object({
 
 export type TokenProvider = () => string | Promise<string>;
 export type SessionRegistrationRequest = Omit<SessionRegistration, "project" | "agentId"> & {
+  ownership?: "exclusive";
   /** Client surface name ("kimi-work", "opencode", …); audit-only, never stored (issue #53). */
   surface?: string;
 };
@@ -65,6 +66,7 @@ export interface HeartbeatRequest {
 
 export interface CloseSessionRequest {
   sessionId: string;
+  generation?: number;
 }
 
 export interface PauseRequest {

@@ -113,10 +113,17 @@ decision exists.
   opencode), content-free, throttled per backlog epoch; hosts without push
   get a manual-poll note in `synloq status`. Per-role opt-out via
   `"storedPing": false` in the channel config.
-- Single-writer / read-only mode (#46): implemented — the registered session
+- Single-writer / read-only mode (#46): landed — the registered session
   is the role's writer; writes (`send`/`reply`/`ack`) from other sessions or
   without the writer proof are refused with `NOT_WRITER` and audited;
   takeover via `replace-session` flips ownership. Protocol note:
   docs/protocol/v1.md §2.4.
+- OpenCode composition (#67): variant A — a role-owned `OpenCodeAdapter`
+  and `HttpAdapterRunner` run inside the MCP child after exclusive session
+  registration. A live manual sidecar wins; generation rejection stops the
+  child transport without re-registration. The sidecar is a transport, not
+  another writer; ADR 0003 and the single-relay boundary are unchanged.
+  Automated lifecycle checks cover this wiring; its operator live window is
+  still pending.
 - The headless executor gets its own issue after this ADR is accepted and
   the LLM provider is chosen.

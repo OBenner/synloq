@@ -3,7 +3,7 @@ import { evaluateWatchdog, type WatchdogFinding } from "../diagnostics/watchdog.
 import type { Participant } from "../domain/message.js";
 import type { AdapterCapabilities, AdapterSession, SessionState } from "../domain/session.js";
 import type { PluginFreshness } from "../host/kimi-work/installed-plugin.js";
-import type { SecurityEvent } from "../relay/audit-log.js";
+import type { SecurityEvent, OpenCodeRegistrationStatus } from "../relay/audit-log.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import type { ChannelConfigHealthReport } from "./repair.js";
@@ -62,6 +62,7 @@ export interface DoctorReport {
     credential?: CredentialHealth;
     config?: ChannelConfigHealthReport;
     hostCheck?: OpenCodeHostCheck;
+    openCodeRegistration?: OpenCodeRegistrationStatus;
     protocolVersion?: number;
     capabilities?: AdapterCapabilities;
     lastHeartbeatAt?: string;
@@ -80,6 +81,7 @@ export interface DoctorReportOptions {
   credentials?: Map<string, CredentialHealth>;
   configs?: Map<string, ChannelConfigHealthReport>;
   hostChecks?: Map<string, OpenCodeHostCheck>;
+  openCodeRegistrations?: Map<string, OpenCodeRegistrationStatus>;
   repair?: DoctorReport["repair"];
   messages?: SQLiteMessageStore;
   sessions?: SessionStore;
@@ -154,6 +156,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
       const credential = options.credentials?.get(participant.agentId);
       const config = options.configs?.get(participant.agentId);
       const hostCheck = options.hostChecks?.get(participant.agentId);
+      const openCodeRegistration = options.openCodeRegistrations?.get(participant.agentId);
       return {
         agentId: participant.agentId,
         ...(options.placements?.get(participant.agentId)
@@ -168,6 +171,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
         ...(credential ? { credential } : {}),
         ...(config ? { config } : {}),
         ...(hostCheck ? { hostCheck } : {}),
+        ...(openCodeRegistration ? { openCodeRegistration } : {}),
         ...(session
           ? {
               protocolVersion: session.protocolVersion,

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startMcpStdio } from "../../src/mcp/stdio.js";
+import { SynloqError } from "../../src/domain/errors.js";
 
 class TestStdioClientTransport implements Transport {
   onclose?: () => void;
@@ -68,6 +69,38 @@ async function configuration(): Promise<{ root: string; configPath: string; toke
 }
 
 describe("Synloq MCP stdio bridge", () => {
+  it("keeps MCP tools available when OpenCode delivery registration conflicts", async () => {
+    const { root, configPath, token } = await configuration();
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        relayUrl: "http://127.0.0.1:49152",
+        credentialPath: join(root, "agent.token"),
+        opencode: { projectRoot: root, agentId: "arch", sessionId: "ses_arch" },
+      }),
+    );
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const factory = vi.fn(async () => {
+      throw new SynloqError("DUPLICATE_SESSION", token);
+    });
+    const server = await startMcpStdio(configPath, {
+      stdin: input,
+      stdout: output,
+      stderr: new Writable({ write: (_chunk, _encoding, done) => done() }),
+      openCodeFactory: factory,
+    });
+    const client = new Client({ name: "conflict-test", version: "1.0.0" });
+    try {
+      await client.connect(new TestStdioClientTransport(output, input));
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("synloq_inbox");
+      expect(factory).toHaveBeenCalledTimes(1);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("serves the six tools over real stdio streams without leaking the credential", async () => {
     const { configPath, token } = await configuration();
     const clientToServer = new PassThrough();
