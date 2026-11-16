@@ -67,6 +67,10 @@ behavior. Audit output is not guaranteed durable under disk failure; same-user
 log tampering remains outside this protection. Tokens/bodies/raw URLs/headers
 and attempted conversation identifiers are not copied into these denial events.
 
+Event size is bounded; total audit-file growth is not. Rate limiting of
+authenticated denial floods (for example repeated invalid heartbeats) remains
+outside this patch (M2).
+
 ## Conformance evidence and limits
 
 - HTTP: two roles with different sessions; foreign binding on all six delivery/
