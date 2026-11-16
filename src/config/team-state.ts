@@ -59,6 +59,7 @@ const teamStateSchema = z
             instructions: z.string().optional(),
             state: z.enum(["bound", "unclaimed", "configured"]),
             desktopFiles: z.record(z.string(), z.string()).optional(),
+            directory: z.string().min(1).optional(),
           })
           .strict(),
       )

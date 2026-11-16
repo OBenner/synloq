@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, rmdir, unlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { writeTextAtomic, writeJsonAtomic } from "../config/atomic-file.js";
 import { CredentialStore } from "../config/credentials.js";
 import { mergeManifestParticipants } from "../config/manifest.js";
@@ -12,6 +12,8 @@ import { FileSecurityAuditLog, auditLogPath } from "../relay/audit-log.js";
 import { coreRules } from "./role-prompt.js";
 import { relativeHomePaths } from "./runtime-config.js";
 import type { ReconcileOptions } from "./reconcile.js";
+import { ownedCodexConfig } from "./codex-config.js";
+import { assertOrdinaryDirectories, resolvePlacement } from "./placement.js";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -23,9 +25,14 @@ export async function inspectDesktopDirectory(
   runtime: string,
   agentId: string,
   hashes?: Record<string, string>,
+  directory = desktopRoleDirectory(runtime, agentId),
 ) {
-  const directory = desktopRoleDirectory(runtime, agentId);
-  for (const path of [runtime, join(runtime, "roles"), directory, join(directory, ".codex")]) {
+  try {
+    await assertOrdinaryDirectories(join(directory, ".codex"));
+  } catch {
+    return { path: directory, ok: false, issue: "role directory must not be redirected" };
+  }
+  for (const path of [directory, join(directory, ".codex")]) {
     try {
       const info = await lstat(path);
       if (!info.isDirectory() || info.isSymbolicLink())
@@ -39,11 +46,15 @@ export async function inspectDesktopDirectory(
   for (const file of [".codex/config.toml", "AGENTS.md"]) {
     try {
       const path = join(directory, file);
-      if (
-        !(await lstat(path)).isFile() ||
-        (await lstat(path)).isSymbolicLink() ||
-        digest(await readFile(path, "utf8")) !== hashes[file]
-      ) {
+      const info = await lstat(path);
+      if (!info.isFile() || info.isSymbolicLink())
+        return { path, ok: false, issue: "generated role file is not an ordinary file" };
+      const content = await readFile(path, "utf8");
+      const unchanged =
+        file === ".codex/config.toml"
+          ? configMatches(ownedCodexConfig(content, agentId).text, hashes[file])
+          : digest(content) === hashes[file];
+      if (!unchanged) {
         return { path: path, ok: false, issue: "generated role file drifted" };
       }
     } catch {
@@ -57,9 +68,40 @@ export async function inspectDesktopDirectory(
   return { path: directory, ok: true };
 }
 
+function configMatches(owned: string, expected?: string): boolean {
+  // Upgrade the original full-file hash when the old file contained only our table.
+  return (
+    owned !== "" && [owned, `${owned}\n`, `${owned}\r\n`].some((text) => digest(text) === expected)
+  );
+}
+
 export async function provisionDesktopRoles(options: ReconcileOptions) {
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const store = new TeamStateStore(paths.bindings);
+  const state = await store.read();
+  const directories = new Map<string, string>();
+  for (const role of options.roles) {
+    const directory = await resolvePlacement(
+      options.projectRoot,
+      paths,
+      role.agentId,
+      role.placement,
+    );
+    const previous = state?.placements?.[role.agentId];
+    if (
+      previous &&
+      relative(
+        resolve(previous.directory ?? desktopRoleDirectory(paths.runtime, role.agentId)),
+        directory,
+      ) !== ""
+    ) {
+      throw new SynloqError(
+        "INVALID_INPUT",
+        `role ${role.agentId} placement changed; use explicit operator migration`,
+      );
+    }
+    directories.set(role.agentId, directory);
+  }
   const credentials = new CredentialStore(
     options.projectRoot,
     paths.home,
@@ -74,18 +116,13 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
   );
   await credentials.ensureCredential(options.project, "operator");
   for (const role of options.roles) {
-    const directory = desktopRoleDirectory(paths.runtime, role.agentId);
+    const directory = directories.get(role.agentId)!;
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
-    const files = {
+    const files: Record<string, string> = {
       ".codex/config.toml": `[mcp_servers.synloq-${role.agentId}]\ncommand = "node"\nargs = ${JSON.stringify([resolve(options.runtimeEntrypoint), configPath])}\n`,
       "AGENTS.md": `${coreRules(role, options.language).join("\n")}\n\nProject source: ${options.projectRoot}\nUse only synloq-${role.agentId}. This role is reactive: check synloq_inbox when activated; there is no automatic wake-up.\n`,
     };
-    for (const path of [
-      paths.runtime,
-      join(paths.runtime, "roles"),
-      directory,
-      join(directory, ".codex"),
-    ]) {
+    for (const path of [directory, join(directory, ".codex")]) {
       try {
         const info = await lstat(path);
         if (info.isSymbolicLink() || !info.isDirectory())
@@ -99,7 +136,27 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
       const path = join(directory, file);
       try {
         const info = await lstat(path);
+        if (!info.isFile() || info.isSymbolicLink())
+          throw new SynloqError(
+            "INVALID_INPUT",
+            `refusing to overwrite non-regular role file: ${path}`,
+          );
         const old = await readFile(path, "utf8");
+        if (file === ".codex/config.toml") {
+          const owned = ownedCodexConfig(old, role.agentId);
+          const desired = ownedCodexConfig(content, role.agentId).text;
+          if (
+            owned.text !== "" &&
+            owned.text !== desired &&
+            !configMatches(owned.text, previous?.[file])
+          )
+            throw new SynloqError(
+              "INVALID_INPUT",
+              `refusing to overwrite modified role table: ${path}`,
+            );
+          files[file] = owned.replace(content);
+          continue;
+        }
         if (
           !info.isFile() ||
           info.isSymbolicLink() ||
@@ -133,8 +190,14 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
         [role.agentId]: {
           host: "codex-desktop",
           state: "configured",
+          directory,
           desktopFiles: Object.fromEntries(
-            Object.entries(files).map(([file, text]) => [file, digest(text)]),
+            Object.entries(files).map(([file, text]) => [
+              file,
+              digest(
+                file === ".codex/config.toml" ? ownedCodexConfig(text, role.agentId).text : text,
+              ),
+            ]),
           ),
         },
       },
@@ -162,11 +225,15 @@ export async function removeDesktopDirectory(
   runtime: string,
   agentId: string,
   hashes?: Record<string, string>,
+  directory = desktopRoleDirectory(runtime, agentId),
 ) {
-  const report = await inspectDesktopDirectory(runtime, agentId, hashes);
+  const report = await inspectDesktopDirectory(runtime, agentId, hashes, directory);
   if (!report.ok) return `Role directory retained: ${report.issue}`;
-  const directory = desktopRoleDirectory(runtime, agentId);
-  for (const file of [".codex/config.toml", "AGENTS.md"]) await unlink(join(directory, file));
+  const configPath = join(directory, ".codex/config.toml");
+  const remaining = ownedCodexConfig(await readFile(configPath, "utf8"), agentId).replace("");
+  if (remaining.trim()) await writeTextAtomic(configPath, remaining);
+  else await unlink(configPath);
+  await unlink(join(directory, "AGENTS.md"));
   try {
     await rmdir(join(directory, ".codex"));
     await rmdir(directory);

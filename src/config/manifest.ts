@@ -10,6 +10,7 @@ import { hostSchema, type HostName } from "./hosts.js";
 
 export interface ManifestRole extends Participant {
   host?: HostName;
+  placement?: string;
 }
 
 // Readers strip unknown fields so an older live relay can accept a newer,
@@ -24,6 +25,7 @@ const manifestSchema = z.object({
       title: z.string(),
       role: z.string(),
       host: hostSchema.optional(),
+      placement: z.string().min(1).optional(),
     }),
   ),
 });
@@ -40,6 +42,7 @@ const strictManifestSchema = z
           title: z.string(),
           role: z.string(),
           host: hostSchema.optional(),
+          placement: z.string().min(1).optional(),
         })
         .strict(),
     ),
@@ -64,6 +67,7 @@ export async function loadManifestRoles(projectRoot: string): Promise<ManifestRo
     title: agent.title,
     role: agent.role,
     ...(agent.host ? { host: agent.host } : {}),
+    ...(agent.placement ? { placement: agent.placement } : {}),
   }));
 }
 
@@ -130,6 +134,7 @@ export async function writeManifest(
           title: participant.title,
           role: participant.role,
           ...(participant.host ? { host: participant.host } : {}),
+          ...(participant.placement ? { placement: participant.placement } : {}),
         },
       ]),
     ),

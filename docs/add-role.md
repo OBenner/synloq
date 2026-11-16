@@ -136,6 +136,10 @@ checklist.
    MCP config path. The credential file is picked up locally and is never
    transmitted through chat.
 
+   A successful claim persists the placement as `bound` (`configured` for a
+   config-provisionable host). Doctor reads this state directly. Re-running init
+   preserves a claimed role; it does not issue another claim code automatically.
+
    Prefer this CLI path over pasting the code into a chat: a code pasted
    into an _existing_ chat is read as plain text and does not claim the
    role. If a chat-based claim is ever used, the code must go into a _new_

@@ -10,7 +10,7 @@ describe("init per-role placement", () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-placement-cli-"));
     const home = join(root, "home");
     const manifest =
-      "project: manual\nagents:\n  arch:\n    title: Architect\n    role: Design\n    host: codex-desktop\n  qa:\n    title: QA\n    role: Verify\n    host: zcode\n";
+      "project: manual\nagents:\n  arch:\n    title: Architect\n    role: Design\n    host: codex-desktop\n    placement: role-projects/arch\n  qa:\n    title: QA\n    role: Verify\n    host: zcode\n";
     await writeFile(join(root, "synloq.yaml"), manifest);
     const output: string[] = [];
     const initHost = vi.fn();
@@ -43,14 +43,22 @@ describe("init per-role placement", () => {
         agentId: "arch",
         host: "codex-desktop",
         canProvisionSessions: false,
+        canProvisionConfig: true,
         hasPush: false,
       },
-      { agentId: "qa", host: "zcode", canProvisionSessions: false, hasPush: false },
+      {
+        agentId: "qa",
+        host: "zcode",
+        canProvisionSessions: false,
+        canProvisionConfig: false,
+        hasPush: false,
+      },
     ]);
     expect(result.manual.nextSteps.join(" ")).toContain("trust");
     expect(result.manual.nextSteps.join(" ")).toContain("synloq serve");
     expect(result.manual.roles[0].claimCode).toMatch(/^synloq-claim-qa-/);
     expect(result.desktop.roles[0].agentId).toBe("arch");
+    expect(result.desktop.roles[0].directory).toBe(join(root, "role-projects", "arch"));
     expect(JSON.parse(await readFile(result.manual.roles[0].configPath, "utf8")).relayUrl).toBe(
       "http://127.0.0.1:4399",
     );

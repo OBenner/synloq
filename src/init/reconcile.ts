@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { relative } from "node:path";
 import { HOST_CAPABILITIES, type HostName } from "../config/hosts.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore } from "../config/team-state.js";
@@ -10,13 +11,19 @@ import { initializeTeam, parseRoleInputs, resolveLanguage } from "./initialize-t
 import { initializeOpenCodeTeam } from "./opencode-host.js";
 import { coreRules } from "./role-prompt.js";
 import { DEFAULT_RELAY_URL } from "./runtime-config.js";
-import { provisionDesktopRoles } from "./codex-desktop.js";
+import {
+  CONFIG_PROVISIONERS,
+  type ConfigProvisionerRegistry,
+  type ProvisionedConfigs,
+} from "./config-provisioners.js";
+import { isWithin, resolvePlacement } from "./placement.js";
 import type { InitializeTeamOptions, KimiWorkInitHost } from "./types.js";
 
 export type ReconcileOptions = Omit<InitializeTeamOptions, "host" | "pluginSourcePath"> & {
   pluginSourcePath?: string;
 };
 export interface ReconcileDependencies {
+  configProvisioners?: ConfigProvisionerRegistry;
   kimiWorkHost: () => Promise<KimiWorkInitHost>;
   openCodeHost: () => Promise<OpenCodeSessionHost>;
 }
@@ -36,6 +43,8 @@ export async function reconcileTeam(
   const paths = await projectPaths(projectRoot, options.synloqHome);
   const store = new TeamStateStore(paths.bindings);
   const state = await store.read();
+  const registry = dependencies.configProvisioners ?? CONFIG_PROVISIONERS;
+  const plannedDirectories: string[] = [];
   if (state && (state.project !== project || state.projectRoot !== projectRoot)) {
     throw new SynloqError("INVALID_INPUT", "Synloq project state ownership does not match");
   }
@@ -54,16 +63,49 @@ export async function reconcileTeam(
     if (!HOST_CAPABILITIES[role.host].canProvisionSessions && role.conversationKey) {
       throw new SynloqError("INVALID_INPUT", `--conversation is unsupported for ${role.host}`);
     }
+    if (role.placement && !HOST_CAPABILITIES[role.host].canProvisionConfig)
+      throw new SynloqError("INVALID_INPUT", `placement is unsupported for ${role.host}`);
+    if (HOST_CAPABILITIES[role.host].canProvisionConfig) {
+      if (!registry[role.host])
+        throw new SynloqError("INVALID_INPUT", `no config provisioner for ${role.host}`);
+      const directory = await resolvePlacement(projectRoot, paths, role.agentId, role.placement);
+      const previous = state?.placements?.[role.agentId];
+      if (previous) {
+        const recorded = await resolvePlacement(
+          projectRoot,
+          paths,
+          role.agentId,
+          previous.directory,
+        );
+        if (relative(directory, recorded) !== "")
+          throw new SynloqError(
+            "INVALID_INPUT",
+            `role ${role.agentId} placement changed; use explicit operator migration`,
+          );
+      }
+      if (
+        plannedDirectories.some((other) => isWithin(other, directory) || isWithin(directory, other))
+      )
+        throw new SynloqError("INVALID_INPUT", "role placement directories must not overlap");
+      for (const [id, placement] of Object.entries(state?.placements ?? {})) {
+        if (id === role.agentId || !HOST_CAPABILITIES[placement.host].canProvisionConfig) continue;
+        const other = await resolvePlacement(projectRoot, paths, id, placement.directory);
+        if (isWithin(other, directory) || isWithin(directory, other))
+          throw new SynloqError("INVALID_INPUT", "placement overlaps another provisioned role");
+      }
+      plannedDirectories.push(directory);
+    }
   }
   const kimiRoles = roles.filter((role) => role.host === "kimi-work");
   if (kimiRoles.length && !options.pluginSourcePath)
     throw new SynloqError("INVALID_INPUT", "Kimi Work requires a plugin source path");
-  const manifestParticipants = roles.map(({ agentId, title, role, host }) => ({
+  const manifestParticipants = roles.map(({ agentId, title, role, host, placement }) => ({
     project,
     agentId,
     title,
     role,
     host,
+    ...(placement ? { placement } : {}),
   }));
   const common = {
     project,
@@ -99,21 +141,26 @@ export async function reconcileTeam(
       runtimeEntrypoint: options.runtimeEntrypoint,
     });
   }
-  const desktopRoles = roles.filter((role) => role.host === "codex-desktop");
-  const desktop = desktopRoles.length
-    ? await provisionDesktopRoles({
-        ...common,
-        roles: desktopRoles,
-        runtimeEntrypoint: options.runtimeEntrypoint,
-      })
-    : { roles: [], nextSteps: [] };
+  const configRoles = roles.filter((role) => HOST_CAPABILITIES[role.host].canProvisionConfig);
+  const desktop: ProvisionedConfigs = { roles: [], nextSteps: [] };
+  for (const host of new Set(configRoles.map((role) => role.host))) {
+    const result = await registry[host]!.provision({
+      ...common,
+      roles: configRoles.filter((role) => role.host === host),
+      runtimeEntrypoint: options.runtimeEntrypoint,
+    });
+    desktop.roles.push(...result.roles);
+    desktop.nextSteps.push(...result.nextSteps);
+  }
   const manualRoles = roles.filter(
-    (role) => !HOST_CAPABILITIES[role.host].canProvisionSessions && role.host !== "codex-desktop",
+    (role) =>
+      !HOST_CAPABILITIES[role.host].canProvisionSessions &&
+      !HOST_CAPABILITIES[role.host].canProvisionConfig,
   );
   const manual: { roles: InitializedGenericRole[]; nextSteps: string[] } = manualRoles.length
     ? await initializeGenericTeam({ ...common, roles: manualRoles })
     : { roles: [], nextSteps: [] };
-  if ((manualRoles.length || desktopRoles.length) && !kimiRoles.length && !openCodeRoles.length) {
+  if ((manualRoles.length || configRoles.length) && !kimiRoles.length && !openCodeRoles.length) {
     manual.nextSteps.push(
       "Start a relay for this project with synloq serve --project-root <project> --synloq-home <home> --port <relay-port>; manual MCP inbox channels require a running relay.",
     );
@@ -124,14 +171,16 @@ export async function reconcileTeam(
       ...current?.placements,
       ...Object.fromEntries(
         roles
-          .filter((role) => role.host !== "codex-desktop")
+          .filter((role) => !HOST_CAPABILITIES[role.host].canProvisionConfig)
           .map((role) => [
             role.agentId,
             {
               host: role.host,
               state: HOST_CAPABILITIES[role.host].canProvisionSessions
                 ? ("bound" as const)
-                : ("unclaimed" as const),
+                : current?.placements?.[role.agentId]?.state === "bound"
+                  ? ("bound" as const)
+                  : ("unclaimed" as const),
               instructions: coreRules(role, language).join("\n"),
             },
           ]),

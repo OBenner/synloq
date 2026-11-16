@@ -11,7 +11,10 @@ import {
   removeManifestParticipant,
 } from "../config/manifest.js";
 import { HOST_CAPABILITIES } from "../config/hosts.js";
-import { inspectDesktopDirectory, removeDesktopDirectory } from "../init/codex-desktop.js";
+import {
+  CONFIG_PROVISIONERS,
+  type ConfigProvisionerRegistry,
+} from "../init/config-provisioners.js";
 import { projectPaths } from "../config/paths.js";
 import { TeamStateStore, type TeamState } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
@@ -73,6 +76,7 @@ export interface ServeHandle {
 }
 
 export interface DoctorCommandOptions {
+  configProvisioners?: ConfigProvisionerRegistry;
   projectRoot: string;
   synloqHome?: string;
   clock?: Clock;
@@ -374,10 +378,8 @@ export async function claimCommand(options: ClaimCommandOptions): Promise<ClaimR
   }
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const audit = options.audit ?? new FileSecurityAuditLog(auditLogPath(paths.home, paths.key));
-  const store = new ClaimCodeStore(
-    new TeamStateStore(paths.bindings),
-    options.clock ?? { now: () => Date.now() },
-  );
+  const states = new TeamStateStore(paths.bindings);
+  const store = new ClaimCodeStore(states, options.clock ?? { now: () => Date.now() });
   const result = await store.consume(agentId, options.code);
   const event = {
     at: new Date().toISOString(),
@@ -414,6 +416,21 @@ export async function claimCommand(options: ClaimCommandOptions): Promise<ClaimR
     });
     throw new SynloqError("UNAUTHORIZED", `invalid claim code for role '${agentId}'`);
   }
+  await states.update((state) => {
+    if (!state) throw new SynloqError("INVALID_INPUT", "Synloq team state is missing");
+    const placement = state.placements?.[agentId];
+    if (!placement) return state;
+    return {
+      ...state,
+      placements: {
+        ...state.placements,
+        [agentId]: {
+          ...placement,
+          state: HOST_CAPABILITIES[placement.host].canProvisionConfig ? "configured" : "bound",
+        },
+      },
+    };
+  });
   audit.record({
     ...event,
     decision: "accept",
@@ -463,6 +480,7 @@ export async function claimIssueCommand(
 }
 
 export interface RemoveRoleOptions {
+  configProvisioners?: ConfigProvisionerRegistry;
   projectRoot: string;
   agentId: string;
   operatorCredentialPath: string;
@@ -550,16 +568,21 @@ export async function removeRoleCommand(options: RemoveRoleOptions): Promise<Rem
   }
 
   const nextSteps = ["Restart the relay so the removed role leaves the participant registry"];
-  if (state?.placements?.[options.agentId]?.host === "codex-desktop") {
+  const placement = state?.placements?.[options.agentId];
+  const provisioner = placement
+    ? (options.configProvisioners ?? CONFIG_PROVISIONERS)[placement.host]
+    : undefined;
+  if (provisioner) {
     nextSteps.push(
-      await removeDesktopDirectory(
-        paths.runtime,
-        options.agentId,
-        state.placements[options.agentId]?.desktopFiles,
-      ),
+      await provisioner.remove({
+        projectRoot: options.projectRoot,
+        paths,
+        agentId: options.agentId,
+        ...(placement ? { placement } : {}),
+      }),
     );
   }
-  if (session === "manual" && state?.placements?.[options.agentId]?.host !== "codex-desktop") {
+  if (session === "manual" && !provisioner) {
     nextSteps.push("Close the role's Kimi Work chat manually — it cannot be deleted via API");
   }
   if (session === "skipped-host-unavailable") {
@@ -640,23 +663,22 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
     const observedHost = binding ? (binding.kind ?? "kimi-work") : prepared?.host;
     const mismatch = observedHost !== undefined && observedHost !== host;
     const missing = HOST_CAPABILITIES[host].canProvisionSessions ? !binding : !prepared;
-    const desktop =
-      host === "codex-desktop"
-        ? await inspectDesktopDirectory(paths.runtime, role.agentId, prepared?.desktopFiles)
-        : undefined;
+    const provisioner = (options.configProvisioners ?? CONFIG_PROVISIONERS)[prepared?.host ?? host];
+    const configHealth = provisioner
+      ? await provisioner.inspect({
+          projectRoot: options.projectRoot,
+          paths,
+          agentId: role.agentId,
+          ...(prepared ? { placement: prepared } : {}),
+        })
+      : undefined;
     placements.set(role.agentId, {
       host,
-      state: desktop?.ok
-        ? "configured"
-        : binding
-          ? "bound"
-          : !prepared
-            ? "missing"
-            : teamState?.claims?.[role.agentId]
-              ? "unclaimed"
-              : "manual",
-      ok: !mismatch && !missing && (desktop?.ok ?? true),
-      ...(desktop && !desktop.ok ? { issue: desktop.issue ?? "role directory is invalid" } : {}),
+      state: binding ? "bound" : (prepared?.state ?? "missing"),
+      ok: !mismatch && !missing && (configHealth?.ok ?? true),
+      ...(configHealth && !configHealth.ok
+        ? { issue: configHealth.issue ?? "role directory is invalid" }
+        : {}),
       ...(mismatch
         ? {
             issue: `manifest host ${host} differs from prepared host ${observedHost}; use explicit replace-session/migration`,
