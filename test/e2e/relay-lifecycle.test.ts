@@ -28,7 +28,7 @@ async function unusedUrl(): Promise<string> {
   return url;
 }
 
-describe("automatic relay lifecycle", () => {
+describe("automatic relay lifecycle", { timeout: 20_000, retry: 1 }, () => {
   it("preserves the conversation and re-elects one owner without a standalone server", async () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-e2e-project-"));
     const home = await mkdtemp(join(tmpdir(), "synloq-e2e-home-"));
@@ -50,7 +50,9 @@ describe("automatic relay lifecycle", () => {
       retryDelayMs: 5,
       monitorIntervalMs: 10,
       maxReconnectAttempts: 30,
-      probeTimeoutMs: 100,
+      // Real loopback probes compete with the full suite on CI/Windows —
+      // 100 ms expired under load (issue #13).
+      probeTimeoutMs: 1_000,
     };
     const events: string[] = [];
     const first = await startRelaySupervisor({ ...common, token: product.token });
@@ -76,7 +78,9 @@ describe("automatic relay lifecycle", () => {
     });
     await first.close();
 
-    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 5_000 });
+    // Election under parallel-suite load: the default 5 s was observed to
+    // expire at 7994 ms in CI (run 43907126160, issue #13).
+    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 10_000 });
     expect(events).toEqual(["host-invalidated", "host-restarted"]);
     const inbox = await second.client.inbox({ limit: 10 });
     expect(inbox.messages).toHaveLength(1);
