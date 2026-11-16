@@ -239,6 +239,34 @@ describe("standalone real-client composition", () => {
     expect(current.relay.sessions.list(PROJECT)[0]?.state).toBe("closed");
   });
 
+  it("lets the owning Claude session ack after registration (issue #86)", async () => {
+    const current = await fixture();
+    const { message } = await current.arch.send({
+      to: "cto",
+      text: "Ack me from the owning Claude session",
+      expectsReply: false,
+      idempotencyKey: "standalone-claude-writer-proof-1",
+    });
+    const configPath = await writeConfig(current.home, {
+      root: current.root,
+      relay: current.relay,
+      credentialPath: current.ctoCredentialPath,
+      kind: "claude",
+      agentId: "cto",
+      sessionId: CLAUDE_SESSION,
+    });
+    const { handle, client } = await connectClaude(configPath);
+
+    const result = await client.callTool({
+      name: "synloq_ack",
+      arguments: { messageId: message.id },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(current.relay.messages.getMessage(message.id, PROJECT)?.deliveryState).toBe("acked");
+
+    await handle.close();
+  });
+
   it("runs controlled Claude acceptance through the real relay and hook entry point", async () => {
     const current = await fixture();
     const { message } = await current.arch.send({
