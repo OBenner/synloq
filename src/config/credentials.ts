@@ -6,6 +6,7 @@ import { agentId as agentIdSchema } from "../domain/message.js";
 import type { SecurityAuditLog } from "../relay/audit-log.js";
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-file.js";
 import { projectPaths } from "./paths.js";
+import { withFileLock } from "./file-lock.js";
 
 interface CredentialEntry {
   agentId: string;
@@ -66,13 +67,20 @@ export class CredentialStore {
 
   async issue(project: string, agentId: string): Promise<string> {
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
-    const credentials = await this.read(paths.credentials, project);
+    return withFileLock(paths.credentials, () =>
+      this.issueLocked(paths.credentials, project, agentId),
+    );
+  }
+
+  /** Caller holds the project credential lock, including any later token write. */
+  private async issueLocked(path: string, project: string, agentId: string): Promise<string> {
+    const credentials = await this.read(path, project);
     if (credentials.project !== project) {
       throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
     }
     const token = randomBytes(32).toString("base64url");
     credentials.entries.push({ agentId, tokenHash: tokenDigest(token).toString("hex") });
-    await writeJsonAtomic(paths.credentials, credentials);
+    await writeJsonAtomic(path, credentials);
     this.record("issue", project, agentId, "ISSUED", "credential issued");
     return token;
   }
@@ -88,30 +96,34 @@ export class CredentialStore {
   ): Promise<{ token: string; tokenPath: string; replacedHashes: number }> {
     agentIdSchema.parse(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
-    const credentials = await this.read(paths.credentials, project);
-    if (credentials.project !== project) {
-      throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
-    }
-    const replacedHashes = credentials.entries.filter((entry) => entry.agentId === agentId).length;
-    if (replacedHashes === 0) {
-      throw new SynloqError("INVALID_INPUT", "no existing credential to rotate for this agent");
-    }
-    const token = randomBytes(32).toString("base64url");
-    credentials.entries = [
-      ...credentials.entries.filter((entry) => entry.agentId !== agentId),
-      { agentId, tokenHash: tokenDigest(token).toString("hex") },
-    ];
-    await writeJsonAtomic(paths.credentials, credentials);
-    const tokenPath = join(paths.tokens, `${agentId}.token`);
-    await writeTextAtomic(tokenPath, `${token}\n`);
-    this.record(
-      "rotate",
-      project,
-      agentId,
-      "ROTATED",
-      `credential rotated; ${replacedHashes} stored hash(es) replaced`,
-    );
-    return { token, tokenPath, replacedHashes };
+    return withFileLock(paths.credentials, async () => {
+      const credentials = await this.read(paths.credentials, project);
+      if (credentials.project !== project) {
+        throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
+      }
+      const replacedHashes = credentials.entries.filter(
+        (entry) => entry.agentId === agentId,
+      ).length;
+      if (replacedHashes === 0) {
+        throw new SynloqError("INVALID_INPUT", "no existing credential to rotate for this agent");
+      }
+      const token = randomBytes(32).toString("base64url");
+      credentials.entries = [
+        ...credentials.entries.filter((entry) => entry.agentId !== agentId),
+        { agentId, tokenHash: tokenDigest(token).toString("hex") },
+      ];
+      await writeJsonAtomic(paths.credentials, credentials);
+      const tokenPath = join(paths.tokens, `${agentId}.token`);
+      await writeTextAtomic(tokenPath, `${token}\n`);
+      this.record(
+        "rotate",
+        project,
+        agentId,
+        "ROTATED",
+        `credential rotated; ${replacedHashes} stored hash(es) replaced`,
+      );
+      return { token, tokenPath, replacedHashes };
+    });
   }
 
   /**
@@ -125,23 +137,25 @@ export class CredentialStore {
   ): Promise<{ removedHashes: number; tokenPath: string }> {
     agentIdSchema.parse(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
-    const credentials = await this.read(paths.credentials, project);
-    if (credentials.project !== project) {
-      throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
-    }
-    const removedHashes = credentials.entries.filter((entry) => entry.agentId === agentId).length;
-    credentials.entries = credentials.entries.filter((entry) => entry.agentId !== agentId);
-    await writeJsonAtomic(paths.credentials, credentials);
-    const tokenPath = join(paths.tokens, `${agentId}.token`);
-    await rm(tokenPath, { force: true });
-    this.record(
-      "revoke",
-      project,
-      agentId,
-      "REVOKED",
-      `credential revoked; ${removedHashes} stored hash(es) removed`,
-    );
-    return { removedHashes, tokenPath };
+    return withFileLock(paths.credentials, async () => {
+      const credentials = await this.read(paths.credentials, project);
+      if (credentials.project !== project) {
+        throw new SynloqError("INVALID_INPUT", "credential project does not match stored project");
+      }
+      const removedHashes = credentials.entries.filter((entry) => entry.agentId === agentId).length;
+      credentials.entries = credentials.entries.filter((entry) => entry.agentId !== agentId);
+      await writeJsonAtomic(paths.credentials, credentials);
+      const tokenPath = join(paths.tokens, `${agentId}.token`);
+      await rm(tokenPath, { force: true });
+      this.record(
+        "revoke",
+        project,
+        agentId,
+        "REVOKED",
+        `credential revoked; ${removedHashes} stored hash(es) removed`,
+      );
+      return { removedHashes, tokenPath };
+    });
   }
 
   /**
@@ -181,22 +195,24 @@ export class CredentialStore {
   async ensureCredential(project: string, agentId: string): Promise<EnsuredCredential> {
     agentIdSchema.parse(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
-    const tokenPath = join(paths.tokens, `${agentId}.token`);
-    try {
-      const token = (await readFile(tokenPath, "utf8")).trim();
-      if (token) {
-        const identity = await this.authenticate(project, token);
-        if (identity.agentId === agentId) return { token, tokenPath, reused: true };
+    return withFileLock(paths.credentials, async () => {
+      const tokenPath = join(paths.tokens, `${agentId}.token`);
+      try {
+        const token = (await readFile(tokenPath, "utf8")).trim();
+        if (token) {
+          const identity = await this.authenticate(project, token);
+          if (identity.agentId === agentId) return { token, tokenPath, reused: true };
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          if (!(error instanceof SynloqError && error.code === "UNAUTHORIZED")) throw error;
+        }
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        if (!(error instanceof SynloqError && error.code === "UNAUTHORIZED")) throw error;
-      }
-    }
 
-    const token = await this.issue(project, agentId);
-    await writeTextAtomic(tokenPath, `${token}\n`);
-    return { token, tokenPath, reused: false };
+      const token = await this.issueLocked(paths.credentials, project, agentId);
+      await writeTextAtomic(tokenPath, `${token}\n`);
+      return { token, tokenPath, reused: false };
+    });
   }
 
   async authenticate(project: string, token: string): Promise<Identity> {

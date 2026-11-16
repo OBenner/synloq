@@ -31,6 +31,12 @@ implementer; the audit-log steps use the M4-min audit scope (issue #3, landed
 
 ## When to rotate
 
+Credential writers serialize through a per-project `.json.lock`, and state writes
+sync their temporary file before rename. If a writer crashes, the lock deliberately
+requires operator recovery after stopping all project writers. See
+[credential durability and lock recovery](credential-durability-2026-11-16.md)
+for the procedure, checks and platform limits.
+
 - Suspected leak: token file committed, pasted, synced, or exposed in logs/evidence.
 - A machine or backup that held the Synloq home changed hands.
 - Routine hygiene after a security incident affecting the local user account.
