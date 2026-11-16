@@ -92,6 +92,36 @@ afterEach(async () => {
 });
 
 describe("Synloq agent-facing MCP tools", () => {
+  it("publishes four boolean hints for every tool through MCP tools/list", async () => {
+    const { tools } = await fixture.mcpClient.listTools();
+    const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
+    const read = {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    };
+    const send = {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    };
+    expect(annotations).toEqual({
+      synloq_list: read,
+      synloq_send: send,
+      synloq_reply: send,
+      synloq_inbox: read,
+      synloq_wait: read,
+      synloq_ack: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    });
+  });
+
   it("exposes only the six participant tools and no operator capabilities", async () => {
     const { tools } = await fixture.mcpClient.listTools();
     const names = tools.map((tool) => tool.name).sort();

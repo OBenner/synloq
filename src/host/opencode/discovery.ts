@@ -75,6 +75,8 @@ const defaultExec: OpenCodeDiscoveryExec = (file, args, options) =>
         maxBuffer: options.maxBuffer,
         encoding: "utf8",
         windowsHide: true,
+        // Executable/argv stay separate, including paths containing metacharacters.
+        shell: false,
       },
       (error, stdout) => {
         if (error) reject(new Error("opencode command failed"));

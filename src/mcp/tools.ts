@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { SynloqError } from "../domain/errors.js";
 import type { InboxOptions, RelayHttpClient } from "../transport/http-client.js";
@@ -31,6 +31,21 @@ const waitInputSchema = z
   .object({ waitMs: z.number().int().min(0).max(25000).default(25000) })
   .strict();
 const ackInputSchema = z.object({ messageId: z.string().uuid() }).strict();
+
+// Hints describe effects; authorization still belongs to the relay. Reads stay
+// inside the project's roster/mailbox, whereas sends can reach other host chats.
+const readAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} satisfies ToolAnnotations;
+const sendAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true, // Identical request/key within the documented dedup window.
+  openWorldHint: true,
+} satisfies ToolAnnotations;
 
 function result(structuredContent: unknown): CallToolResult {
   return {
@@ -68,6 +83,7 @@ export function registerSynloqTools(
     {
       description: "List project participants and role descriptions",
       inputSchema: listInputSchema,
+      annotations: readAnnotations,
     },
     async () => invoke(() => client.listParticipants()),
   );
@@ -75,8 +91,10 @@ export function registerSynloqTools(
   server.registerTool(
     "synloq_send",
     {
-      description: "Send a direct message to one participant",
+      description:
+        "Send a direct message to one participant. Retry identical requests with the same idempotencyKey within the 7-day dedup window.",
       inputSchema: sendInputSchema,
+      annotations: sendAnnotations,
     },
     async (input) =>
       invoke(() =>
@@ -89,8 +107,10 @@ export function registerSynloqTools(
   server.registerTool(
     "synloq_reply",
     {
-      description: "Reply in an existing thread",
+      description:
+        "Reply in an existing thread. Retry identical requests with the same idempotencyKey within the 7-day dedup window.",
       inputSchema: replyInputSchema,
+      annotations: sendAnnotations,
     },
     async (input) =>
       invoke(() =>
@@ -105,6 +125,7 @@ export function registerSynloqTools(
     {
       description: "Read pending or historical incoming messages",
       inputSchema: inboxInputSchema,
+      annotations: readAnnotations,
     },
     async (input) =>
       invoke(() => {
@@ -119,6 +140,7 @@ export function registerSynloqTools(
     {
       description: "Wait for an incoming message; timeout is normal",
       inputSchema: waitInputSchema,
+      annotations: readAnnotations,
     },
     async (input) => invoke(() => client.inbox({ limit: 1, waitMs: input.waitMs, unread: true })),
   );
@@ -128,6 +150,14 @@ export function registerSynloqTools(
     {
       description: "Acknowledge that a message was read",
       inputSchema: ackInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        // Conservative: changes existing state/unread visibility and makes the
+        // message eligible for retention, rather than merely appending a row.
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (input) => invoke(() => client.acknowledge(input.messageId, writerSessionId)),
   );
