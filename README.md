@@ -4,6 +4,7 @@
 [![npm](https://img.shields.io/npm/v/synloq)](https://www.npmjs.com/package/synloq)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Node.js >= 24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
+[![M8ven Score](https://m8ven.ai/badge/mcp/obenner-synloq-13lfif?v=217ad9235fa6c5a72917940b272eaa78)](https://m8ven.ai/mcp/obenner-synloq-13lfif?s=readme)
 
 Synloq is a local-first coordination plugin for visible coding-agent chats. Generic initialization creates explicitly configured Kimi Work client conversations for arbitrary project roles. A supervised loopback HTTP relay owns durable SQLite state, starts automatically with the generated role channels, and gives each chat only six agent-facing MCP tools.
 
