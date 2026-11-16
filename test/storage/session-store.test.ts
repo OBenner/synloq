@@ -324,7 +324,7 @@ describe("SessionStore", () => {
     expect(heartbeat.state).toBe("idle");
   });
 
-  it("persists sessions in user_version 4 and restores them after reopening", () => {
+  it("persists sessions in user_version 5 and restores them after reopening", () => {
     const directory = mkdtempSync(join(tmpdir(), "synloq-sessions-"));
     temporaryDirectories.push(directory);
     const database = join(directory, "synloq.sqlite");
@@ -342,7 +342,7 @@ describe("SessionStore", () => {
       user_version: number;
     };
     inspector.close();
-    expect(version.user_version).toBe(4);
+    expect(version.user_version).toBe(5);
   });
 });
 

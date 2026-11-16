@@ -126,6 +126,8 @@ An existing `synloq.yaml` can supply the same role declarations without `--role`
 version: 1
 project: example
 language: en # en | ru — agent-facing wrapper and role instructions (default en)
+retention:
+  days: 7 # optional; acknowledged message retention (default 7)
 agents:
   product:
     title: Product
@@ -136,6 +138,12 @@ agents:
 ```
 
 The optional top-level `language` field (`en` or `ru`, fail-loud on any other value) selects the language of the delivered-message wrapper and the generated role instructions. Protocol frames, reason codes, and relay notices stay English. Init also accepts `--language en|ru`; re-running init without the flag preserves the language already in `synloq.yaml`. A language change takes effect after re-init and a channel restart, like any other manifest change. A missing locale key falls back to English with a warning.
+
+The optional `retention.days` setting accepts integers from 1 to 36500 (default 7).
+The relay periodically removes only acknowledged messages older than that many days;
+unread messages remain available. Idempotency records last the full seven-day window
+even when a shorter policy removes bodies earlier. Init preserves this setting;
+restart the relay after changing it. See [retention, migration and limits](docs/storage-retention.md).
 
 ## 2. Automatic relay lifecycle
 

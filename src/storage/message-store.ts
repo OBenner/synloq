@@ -4,6 +4,12 @@ import { SynloqError } from "../domain/errors.js";
 import type { Message, SendMessageInput } from "../domain/message.js";
 import type { SessionBinding } from "../domain/session.js";
 import { openDatabase, storageFailure, withTransaction } from "./sqlite.js";
+import { contentHash, DAY_MS, DEDUP_WINDOW_MS } from "./dedup.js";
+
+interface DedupRow extends Omit<MessageRow, "text"> {
+  content_hash: string;
+  first_accepted_at: string;
+}
 
 interface MessageRow {
   id: string;
@@ -144,29 +150,20 @@ export class SQLiteMessageStore {
 
   create(input: SendMessageInput, id: string, createdAt: string, threadId: string): CreateResult {
     return this.write(() => {
-      const existing = this.database
-        .prepare(
-          `SELECT ${messageColumns} FROM messages
-           WHERE project = ? AND sender = ? AND idempotency_key = ?`,
-        )
-        .get(input.project, input.from, input.idempotencyKey) as MessageRow | undefined;
-
-      if (existing) {
-        const message = toMessage(existing);
-        if (
-          message.to !== input.to ||
-          message.text !== input.text ||
-          message.expectsReply !== input.expectsReply ||
-          message.inReplyTo !== input.inReplyTo
-        ) {
-          throw new SynloqError(
-            "IDEMPOTENCY_CONFLICT",
-            "idempotency key was already used with different content",
-          );
+      const replay = this.replay(input);
+      if (replay) return { message: replay, created: false };
+      if (input.inReplyTo) {
+        const parent = this.findById(input.inReplyTo, input.project);
+        if (!parent || parent.recipient !== input.from) {
+          throw new SynloqError("NOT_FOUND", "reply parent not found");
         }
-        return { message, created: false };
       }
-
+      this.database
+        .prepare(
+          `DELETE FROM message_dedup
+        WHERE project = ? AND sender = ? AND idempotency_key = ?`,
+        )
+        .run(input.project, input.from, input.idempotencyKey);
       this.database
         .prepare(
           `INSERT INTO messages (
@@ -188,19 +185,111 @@ export class SQLiteMessageStore {
         );
       const inserted = this.findById(id, input.project);
       if (!inserted) throw new Error("inserted message could not be read");
+      this.database
+        .prepare(
+          `INSERT INTO message_dedup
+        (project, sender, idempotency_key, id, thread_id, recipient, expects_reply,
+         in_reply_to, created_at, delivery_state, content_hash, first_accepted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'stored', ?, ?)`,
+        )
+        .run(
+          input.project,
+          input.from,
+          input.idempotencyKey,
+          id,
+          threadId,
+          input.to,
+          input.expectsReply ? 1 : 0,
+          input.inReplyTo ?? null,
+          createdAt,
+          contentHash(input),
+          new Date(this.clock.now()).toISOString(),
+        );
       return { message: toMessage(inserted), created: true };
     });
   }
 
   getByIdempotency(project: string, sender: string, idempotencyKey: string): Message | undefined {
     return this.read(() => {
-      const row = this.database
-        .prepare(
-          `SELECT ${messageColumns} FROM messages
-           WHERE project = ? AND sender = ? AND idempotency_key = ?`,
-        )
-        .get(project, sender, idempotencyKey) as MessageRow | undefined;
+      const dedup = this.findDedup(project, sender, idempotencyKey);
+      const row = dedup && this.findById(dedup.id, project);
       return row ? toMessage(row) : undefined;
+    });
+  }
+
+  private findDedup(project: string, sender: string, key: string): DedupRow | undefined {
+    return this.database
+      .prepare(
+        `SELECT * FROM message_dedup
+      WHERE project = ? AND sender = ? AND idempotency_key = ? AND first_accepted_at >= ?`,
+      )
+      .get(project, sender, key, new Date(this.clock.now() - DEDUP_WINDOW_MS).toISOString()) as
+      DedupRow | undefined;
+  }
+
+  /** Used only to reconstruct a reply retry after its historical parent was purged. */
+  getRetryRecipient(project: string, sender: string, key: string): string | undefined {
+    if (typeof key !== "string") return undefined;
+    return this.read(() => this.findDedup(project, sender, key)?.recipient);
+  }
+
+  replay(input: SendMessageInput): Message | undefined {
+    return this.read(() => {
+      const row = this.findDedup(input.project, input.from, input.idempotencyKey);
+      if (!row) return undefined;
+      if (row.content_hash !== contentHash(input)) {
+        throw new SynloqError(
+          "IDEMPOTENCY_CONFLICT",
+          "idempotency key was already used with different content",
+        );
+      }
+      const live = this.findById(row.id, input.project);
+      return toMessage(live ?? { ...row, text: input.text });
+    });
+  }
+
+  sweepRetention(
+    project: string,
+    days: number,
+    batchSize = 250,
+  ): { messagesPurged: number; dedupPurged: number } {
+    if (
+      !Number.isSafeInteger(days) ||
+      days < 1 ||
+      days > 36_500 ||
+      !Number.isSafeInteger(batchSize) ||
+      batchSize < 1 ||
+      batchSize > 1000
+    ) {
+      throw new SynloqError("INVALID_INPUT", "invalid retention days or batch size");
+    }
+    return this.write(() => {
+      const rows = this.database
+        .prepare(
+          `SELECT id FROM messages
+        WHERE project = ? AND delivery_state = 'acked' AND created_at < ?
+          AND NOT EXISTS (SELECT 1 FROM delivery_quarantine WHERE message_id = messages.id)
+        ORDER BY created_at, id LIMIT ?`,
+        )
+        .all(project, new Date(this.clock.now() - days * DAY_MS).toISOString(), batchSize) as {
+        id: string;
+      }[];
+      for (const row of rows) {
+        this.database
+          .prepare("UPDATE message_dedup SET delivery_state = 'acked' WHERE id = ? AND project = ?")
+          .run(row.id, project);
+        this.database
+          .prepare("DELETE FROM messages WHERE id = ? AND project = ?")
+          .run(row.id, project);
+      }
+      const result = this.database
+        .prepare(
+          `DELETE FROM message_dedup WHERE rowid IN (
+        SELECT rowid FROM message_dedup WHERE project = ? AND first_accepted_at < ?
+        ORDER BY first_accepted_at LIMIT ?)`,
+        )
+        .run(project, new Date(this.clock.now() - DEDUP_WINDOW_MS).toISOString(), batchSize);
+      return { messagesPurged: rows.length, dedupPurged: Number(result.changes) };
     });
   }
 

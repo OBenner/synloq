@@ -7,6 +7,7 @@ import { CredentialStore, type Identity } from "../config/credentials.js";
 import {
   loadManifest,
   loadManifestRoles,
+  loadManifestRetention,
   manifestUnknownFields,
   removeManifestParticipant,
 } from "../config/manifest.js";
@@ -32,6 +33,7 @@ import {
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
+import { startRetentionSweep } from "../relay/retention.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
 import { SQLiteMessageStore, type PauseScope } from "../storage/message-store.js";
@@ -125,6 +127,7 @@ function manifestProject(participants: Participant[]): string {
 
 export async function serveCommand(options: ServeOptions): Promise<ServeHandle> {
   const participants = await loadManifest(options.projectRoot);
+  const retention = await loadManifestRetention(options.projectRoot);
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
@@ -157,6 +160,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   });
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
+  let stopRetention: (() => void) | undefined;
   try {
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
@@ -166,15 +170,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     const protection = new ProtectionPolicy(messages, undefined, undefined, clock);
     server = new RelayHttpServer({
       project,
-      relay: new RelayService(
-        directory,
-        messages,
-        sessions,
-        protection,
-        undefined,
-        undefined,
-        audit,
-      ),
+      relay: new RelayService(directory, messages, sessions, protection, undefined, clock, audit),
       credentials: new CredentialStore(options.projectRoot, options.synloqHome),
       sessions,
       dispatcher,
@@ -183,6 +179,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       protection,
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
+    stopRetention = startRetentionSweep(messages, project, retention.days);
     const openSessions = sessions;
     const openServer = server;
     let closed = false;
@@ -194,6 +191,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       close: async () => {
         if (closed) return;
         closed = true;
+        stopRetention?.();
         try {
           await openServer.close();
         } finally {
@@ -206,6 +204,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       },
     };
   } catch (error) {
+    stopRetention?.();
     if (server) await server.close();
     sessions?.close();
     messages.close();

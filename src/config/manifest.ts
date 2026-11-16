@@ -13,12 +13,15 @@ export interface ManifestRole extends Participant {
   placement?: string;
 }
 
+const retentionSchema = z.object({ days: z.number().int().min(1).max(36_500) });
+
 // Readers strip unknown fields so an older live relay can accept a newer,
 // additive manifest. Doctor still reports these fields to catch typos.
 const manifestSchema = z.object({
   version: z.literal(1).default(1),
   project: z.string().min(1).max(128),
   language: languageSchema.default(DEFAULT_LANGUAGE),
+  retention: retentionSchema.optional(),
   agents: z.record(
     agentId,
     z.object({
@@ -35,6 +38,7 @@ const strictManifestSchema = z
     version: z.literal(1).default(1),
     project: z.string().min(1).max(128),
     language: languageSchema.default(DEFAULT_LANGUAGE),
+    retention: retentionSchema.strict().optional(),
     agents: z.record(
       agentId,
       z
@@ -73,6 +77,10 @@ export async function loadManifestRoles(projectRoot: string): Promise<ManifestRo
 
 export async function loadManifestLanguage(projectRoot: string): Promise<Language> {
   return (await readManifest(projectRoot)).language;
+}
+
+export async function loadManifestRetention(projectRoot: string): Promise<{ days: number }> {
+  return (await readManifest(projectRoot)).retention ?? { days: 7 };
 }
 
 async function readManifest(projectRoot: string) {
@@ -123,10 +131,30 @@ export async function writeManifest(
   if (ids.size !== participants.length) {
     throw new SynloqError("INVALID_INPUT", "manifest contains duplicate role IDs");
   }
+  let retention: { days: number } | undefined;
+  try {
+    const source = await readFile(join(projectRoot, "synloq.yaml"), "utf8");
+    let previous: unknown;
+    try {
+      previous = YAML.parse(source);
+    } catch {
+      // Full-roster writes can repair malformed YAML, as before. Settings
+      // cannot be recovered from an unparseable document; readers still fail loud.
+    }
+    if (previous && typeof previous === "object" && "retention" in previous) {
+      const parsed = retentionSchema.safeParse(previous.retention);
+      if (!parsed.success)
+        throw new SynloqError("INVALID_INPUT", "invalid manifest retention policy");
+      retention = parsed.data;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   const manifest = manifestSchema.parse({
     version: 1,
     project,
     language,
+    ...(retention ? { retention } : {}),
     agents: Object.fromEntries(
       participants.map((participant) => [
         participant.agentId,

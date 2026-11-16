@@ -120,6 +120,8 @@ export class RelayService {
       project: identity.project,
       from: identity.operator ? "operator" : identity.agentId,
     });
+    const replay = this.messages.replay(input);
+    if (replay) return replay;
     await this.requireParticipant(input.project, input.to);
     const parent = input.inReplyTo
       ? this.messages.getMessage(input.inReplyTo, input.project)
@@ -167,6 +169,14 @@ export class RelayService {
   async reply(identity: Identity, raw: ReplyRequest): Promise<Message> {
     try {
       this.requireWriter(identity, raw.sessionId);
+      const retryRecipient = this.messages.getRetryRecipient(
+        identity.project,
+        identity.operator ? "operator" : identity.agentId,
+        raw.idempotencyKey,
+      );
+      if (retryRecipient !== undefined) {
+        return await this.performSend(identity, { ...raw, to: retryRecipient });
+      }
       const parent = this.messages.getMessage(raw.inReplyTo, identity.project);
       if (!parent || parent.to !== identity.agentId || parent.project !== identity.project) {
         throw new SynloqError("NOT_FOUND", "reply parent not found");

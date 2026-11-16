@@ -29,8 +29,8 @@ possible after a crash. Never remove the lock while another writer may be alive.
 
 ## L3: flush before publication
 
-`writeTextAtomic` (and thus `writeJsonAtomic`) creates a temporary file with the requested mode
-file next to its destination, writes its contents, calls `FileHandle.sync()`,
+`writeTextAtomic` (and thus `writeJsonAtomic`) creates a temporary file with the requested mode,
+next to its destination, writes its contents, calls `FileHandle.sync()`,
 closes it, and only then renames it over the destination. On POSIX it also syncs
 the containing directory after rename. Write, sync, or rename failure before
 publication preserves the previous destination and cleans up the temporary file.
