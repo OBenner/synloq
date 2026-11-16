@@ -182,6 +182,9 @@ export function formatStatusReport(report: StatusReport): string {
         ]
       : []),
     `generated: ${report.generatedAt}`,
+    ...(report.directory?.state === "degraded"
+      ? [`directory degraded since ${report.directory.since}: ${report.directory.reason}`]
+      : []),
     "",
   ];
   const header = ["ROLE", "STATE", "QUEUED", "WAIT"];

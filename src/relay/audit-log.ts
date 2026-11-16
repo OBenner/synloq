@@ -84,3 +84,22 @@ export async function readAuditTail(path: string, limit: number): Promise<Securi
   }
   return events.slice(-limit);
 }
+
+/** Read beyond the display tail: unrelated traffic must not hide directory health. */
+export async function readDirectoryHealth(
+  path: string,
+  project: string,
+): Promise<{ state: "ok" | "degraded"; since?: string; reason?: string }> {
+  const events = await readAuditTail(path, Number.MAX_SAFE_INTEGER);
+  const latest = events
+    .reverse()
+    .find(
+      (event) =>
+        event?.project === project &&
+        event.action === "directory" &&
+        (event.decision === "degraded" || event.decision === "accept"),
+    );
+  return latest?.decision === "degraded"
+    ? { state: "degraded", since: latest.at, reason: `${latest.reasonCode}: ${latest.detail}` }
+    : { state: "ok" };
+}

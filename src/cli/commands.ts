@@ -24,6 +24,7 @@ import {
   FileSecurityAuditLog,
   auditLogPath,
   readAuditTail,
+  readDirectoryHealth,
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
@@ -128,6 +129,16 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   // synloq.yaml takes effect without a relay restart. A manifest that fails
   // to re-parse degrades to the last good snapshot and is audited.
   const directory = await ManifestParticipantDirectory.load(options.projectRoot, {
+    onRecovered: () =>
+      audit.record({
+        at: new Date(clock.now()).toISOString(),
+        project,
+        agentId: "relay",
+        action: "directory",
+        decision: "accept",
+        reasonCode: "RECOVERED",
+        detail: "manifest directory recovered",
+      }),
     onDegraded: (error) =>
       audit.record({
         at: new Date(clock.now()).toISOString(),
@@ -584,9 +595,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   // scenario is reproducible from audit entries alone. Offline-safe read.
   const auditPath = auditLogPath(paths.home, paths.key);
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
-  const lastDirectoryDegradation = [...audit.entries]
-    .reverse()
-    .find((entry) => entry.action === "directory" && entry.decision === "degraded");
+  const directoryHealth = await readDirectoryHealth(auditPath, project);
   const manifestWarnings = await manifestUnknownFields(options.projectRoot);
 
   // Issue #6: repair first so the report reflects the post-repair state.
@@ -728,13 +737,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       sessions,
       clock,
       audit,
-      directory: lastDirectoryDegradation
-        ? {
-            state: "degraded",
-            since: lastDirectoryDegradation.at,
-            reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
-          }
-        : { state: "ok" },
+      directory: directoryHealth,
       ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
@@ -752,13 +755,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       storageError: storageError(error),
       clock,
       audit,
-      directory: lastDirectoryDegradation
-        ? {
-            state: "degraded",
-            since: lastDirectoryDegradation.at,
-            reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
-          }
-        : { state: "ok" },
+      directory: directoryHealth,
       ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
@@ -785,16 +782,8 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
   const clock = options.clock ?? { now: () => Date.now() };
   const auditPath = auditLogPath(paths.home, paths.key);
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
-  const lastDirectoryDegradation = [...audit.entries]
-    .reverse()
-    .find((entry) => entry.action === "directory" && entry.decision === "degraded");
-  const directory = lastDirectoryDegradation
-    ? {
-        state: "degraded" as const,
-        since: lastDirectoryDegradation.at,
-        reason: `${lastDirectoryDegradation.reasonCode}: ${lastDirectoryDegradation.detail}`,
-      }
-    : { state: "ok" as const };
+  const directoryHealth = await readDirectoryHealth(auditPath, project);
+  const directory = directoryHealth;
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {

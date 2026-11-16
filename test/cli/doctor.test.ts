@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +13,8 @@ import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
 import { auditLogPath } from "../../src/relay/audit-log.js";
+import { statusCommand } from "../../src/cli/commands.js";
+import { formatStatusReport } from "../../src/cli/status.js";
 
 const PROJECT = "verdicta";
 const secretMessageBody = "secret-message-body-do-not-print";
@@ -126,6 +128,29 @@ describe("DoctorReport", () => {
       since: "2026-11-10T00:00:00.000Z",
       reason: "INVALID_INPUT: manifest does not match the version 1 schema",
     });
+    await appendFile(
+      auditPath,
+      (JSON.stringify({ action: "send", project: PROJECT }) + "\n").repeat(25),
+    );
+    const degraded = await statusCommand({ projectRoot: fixture.root });
+    expect(formatStatusReport(degraded)).toContain("directory degraded since");
+    expect((await doctorCommand({ projectRoot: fixture.root })).directory?.state).toBe("degraded");
+    await appendFile(
+      auditPath,
+      JSON.stringify({
+        at: "2026-11-10T00:01:00.000Z",
+        project: PROJECT,
+        agentId: "relay",
+        action: "directory",
+        decision: "accept",
+        reasonCode: "RECOVERED",
+        detail: "recovered",
+      }) + "\n",
+    );
+    expect((await doctorCommand({ projectRoot: fixture.root })).directory?.state).toBe("ok");
+    const recovered = await statusCommand({ projectRoot: fixture.root });
+    expect(recovered.directory?.state).toBe("ok");
+    expect(formatStatusReport(recovered)).not.toContain("directory degraded");
   });
 
   it("flags a stale installed plugin copy from the team state source (issue #36)", async () => {

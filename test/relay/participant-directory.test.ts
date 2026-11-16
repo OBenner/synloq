@@ -98,7 +98,8 @@ describe("ManifestParticipantDirectory", () => {
   it("keeps serving the last good snapshot when the manifest breaks mid-run", async () => {
     const root = await projectWith(["cto", "arch"]);
     const onDegraded = vi.fn();
-    const directory = await ManifestParticipantDirectory.load(root, { onDegraded });
+    const onRecovered = vi.fn();
+    const directory = await ManifestParticipantDirectory.load(root, { onDegraded, onRecovered });
     const messages = new SQLiteMessageStore(":memory:");
     const sessions = new SessionStore(":memory:");
     stores.push(messages, sessions);
@@ -126,6 +127,9 @@ describe("ManifestParticipantDirectory", () => {
     await writeManifest(root, roster("verdicta", ["cto", "arch", "qa"]));
     await touch(root);
     expect(await directory.isParticipant("verdicta", "qa")).toBe(true);
+    expect(onRecovered).toHaveBeenCalledTimes(1);
+    await directory.refresh();
+    expect(onRecovered).toHaveBeenCalledTimes(1);
   });
 
   it("shares one re-read between concurrent requests", async () => {
