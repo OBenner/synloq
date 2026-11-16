@@ -34,6 +34,7 @@ const testLimits: ProtectionLimits = {
   maxThreadMessagesPerWindow: 3,
   threadWindowMs: 120_000,
   maxConcurrentLongPollsPerIdentity: 2,
+  maxConcurrentLongPollsGlobal: 32,
 };
 
 function makeStore(): SQLiteMessageStore {
@@ -194,6 +195,28 @@ describe("ProtectionPolicy", () => {
     second();
     second();
     expect(() => protection.acquireLongPoll("verdicta", "arch")).not.toThrow();
+  });
+
+  it("caps concurrent long-poll slots relay-wide across identities", () => {
+    const store = makeStore();
+    const protection = new ProtectionPolicy(
+      store,
+      { ...testLimits, maxConcurrentLongPollsPerIdentity: 2, maxConcurrentLongPollsGlobal: 3 },
+      new Map(),
+      clock,
+    );
+
+    // Three identities, each below the per-identity cap, fill the global one.
+    protection.acquireLongPoll("verdicta", "cto");
+    const archRelease = protection.acquireLongPoll("verdicta", "arch");
+    protection.acquireLongPoll("another-project", "tester");
+    expect(() => protection.acquireLongPoll("verdicta", "tester")).toThrow(
+      expect.objectContaining({ code: "RATE_LIMITED" }),
+    );
+
+    // Releasing any single slot reopens the global window.
+    archRelease();
+    expect(() => protection.acquireLongPoll("verdicta", "tester")).not.toThrow();
   });
 });
 

@@ -11,6 +11,7 @@ export interface ProtectionLimits {
   maxThreadMessagesPerWindow: number;
   threadWindowMs: number;
   maxConcurrentLongPollsPerIdentity: number;
+  maxConcurrentLongPollsGlobal: number;
 }
 
 interface TokenBucket {
@@ -26,6 +27,11 @@ export const DEFAULT_LIMITS: ProtectionLimits = {
   maxThreadMessagesPerWindow: 12,
   threadWindowMs: 2 * 60 * 1000,
   maxConcurrentLongPollsPerIdentity: 2,
+  // Relay-wide bound: the manifest is hot-reloadable (issue #36), so the
+  // per-identity cap alone does not bound the total — 2 × roles grows with
+  // every added role. 32 hanging polls ≈ 32 fds/timers: cheap headroom for a
+  // local team, still fail-closed against fd/memory exhaustion.
+  maxConcurrentLongPollsGlobal: 32,
 };
 
 export class ProtectionPolicy {
@@ -83,6 +89,11 @@ export class ProtectionPolicy {
     const active = this.longPolls.get(key) ?? 0;
     if (active >= this.limits.maxConcurrentLongPollsPerIdentity) {
       throw new SynloqError("RATE_LIMITED", "concurrent long-poll limit reached");
+    }
+    let globalActive = 0;
+    for (const count of this.longPolls.values()) globalActive += count;
+    if (globalActive >= this.limits.maxConcurrentLongPollsGlobal) {
+      throw new SynloqError("RATE_LIMITED", "relay-wide concurrent long-poll limit reached");
     }
     this.longPolls.set(key, active + 1);
     let released = false;
