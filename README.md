@@ -44,6 +44,8 @@ A clone of a project that commits a `synloq.yaml` is an **independent stand**, n
 
 The project key is derived deterministically from the canonical project root path, so two clones at the same absolute path on different machines share a key value. This is harmless because the relay is loopback-only per machine; revisit this assumption if remote relays are ever introduced.
 
+Want a different roster or different hosts per role on your stand without forking the committed manifest? Add a gitignored `synloq.local.yaml` next to `synloq.yaml`. It is merged over the committed manifest at load time, key by key: an overlay entry for an existing role overrides only the fields it names (`title`, `role`, `host`, `placement`), a full `title` + `role` entry adds a new role, and `language`/`retention` override the defaults. The overlay must not redefine `project` — the namespace is shared. A malformed overlay fails loud at load instead of silently falling back.
+
 ## Support status
 
 **Supported (verified live):**
