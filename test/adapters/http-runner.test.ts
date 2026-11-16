@@ -47,6 +47,72 @@ afterEach(async () => {
 });
 
 describe("HTTP adapter runner", () => {
+  it.each(["authorize", "submit"] as const)(
+    "logs sanitized %s failures without changing retry reporting",
+    async (stage) => {
+      const relay = relayWith(message);
+      const submit = vi.fn().mockResolvedValue({ state: "delivered" });
+      const failure = new SynloqError(
+        "INVALID_INPUT",
+        'history unavailable opaque-credential token=hidden password="two words" Bearer bearer-value\nforged-line',
+      );
+      if (stage === "authorize") vi.mocked(relay.authorizeDelivery).mockRejectedValue(failure);
+      else submit.mockRejectedValue(failure);
+      const write = vi.fn();
+      const runner = new HttpAdapterRunner(
+        relay,
+        adapterWith(submit),
+        binding,
+        undefined,
+        undefined,
+        undefined,
+        { output: { write }, secrets: ["opaque-credential", ""] },
+      );
+      await expect(runner.runOnce()).resolves.toBe("failed");
+      expect(write).toHaveBeenCalledTimes(1);
+      const output = write.mock.calls[0]![0] as string;
+      expect(output).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(output).toContain(`delivery ${stage} failed: INVALID_INPUT: history unavailable`);
+      for (const secret of [
+        "opaque-credential",
+        "hidden",
+        "two words",
+        "bearer-value",
+        message.text,
+      ]) {
+        expect(output).not.toContain(secret);
+      }
+      expect(output.trim().split("\n")).toHaveLength(1);
+      expect(relay.deliveryFailure).toHaveBeenCalledWith(message.id, {
+        ...binding,
+        code: "RETRYABLE",
+        clientIdempotency: true,
+      });
+      if (stage === "authorize") expect(submit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps failure reporting working when diagnostics throw", async () => {
+    const relay = relayWith(message);
+    const runner = new HttpAdapterRunner(
+      relay,
+      adapterWith(vi.fn().mockRejectedValue(new Error("offline"))),
+      binding,
+      undefined,
+      undefined,
+      undefined,
+      {
+        output: {
+          write: () => {
+            throw new Error("stderr closed");
+          },
+        },
+      },
+    );
+    await expect(runner.runOnce()).resolves.toBe("failed");
+    expect(relay.deliveryFailure).toHaveBeenCalledTimes(1);
+  });
+
   it("posts only delivered receipts and leaves submitted messages for client evidence", async () => {
     const relay = relayWith(message);
     const delivered = adapterWith(vi.fn().mockResolvedValue({ state: "delivered" }));
