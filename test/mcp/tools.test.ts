@@ -10,6 +10,7 @@ import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { registerSynloqTools } from "../../src/mcp/tools.js";
 import { Dispatcher } from "../../src/relay/dispatcher.js";
+import type { SecurityEvent } from "../../src/relay/audit-log.js";
 import { ProtectionPolicy } from "../../src/relay/protection.js";
 import { RelayService } from "../../src/relay/relay-service.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
@@ -34,6 +35,7 @@ interface Fixture {
   baseUrl: string;
   root: string;
   home: string;
+  audit: SecurityEvent[];
 }
 
 let fixture: Fixture;
@@ -47,7 +49,21 @@ beforeEach(async () => {
   const archToken = await credentials.issue(PROJECT, "arch");
   const messages = new SQLiteMessageStore(":memory:");
   const sessions = new SessionStore(":memory:");
-  const relay = new RelayService(participants, messages, sessions, new ProtectionPolicy(messages));
+  const audit: SecurityEvent[] = [];
+  const auditLog = {
+    record: (event: SecurityEvent) => {
+      audit.push(event);
+    },
+  };
+  const relay = new RelayService(
+    participants,
+    messages,
+    sessions,
+    new ProtectionPolicy(messages),
+    undefined,
+    undefined,
+    auditLog,
+  );
   const dispatcher = new Dispatcher(messages, sessions, new Map());
   const relayServer = new RelayHttpServer({
     project: PROJECT,
@@ -56,6 +72,7 @@ beforeEach(async () => {
     sessions,
     dispatcher,
     messages,
+    audit: auditLog,
   });
   const baseUrl = await relayServer.listen("127.0.0.1", 0);
   const arch = new RelayHttpClient(baseUrl, () => archToken);
@@ -65,6 +82,7 @@ beforeEach(async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([mcpClient.connect(clientTransport), mcpServer.connect(serverTransport)]);
   fixture = {
+    audit,
     mcpClient,
     mcpServer,
     relayServer,
@@ -92,6 +110,44 @@ afterEach(async () => {
 });
 
 describe("Synloq agent-facing MCP tools", () => {
+  it("refuses a foreign recipient ack through SDK and audits once without state change (#96)", async () => {
+    const { message } = await fixture.cto.send({
+      to: "cto",
+      text: "not for arch",
+      expectsReply: false,
+      idempotencyKey: "foreign-ack-96",
+    });
+    const response = await fixture.mcpClient.callTool({
+      name: "synloq_ack",
+      arguments: { messageId: message.id },
+    });
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({ error: { code: "UNAUTHORIZED" } });
+    expect(fixture.messages.getMessage(message.id, PROJECT)).toEqual(message);
+    expect(fixture.audit).toHaveLength(1);
+    expect(fixture.audit[0]).toMatchObject({
+      action: "acknowledge",
+      agentId: "arch",
+      reasonCode: "UNAUTHORIZED",
+    });
+  });
+
+  it("authenticates the configured channel, not the initiating chat (#96 limitation)", async () => {
+    // This SDK caller has no authenticated chat identity. The selected bridge's
+    // valid credential acts as arch, whatever a human calls the invoking chat.
+    const response = await fixture.mcpClient.callTool({
+      name: "synloq_send",
+      arguments: {
+        to: "cto",
+        text: "channel identity",
+        expectsReply: false,
+        idempotencyKey: "channel-identity-96",
+      },
+    });
+    expect(response.isError).toBeFalsy();
+    expect(response.structuredContent).toMatchObject({ message: { from: "arch" } });
+    expect(fixture.audit).toEqual([]);
+  });
   it("publishes four boolean hints for every tool through MCP tools/list", async () => {
     const { tools } = await fixture.mcpClient.listTools();
     const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));

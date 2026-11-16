@@ -19,7 +19,18 @@ export type AuditedAction =
   | "revoke"
   | "replaceSession"
   | "registerSession"
+  | "heartbeat"
+  | "close"
+  | "authorizeDelivery"
+  | "deliveryReceipt"
+  | "deliveryFailure"
+  | "doctor"
   | "longPoll";
+
+/** Denials must never copy request-controlled strings from an error message. */
+export function denialDetail(action: AuditedAction): string {
+  return `${action} request denied`;
+}
 
 export interface SecurityEvent {
   at: string;
