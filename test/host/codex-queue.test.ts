@@ -31,6 +31,20 @@ function fixture(queueResult = accepted, versionResult = result(`codex-cli ${ver
 }
 
 describe("Codex CLI queue contract", () => {
+  it.each(["0.169.0", "0.169.0-alpha.11.1"])(
+    "recognizes the probed %s version with Windows line endings",
+    async (cliVersion) => {
+      const { options } = fixture(
+        result(`Queued message ${queueId} for thread ${threadId}.\r\n`),
+        result(`codex-cli ${cliVersion}\r\n`),
+      );
+      expect(await queueCodexNudge({ ...options, version: cliVersion })).toEqual({
+        kind: "accepted",
+        queueId,
+      });
+    },
+  );
+
   it("accepts only a recognized queue ID and the exact target echo, without resume", async () => {
     const { run, options } = fixture();
     expect(await queueCodexNudge(options)).toEqual({ kind: "accepted", queueId });
@@ -44,6 +58,7 @@ describe("Codex CLI queue contract", () => {
     `Queued message ${queueId} for thread ${otherId}.\n`,
     `Queued message not-a-uuid for thread ${threadId}.\n`,
     `Queued message ${queueId} for thread ${threadId}.\nextra`,
+    `Queued message ${queueId} for thread ${threadId}.\n\n`,
     JSON.stringify({ queueId, threadId }),
     "",
     "secret diagnostic text",
@@ -86,6 +101,14 @@ describe("Codex CLI queue contract", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("rejects a UUID with a trailing newline before invoking the CLI", async () => {
+    const { options, run } = fixture();
+    expect((await queueCodexNudge({ ...options, threadId: `${threadId}\n` })).kind).toBe(
+      "disabled",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not retry a timeout even if stdout contains an apparent acceptance", async () => {
     const { run, options } = fixture({ ...accepted, interrupted: true });
     expect(await queueCodexNudge(options)).toEqual({
@@ -98,6 +121,20 @@ describe("Codex CLI queue contract", () => {
   it("rechecks eligibility after the async version probe", async () => {
     const { run, options } = fixture();
     expect(await queueCodexNudge({ ...options, beforeQueue: () => false })).toEqual({
+      kind: "cancelled",
+      code: "NO_LONGER_ELIGIBLE",
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not enqueue if shutdown interrupts the side-effect-free version probe", async () => {
+    const abort = new AbortController();
+    const { options, run } = fixture();
+    run.mockReset().mockImplementationOnce(async () => {
+      abort.abort();
+      return result(`codex-cli ${version}\n`);
+    });
+    expect(await queueCodexNudge({ ...options, signal: abort.signal })).toEqual({
       kind: "cancelled",
       code: "NO_LONGER_ELIGIBLE",
     });

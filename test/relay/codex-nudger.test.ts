@@ -77,6 +77,68 @@ function fixture() {
 }
 
 describe("durable relay-side Codex nudger", () => {
+  it("keeps the role cooldown when an acknowledged head is replaced immediately", async () => {
+    const f = fixture();
+    const first = f.add();
+    const w = f.watcher();
+    await w.tick();
+    f.messages.acknowledge(first.id, project, agentId);
+    f.add();
+    await w.tick();
+    expect(f.queue).toHaveBeenCalledTimes(1);
+    f.advance();
+    await w.tick();
+    expect(f.queue).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not announce exhaustion when the fifth nudge is actually acknowledged", async () => {
+    const f = fixture();
+    const message = f.add();
+    const w = f.watcher();
+    for (let i = 0; i < 4; i++) {
+      await w.tick();
+      f.advance();
+    }
+    f.queue.mockImplementationOnce(async () => {
+      f.messages.acknowledge(message.id, project, agentId);
+      return { kind: "accepted", queueId };
+    });
+    await w.tick();
+    expect(f.queue).toHaveBeenCalledTimes(5);
+    expect(f.logs.some((line) => line.includes("undelivered after 5 nudges"))).toBe(false);
+  });
+
+  it("does not bypass an uncertain owner when paused mail exposes another head", async () => {
+    const f = fixture();
+    const first = f.add();
+    const w = f.watcher();
+    f.queue.mockResolvedValueOnce({ kind: "uncertain", code: "QUEUE_OUTPUT_MISMATCH" });
+    await w.tick();
+    f.advance();
+    f.add();
+    f.messages.pause(project, "thread", first.threadId, new Date().toISOString());
+    await w.tick();
+    expect(f.queue).toHaveBeenCalledTimes(1);
+    // Only a real ack frees an uncertain head for the next message.
+    f.messages.acknowledge(first.id, project, agentId);
+    await w.tick();
+    expect(f.queue).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not steal a live/crashed reservation even after its message is acked", async () => {
+    const f = fixture();
+    const first = f.add();
+    const ledger = new NudgeLedger(f.ledgerPath);
+    ledger.reserve(project, agentId, first.id, threadId, 1, () => false);
+    ledger.close();
+    f.messages.acknowledge(first.id, project, agentId);
+    f.advance();
+    f.add();
+    await f.watcher().tick();
+    expect(f.queue).not.toHaveBeenCalled();
+    expect(f.logs.join("\n")).toContain("blocked=reserved");
+  });
+
   it("queues identifiers only and never changes delivery state; actual ack ends retries", async () => {
     const f = fixture();
     const message = f.add();
