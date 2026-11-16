@@ -115,7 +115,7 @@ describe("Synloq agent-facing MCP tools", () => {
       to: "cto",
       text: "not for arch",
       expectsReply: false,
-      idempotencyKey: "foreign-ack-96",
+      idempotencyKey: crypto.randomUUID(),
     });
     const response = await fixture.mcpClient.callTool({
       name: "synloq_ack",
