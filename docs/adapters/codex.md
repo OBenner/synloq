@@ -46,6 +46,9 @@ state, or wake an inactive model. `canProvisionSessions` remains false;
 `ConfigProvisioner` registry (`provision`, `inspect`, `remove`).
 Desktop roles do not require claim codes; generic/ZCode roles retain the
 existing claim flow. The role is reactive: activate it to check its inbox.
+An optional [relay-side CLI queue nudger](codex-queue.md) can enqueue an
+identifier-only inbox reminder. It does not guarantee activation, particularly
+for unloaded chats, and never enables the active-delivery adapter.
 A manual-only stand requires an operator-started relay on its configured
 port (or an existing compatible relay supervised by another host).
 

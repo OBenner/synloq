@@ -156,6 +156,15 @@ Live evidence from the runbook `docs/runbooks/2026-11-15-codex-desktop-acceptanc
 
 Honest limits: isolation is configuration-level — the host does not prevent an operator from registering another role's server manually; roles are reactive (no automatic wake-up, no active delivery); the generated launcher arguments embed absolute paths, so re-run `synloq init` after relocating the Synloq home or the runtime. Shared-scope multi-role binding (several role servers in one Desktop configuration) remains UNVERIFIED and unapproved — the verified model is one role per project directory.
 
+Codex queue-nudger addendum (#83): the relay can optionally invoke the tested
+`codex queue` CLI with an explicit role→Desktop UUID map. It recognizes only queue
+acceptance and does not observe turns. See the [configuration/limits](adapters/codex-queue.md)
+and [runbook](runbooks/codex-queue-nudger.md). This is a notification aid, not
+active delivery or guaranteed wake-up; the inbox support matrix and historical
+live evidence above remain unchanged. Defaults remain off. The implementation
+has automated contract/lifecycle coverage; live activation of the integrated
+watcher requires the runbook's operator window.
+
 ## Kimi Code
 
 This section covers the **Kimi Code CLI** (`kimi acp`). It is a different host from **Kimi Work** (the desktop client), which uses `KimiWorkAdapter` with active delivery through the client API and is the primary verified host. The inbox-only `KimiFallbackAdapter` described here applies only to the CLI.

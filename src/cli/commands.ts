@@ -34,6 +34,7 @@ import {
 } from "../relay/audit-log.js";
 import { Dispatcher } from "../relay/dispatcher.js";
 import { startRetentionSweep } from "../relay/retention.js";
+import { startCodexNudger } from "../relay/codex-nudger-lifecycle.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
 import { SQLiteMessageStore, type PauseScope } from "../storage/message-store.js";
@@ -161,6 +162,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
   let stopRetention: (() => void) | undefined;
+  let stopCodexNudger: (() => Promise<void>) | undefined;
   try {
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
@@ -180,6 +182,14 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
     stopRetention = startRetentionSweep(messages, project, retention.days);
+    stopCodexNudger = await startCodexNudger({
+      project,
+      paths,
+      messages,
+      sessions,
+      directory,
+      now: () => clock.now(),
+    });
     const openSessions = sessions;
     const openServer = server;
     let closed = false;
@@ -193,6 +203,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
         closed = true;
         stopRetention?.();
         try {
+          await stopCodexNudger?.();
           await openServer.close();
         } finally {
           try {
@@ -205,6 +216,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     };
   } catch (error) {
     stopRetention?.();
+    await stopCodexNudger?.();
     if (server) await server.close();
     sessions?.close();
     messages.close();

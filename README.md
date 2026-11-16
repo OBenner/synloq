@@ -314,6 +314,14 @@ Opt out per role with `"storedPing": false` in the role's channel config. On
 hosts without push, `synloq status` instead marks queued roles with a
 `no push on host <host> — check synloq_inbox manually` note.
 
+Codex Desktop has a separate, **opt-in CLI queue nudger** owned by the relay:
+[configuration and bounds](docs/adapters/codex-queue.md),
+[acceptance runbook](docs/runbooks/codex-queue-nudger.md). It queues only reminder
+IDs, at most five iterations per message with a durable 30-minute role cooldown.
+`queue accepted` does not prove delivery or turn start; unloaded chats may remain
+inactive. Actual MCP read/ack and thread RESULT remain authoritative. This does
+not enable the Codex active-delivery adapter or replace its inbox-only status.
+
 Diagnostic output: every line that long-lived processes (the MCP stdio bridge
 and the relay supervisor loop) write to stderr is prefixed with an ISO 8601 UTC
 timestamp, so an incident timeline can be reconstructed from logs alone. Deny
