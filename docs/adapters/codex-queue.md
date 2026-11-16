@@ -65,14 +65,46 @@ they cannot opt into this watcher. No SessionStore binding, writer proof,
 generation, claim, protocol v1 or host capability is changed. The local UUID map
 is only a notification destination, not authority to act as the role.
 
+## Delegation model
+
+The nudger implements delegation-by-binding, not instruction delegation. The
+binding from role to its exact visible Desktop chat is established by the
+operator at provisioning and revocable only through explicit operator actions
+(token rotation/revoke, `remove-role`, fail-closed host move); it is revalidated
+before every enqueue rather than inferred from a remembered UUID.
+
+Authority to act never travels in the nudge. The reminder is identifier-only — a
+fixed inbox instruction plus Synloq message/thread IDs — so a delivered nudge can
+make the role *read* at most: the woken role must read its authenticated Synloq
+inbox, where the relay enforces per-recipient authorization. A correctly built
+watcher is therefore close to a scoped observation grant plus an explicit owner
+binding, not to external instruction execution.
+
+Known residual gaps, upstream-tracked in
+[openai/codex#61773](https://github.com/openai/codex/issues/61773):
+
+1. A nudge already sitting in the Desktop queue starts a turn even after the
+   operator revokes the role; it then fails loudly at the authenticated inbox
+   read, but a turn is spent. The systemic fix is host-side delegation
+   revalidation at dispatch time, not client memory.
+2. A queued reminder renders in the Desktop transcript as plain user text with
+   no machine-origin marker; today the fixed content-free reminder text is the
+   mitigation. The proper fix is a host-side origin label on externally-queued
+   turns.
+
+This maps to the four-part wake contract discussed in that issue (event origin,
+thread-owner delegation, single turn-admission decision, distinct observations):
+origin and single-admission are covered by the relay envelope and the durable
+ledger below; observations remain the separate open gap.
+
 ## Durable bounds and diagnostics
 
 - Scan every 15 seconds, with one async sweep in flight. Read only ID/state
   metadata of each role's oldest unacknowledged message. A submitted, paused or
   quarantined head blocks nudging later mail; all pause scopes are respected.
   A delivered message is still eligible until the role actually acknowledges it.
-- Reserve before any CLI call in `data/<projectKey>.codex-nudges.sqlite` using a
-  SQLite transaction (WAL, FULL synchronous). All relay instances using that
+- Reserve before any CLI call in `data/<projectKey>.codex-nudges.sqlite` using
+  a SQLite transaction (WAL, FULL synchronous). All relay instances using that
   project/home share one durable owner per role. The role cooldown is at least
   **30 minutes**, including across head changes, bindings and restarts.
 - Each message gets at most **five reserved iterations** for its lifetime;
