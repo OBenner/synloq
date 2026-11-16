@@ -44,6 +44,9 @@ export function runQueueProcess(
     const interrupt = () => {
       interrupted = true;
       child.kill("SIGKILL");
+      // Descendants must not keep inherited pipes open after the owned child dies.
+      child.stdout.destroy();
+      child.stderr.destroy();
     };
     const timer = setTimeout(interrupt, options.timeoutMs ?? 10_000);
     options.signal?.addEventListener("abort", interrupt, { once: true });
@@ -74,7 +77,7 @@ export interface QueueNudgeOptions {
   threadId: string;
   message: string;
   signal?: AbortSignal | undefined;
-  beforeQueue?: () => boolean;
+  beforeQueue?: () => boolean | Promise<boolean>;
   run?: typeof runQueueProcess;
 }
 
@@ -91,6 +94,7 @@ export async function queueCodexNudge(options: QueueNudgeOptions): Promise<Queue
   try {
     // Check every time: an executable may be upgraded between nudge iterations.
     const version = await run(options.executable, ["--version"], { signal: options.signal });
+    if (options.signal?.aborted) return { kind: "cancelled", code: "NO_LONGER_ELIGIBLE" };
     if (
       version.interrupted ||
       version.exitCode !== 0 ||
@@ -102,7 +106,11 @@ export async function queueCodexNudge(options: QueueNudgeOptions): Promise<Queue
     ) {
       return { kind: "disabled", code: "UNSUPPORTED_CLI_VERSION" };
     }
-    if (options.signal?.aborted || options.beforeQueue?.() === false) {
+    if (
+      options.signal?.aborted ||
+      (await options.beforeQueue?.()) === false ||
+      options.signal?.aborted
+    ) {
       return { kind: "cancelled", code: "NO_LONGER_ELIGIBLE" };
     }
     const queued = await run(

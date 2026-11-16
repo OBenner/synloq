@@ -346,6 +346,40 @@ export class SQLiteMessageStore {
     });
   }
 
+  /** Metadata only. Never bypass the oldest unacked item on pause/submission/quarantine. */
+  nudgeCandidate(project: string, recipient: string): { id: string; threadId: string } | undefined {
+    return this.read(() => {
+      if (this.isPaused(project, "project", "") || this.isPaused(project, "participant", recipient))
+        return undefined;
+      const row = this.database
+        .prepare(
+          `SELECT id, thread_id, delivery_state,
+        EXISTS(SELECT 1 FROM delivery_quarantine WHERE message_id=messages.id) AS quarantined
+        FROM messages WHERE project=? AND recipient=? AND delivery_state!='acked'
+        ORDER BY created_at,id LIMIT 1`,
+        )
+        .get(project, recipient) as
+        { id: string; thread_id: string; delivery_state: string; quarantined: number } | undefined;
+      if (
+        !row ||
+        row.delivery_state === "submitted" ||
+        row.quarantined ||
+        this.isPaused(project, "thread", row.thread_id)
+      )
+        return undefined;
+      return { id: row.id, threadId: row.thread_id };
+    });
+  }
+
+  isMessageAcknowledged(id: string, project: string): boolean {
+    return this.read(
+      () =>
+        this.database
+          .prepare("SELECT 1 FROM messages WHERE id=? AND project=? AND delivery_state='acked'")
+          .get(id, project) !== undefined,
+    );
+  }
+
   nextPending(project: string, recipient: string): Message | undefined {
     return this.read(() => {
       const row = this.database
