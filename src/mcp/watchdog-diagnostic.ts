@@ -34,8 +34,8 @@ export function createWatchdogDiagnostic(options: WatchdogDiagnosticOptions): Wa
       let messages: SQLiteMessageStore | undefined;
       let sessions: SessionStore | undefined;
       try {
-        messages = new SQLiteMessageStore(options.databasePath);
-        sessions = new SessionStore(options.databasePath, options.clock);
+        messages = new SQLiteMessageStore(options.databasePath, undefined, { readOnly: true });
+        sessions = new SessionStore(options.databasePath, options.clock, { readOnly: true });
         const findings = evaluateWatchdog({
           project: options.project,
           participants: options.participants,

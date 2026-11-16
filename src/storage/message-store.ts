@@ -111,8 +111,9 @@ export class SQLiteMessageStore {
   constructor(
     path: string,
     private readonly clock: Clock = { now: () => Date.now() },
+    options?: { readOnly?: boolean },
   ) {
-    this.database = openDatabase(path);
+    this.database = openDatabase(path, options);
   }
 
   private read<T>(operation: () => T): T {

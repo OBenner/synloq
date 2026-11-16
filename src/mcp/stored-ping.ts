@@ -57,8 +57,8 @@ export function createStoredPingWatcher(options: StoredPingWatcherOptions): Stor
       let messages: SQLiteMessageStore | undefined;
       let sessions: SessionStore | undefined;
       try {
-        messages = new SQLiteMessageStore(options.databasePath);
-        sessions = new SessionStore(options.databasePath, options.clock);
+        messages = new SQLiteMessageStore(options.databasePath, undefined, { readOnly: true });
+        sessions = new SessionStore(options.databasePath, options.clock, { readOnly: true });
         // Reuse the watchdog predicate: "stored-without-delivery" is exactly
         // "live idle chat + stale stored backlog, not paused" — the only
         // constellation where a nudge helps. busy-stall stays silent (#45).
