@@ -75,7 +75,7 @@ before every enqueue rather than inferred from a remembered UUID.
 
 Authority to act never travels in the nudge. The reminder is identifier-only — a
 fixed inbox instruction plus Synloq message/thread IDs — so a delivered nudge can
-make the role *read* at most: the woken role must read its authenticated Synloq
+make the role _read_ at most: the woken role must read its authenticated Synloq
 inbox, where the relay enforces per-recipient authorization. A correctly built
 watcher is therefore close to a scoped observation grant plus an explicit owner
 binding, not to external instruction execution.
