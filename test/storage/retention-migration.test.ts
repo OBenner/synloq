@@ -95,3 +95,26 @@ it.each([false, true])(
     inspector.close();
   },
 );
+
+it("rolls back the complete migration on foreign-key validation failure", () => {
+  const file = path();
+  const legacy = new DatabaseSync(file);
+  legacy.exec(`PRAGMA foreign_keys = OFF;
+    CREATE TABLE delivery_quarantine (message_id TEXT PRIMARY KEY REFERENCES messages(id), project TEXT NOT NULL, recipient TEXT NOT NULL, quarantined_at TEXT NOT NULL);
+    INSERT INTO delivery_quarantine VALUES ('missing', 'test', 'staff', '2026-11-01');
+    PRAGMA user_version = 4;`);
+  legacy.close();
+  expect(() => openDatabase(file)).toThrow(expect.objectContaining({ code: "STORAGE_FAILURE" }));
+  const inspector = new DatabaseSync(file);
+  try {
+    expect(inspector.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+    expect(inspector.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all()).toEqual([
+      { name: "delivery_quarantine" },
+    ]);
+    expect(inspector.prepare("SELECT message_id FROM delivery_quarantine").get()?.message_id).toBe(
+      "missing",
+    );
+  } finally {
+    inspector.close();
+  }
+});

@@ -45,6 +45,9 @@ it("purges only old acked messages in the selected project, with bounded batches
   store.setDeliveryState(submitted.id, "test", "submitted");
   const delivered = create("delivered");
   store.setDeliveryState(delivered.id, "test", "delivered");
+  const quarantined = create("quarantined");
+  store.quarantineDelivery(quarantined.id, "test", "staff", quarantined.createdAt);
+  store.acknowledge(quarantined.id, "test", "staff");
   const acked = [create("a"), create("b")];
   for (const message of acked) store.acknowledge(message.id, "test", "staff");
   advance(8 * day);
@@ -54,8 +57,26 @@ it("purges only old acked messages in the selected project, with bounded batches
   expect(store.sweepRetention("test", 7, 1).messagesPurged).toBe(1);
   expect(store.sweepRetention("test", 7, 1).messagesPurged).toBe(1);
   expect(store.sweepRetention("test", 7, 1).messagesPurged).toBe(0);
-  for (const message of [stored, submitted, delivered, recent])
+  for (const message of [stored, submitted, delivered, recent, quarantined])
     expect(store.getMessage(message.id, "test")).toBeDefined();
+});
+
+it("keeps keys scoped to sender and project and rejects a new missing parent without reserving its key", () => {
+  const { store, input, clock } = fixture();
+  const create = (overrides: Partial<SendMessageInput>) =>
+    store.create(
+      { ...input, ...overrides },
+      crypto.randomUUID(),
+      new Date(clock.now()).toISOString(),
+      "thread",
+    );
+  expect(create({}).created).toBe(true);
+  expect(create({ from: "other" }).created).toBe(true);
+  expect(create({ project: "other" }).created).toBe(true);
+  expect(() => create({ idempotencyKey: "new", inReplyTo: "missing" })).toThrow(
+    expect.objectContaining({ code: "NOT_FOUND" }),
+  );
+  expect(create({ idempotencyKey: "new" }).created).toBe(true);
 });
 
 it("retains dedup for the full seven days after body purge and never extends the window on retry", () => {
