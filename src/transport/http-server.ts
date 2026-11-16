@@ -270,7 +270,7 @@ export class RelayHttpServer {
 
     if (method === "GET" && path === "/v1/inbox") {
       const query = inboxQuerySchema.parse(Object.fromEntries(url.searchParams));
-      const release = this.acquireLongPollSlot(identity, query.waitMs);
+      const release = this.acquireLongPollSlot(identity, query.waitMs, "GET /v1/inbox");
       try {
         const result = await this.waitFor(
           this.workEvent(project, identity.agentId),
@@ -392,7 +392,7 @@ export class RelayHttpServer {
 
     if (method === "GET" && path === "/v1/deliveries/next") {
       const query = deliveryQuerySchema.parse(Object.fromEntries(url.searchParams));
-      const release = this.acquireLongPollSlot(identity, query.waitMs);
+      const release = this.acquireLongPollSlot(identity, query.waitMs, "GET /v1/deliveries/next");
       try {
         const result = await this.waitFor(
           this.workEvent(project, identity.agentId),
@@ -573,9 +573,30 @@ export class RelayHttpServer {
   // connection. Long polls acquire before the first read so the cap also
   // covers the initial wait; the release runs in the caller's finally, which
   // includes client aborts (response close resolves the wait).
-  private acquireLongPollSlot(identity: Identity, waitMs: number): (() => void) | undefined {
+  // A rejected acquire is the DoS signal worth seeing (security M2
+  // diagnostics): record it in the audit log, then fail the request closed.
+  private acquireLongPollSlot(
+    identity: Identity,
+    waitMs: number,
+    route: string,
+  ): (() => void) | undefined {
     if (waitMs <= 0 || !this.options.protection) return undefined;
-    return this.options.protection.acquireLongPoll(this.options.project, identity.agentId);
+    try {
+      return this.options.protection.acquireLongPoll(this.options.project, identity.agentId);
+    } catch (error) {
+      if (error instanceof SynloqError && error.code === "RATE_LIMITED") {
+        this.audit.record({
+          at: new Date().toISOString(),
+          project: this.options.project,
+          agentId: identity.agentId,
+          action: "longPoll",
+          decision: "deny",
+          reasonCode: "RATE_LIMITED",
+          detail: `${error.message} on ${route}`,
+        });
+      }
+      throw error;
+    }
   }
 
   private requireOperator(identity: Identity): void {

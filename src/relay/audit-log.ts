@@ -18,7 +18,8 @@ export type AuditedAction =
   | "rotate"
   | "revoke"
   | "replaceSession"
-  | "registerSession";
+  | "registerSession"
+  | "longPoll";
 
 export interface SecurityEvent {
   at: string;

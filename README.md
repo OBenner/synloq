@@ -333,7 +333,9 @@ and is not recorded). Session registrations are recorded too — accepted and
 refused (duplicate or protocol-mismatched) — with the session id, generation,
 and the client-reported `surface`, which is a hint, not proof of the client
 binary, so "who bound this role, when, and from where" is answerable from the
-log; heartbeat lease renewals are not recorded.
+log; heartbeat lease renewals are not recorded. Long-poll rejections from the
+concurrency caps (per-identity and relay-wide) are recorded with the route
+that hit the cap, so a connection-exhaustion attempt is visible in the log.
 Neither stream ever contains tokens or
 message bodies.
 

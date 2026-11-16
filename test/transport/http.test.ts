@@ -9,6 +9,7 @@ import { PROTOCOL_VERSION, type SessionBinding } from "../../src/domain/session.
 import { Dispatcher } from "../../src/relay/dispatcher.js";
 import { ProtectionPolicy } from "../../src/relay/protection.js";
 import { RelayService } from "../../src/relay/relay-service.js";
+import type { SecurityEvent } from "../../src/relay/audit-log.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SessionStore } from "../../src/storage/session-store.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
@@ -38,6 +39,7 @@ interface Fixture {
   operatorToken: string;
   root: string;
   home: string;
+  audit: SecurityEvent[];
 }
 
 let fixture: Fixture;
@@ -56,6 +58,7 @@ beforeEach(async () => {
   const protection = new ProtectionPolicy(messages);
   const relay = new RelayService(participants, messages, sessions, protection);
   const dispatcher = new Dispatcher(messages, sessions, new Map());
+  const audit: SecurityEvent[] = [];
   const server = new RelayHttpServer({
     project: PROJECT,
     relay,
@@ -64,6 +67,7 @@ beforeEach(async () => {
     dispatcher,
     messages,
     protection,
+    audit: { record: (event) => audit.push(event) },
   });
   const baseUrl = await server.listen("127.0.0.1", 0);
   fixture = {
@@ -79,6 +83,7 @@ beforeEach(async () => {
     operatorToken,
     root,
     home,
+    audit,
   };
 });
 
@@ -730,6 +735,47 @@ describe("RelayHttpServer long-poll concurrency cap (security M2)", () => {
     await wakeArch("m2-wake-inbox-1");
     await Promise.all([first, second]);
     await expect(fixture.arch.inbox({ limit: 1, waitMs: 5 })).resolves.toBeDefined();
+  });
+
+  it("audits a rejected inbox long poll with the route that hit the cap", async () => {
+    const first = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    const second = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });
+    await settle();
+
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 25_000 })).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+    });
+
+    const rejections = fixture.audit.filter((event) => event.action === "longPoll");
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]).toMatchObject({
+      project: PROJECT,
+      agentId: "arch",
+      decision: "deny",
+      reasonCode: "RATE_LIMITED",
+    });
+    expect(rejections[0]?.detail).toContain("GET /v1/inbox");
+
+    await wakeArch("m2-wake-inbox-audit");
+    await Promise.all([first, second]);
+  });
+
+  it("audits delivery-route rejections and stays silent for instant polls", async () => {
+    await registerArch();
+    const first = nextArch(500);
+    const second = nextArch(500);
+    await settle();
+
+    await expect(nextArch(500)).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    const rejections = fixture.audit.filter((event) => event.action === "longPoll");
+    expect(rejections).toHaveLength(1);
+    expect(rejections[0]?.detail).toContain("GET /v1/deliveries/next");
+
+    // Instant polls never touch the cap or the audit log.
+    await expect(fixture.arch.inbox({ limit: 1, waitMs: 0 })).resolves.toBeDefined();
+    expect(fixture.audit.filter((event) => event.action === "longPoll")).toHaveLength(1);
+
+    await Promise.all([first, second]);
   });
 
   it("releases the slot when a long-poll connection aborts", async () => {
