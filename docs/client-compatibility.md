@@ -99,6 +99,15 @@ Live evidence from the runbook `docs/runbooks/2026-11-15-claude-desktop-live-dod
 - Active delivery remains disabled: Desktop exposes no development-channel activation surface (no equivalent of the CLI channel flags), so the activation gate conditions above cannot be met on this host.
 - Hooks (`SessionStart`, `Stop`) execute; their link to relay busy/idle state is UNVERIFIED.
 
+Next-interaction reminder window W6 (2026-11-16, same stand, main `34d8016`): **CONFIRMED** —
+a `UserPromptSubmit` command hook emitting `hookSpecificOutput.additionalContext` is visible
+to the model. On a content-free user turn after an idle window (no autonomous wake), the
+model autonomously read `synloq_inbox` and acted on pending mail including probe marker
+`ad1f73f9-…`; all messages acked after the #86 writer-proof fix. Autonomous delivery
+remains UNSUPPORTED: the wake contract is «next interaction», not «incoming message».
+Acceptance record (stand-local): `evidence/2026-11-16-w6-next-interaction-acceptance.md`.
+Caveats: reminder-vs-settings attribution and hook counter nuance recorded there.
+
 GUI follow-up window executed 2026-11-15 on the same stand — all three remaining items VERIFIED:
 
 - Server pickup: each Desktop Code-tab chat exposes its own `synloq_<role>_*` tool set (evidence listings `e3-tools-cto.txt` / `e3-tools-arch.txt` on the stand; screenshots held by the operator).
