@@ -46,6 +46,7 @@ import { startClaudeNudger, type ClaudeNudgerHandle } from "../relay/claude-nudg
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
 import { acquireServeLock, type ServeLock } from "../relay/serve-lock.js";
+import { formatDiagnostic } from "../diagnostics.js";
 import { SQLiteMessageStore, type PauseScope } from "../storage/message-store.js";
 import { SessionStore } from "../storage/session-store.js";
 import { NotesStore } from "../storage/notes-store.js";
@@ -86,6 +87,8 @@ export interface ServeOptions {
   clock?: Clock;
   /** Test hook: evaluate a runtime other than the running process (#111). */
   nodeVersion?: string;
+  /** Local relay ownership diagnostics (never MCP stdout). */
+  onDiagnostic?: (message: string) => void;
 }
 
 export interface ServeHandle {
@@ -167,7 +170,10 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   // Issue #110: exactly one serve per project database — the advisory lock is
   // taken before any storage write. A second serve fails ALREADY_RUNNING with
   // the owning PID; ensureRelay treats that like a busy port and re-probes.
-  const serveLock = await acquireServeLock(paths.database);
+  const serveLock = await acquireServeLock(paths.database, {
+    onDiagnostic:
+      options.onDiagnostic ?? ((message) => process.stderr.write(`${formatDiagnostic(message)}\n`)),
+  });
   const messages = new SQLiteMessageStore(paths.database, clock);
   const audit = new FileSecurityAuditLog(auditLogPath(paths.home, paths.key));
   // The participant registry is hot (issue #36): adding a role to

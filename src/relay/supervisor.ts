@@ -5,6 +5,7 @@ import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
 import { RelayHttpClient, type TokenProvider } from "../transport/http-client.js";
 import { parseLoopbackHttpUrl } from "../transport/loopback.js";
+import { hasErrorCode } from "../transport/connection-error.js";
 
 export type RelayProbe = (
   relayUrl: string,
@@ -23,6 +24,7 @@ export interface EnsureRelayOptions {
   probeTimeoutMs?: number;
   serve?: typeof serveCommand;
   probe?: RelayProbe;
+  onDiagnostic?: (message: string) => void;
 }
 
 export interface RelaySupervisorHandle {
@@ -30,16 +32,6 @@ export interface RelaySupervisorHandle {
   client: RelayHttpClient;
   owned: boolean;
   close(): Promise<void>;
-}
-
-function hasErrorCode(error: unknown, code: string, depth = 0): boolean {
-  if (depth > 4 || typeof error !== "object" || error === null) return false;
-  if ("code" in error && error.code === code) return true;
-  if ("cause" in error && hasErrorCode(error.cause, code, depth + 1)) return true;
-  if ("errors" in error && Array.isArray(error.errors)) {
-    return error.errors.some((nested) => hasErrorCode(nested, code, depth + 1));
-  }
-  return false;
 }
 
 function unavailable(): SynloqError {
@@ -94,6 +86,7 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
       ...(options.synloqHome ? { synloqHome: options.synloqHome } : {}),
       host: target.host,
       port: target.port,
+      ...(options.onDiagnostic ? { onDiagnostic: options.onDiagnostic } : {}),
     });
   } catch (error) {
     if (hasErrorCode(error, "EADDRINUSE")) {
@@ -114,6 +107,7 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
           return await compatible();
         } catch (probeError) {
           if (!hasErrorCode(probeError, "ECONNREFUSED") || Date.now() >= deadline) {
+            if (hasErrorCode(probeError, "ECONNREFUSED")) throw error;
             if (probeError instanceof SynloqError) throw probeError;
             throw unavailable();
           }
@@ -121,6 +115,7 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
         }
       }
     }
+    if (error instanceof SynloqError) throw error;
     throw unavailable();
   }
 

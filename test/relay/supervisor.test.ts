@@ -1,5 +1,8 @@
 import { createServer, type Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { projectPaths } from "../../src/config/paths.js";
+import { SynloqError } from "../../src/domain/errors.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -64,6 +67,78 @@ async function unusedUrl(): Promise<string> {
 }
 
 describe("ensureRelay", () => {
+  it("recovers a dead PID lock and exposes recovery diagnostics before serving real auth-v2 requests", async () => {
+    const { root, home, token } = await fixture();
+    const paths = await projectPaths(root, home);
+    const departed = spawnSync(process.execPath, ["-e", ""], { windowsHide: true });
+    expect(departed.status).toBe(0);
+    expect(departed.pid).toBeGreaterThan(0);
+    await mkdir(join(home, "data"), { recursive: true });
+    await writeFile(`${paths.database}.serve.lock`, JSON.stringify({ pid: departed.pid }));
+    const diagnostics = vi.fn();
+    const relay = await ensureRelay({
+      projectRoot: root,
+      synloqHome: home,
+      project: "example",
+      relayUrl: await unusedUrl(),
+      token,
+      onDiagnostic: diagnostics,
+    });
+    try {
+      expect(relay.owned).toBe(true);
+      expect(diagnostics).toHaveBeenCalledWith(`recovered stale serve lock (pid ${departed.pid})`);
+      await expect(relay.client.listParticipants()).resolves.toHaveProperty("participants");
+    } finally {
+      await relay.close();
+    }
+  });
+
+  it("retains owning-lock diagnostics after bounded refusal re-probes", async () => {
+    const { root, home, token } = await fixture();
+    const ownerError = new SynloqError("ALREADY_RUNNING", "lock owner PID 123 is alive");
+    let tick = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => tick);
+    try {
+      await expect(
+        ensureRelay({
+          projectRoot: root,
+          synloqHome: home,
+          project: "example",
+          relayUrl: "http://127.0.0.1:4100",
+          token,
+          serve: async () => {
+            throw ownerError;
+          },
+          probe: async () => {
+            tick += 6000;
+            throw Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+          },
+        }),
+      ).rejects.toBe(ownerError);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("preserves typed startup failures instead of disguising them as fetch failed", async () => {
+    const { root, home, token } = await fixture();
+    const error = new SynloqError("PERMISSION_DENIED", "serve lock directory is not writable");
+    await expect(
+      ensureRelay({
+        projectRoot: root,
+        synloqHome: home,
+        project: "example",
+        relayUrl: "http://127.0.0.1:4100",
+        token,
+        serve: async () => {
+          throw error;
+        },
+        probe: async () => {
+          throw Object.assign(new Error("refused"), { code: "ECONNREFUSED" });
+        },
+      }),
+    ).rejects.toBe(error);
+  });
   it("reuses a compatible authenticated relay without owning or closing it", async () => {
     const { root, home, token, participants } = await fixture();
     const existing = await serveCommand({ projectRoot: root, synloqHome: home, port: 0 });
