@@ -9,6 +9,7 @@ import { formatDiagnostic } from "../diagnostics.js";
 import { SynloqError } from "../domain/errors.js";
 import { resolveOpenCodeServiceAuth } from "../host/opencode/discovery.js";
 import { createStoredPingWatcher } from "../mcp/stored-ping.js";
+import { adapterTitle, hookTitle, setProcessTitle } from "./process-title.js";
 import { RelayHttpClient } from "../transport/http-client.js";
 import { runClaudeHook, type ClaudeHookIo } from "./claude-hook.js";
 import { runCodexHook, type CodexHookIo } from "./codex-hook.js";
@@ -42,6 +43,7 @@ export async function startStandaloneAdapter(
 ): Promise<StandaloneAdapterHandle> {
   const loaded = await loadAdapterConfiguration(configPath);
   const { configuration } = loaded;
+  setProcessTitle(adapterTitle(configuration.agentId));
   const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token, configuration);
 
   if (configuration.kind === "opencode") {
@@ -198,6 +200,7 @@ export async function runStandaloneClaudeHook(
 ): Promise<void> {
   const loaded = await loadAdapterConfiguration(configPath);
   const { configuration } = loaded;
+  setProcessTitle(hookTitle("claude"));
   if (configuration.kind !== "claude") {
     throw new SynloqError("INVALID_INPUT", "Claude hooks require a Claude adapter configuration");
   }
@@ -219,6 +222,7 @@ export async function runStandaloneCodexHook(
 ): Promise<void> {
   const loaded = await loadAdapterConfiguration(configPath);
   const { configuration } = loaded;
+  setProcessTitle(hookTitle("codex"));
   if (configuration.kind !== "codex") {
     throw new SynloqError("INVALID_INPUT", "Codex hooks require a Codex adapter configuration");
   }
