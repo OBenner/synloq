@@ -1,0 +1,94 @@
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { PROTOCOL_VERSION } from "../domain/session.js";
+
+export interface VersionsBlock {
+  synloq: string;
+  node: string;
+  protocol: number;
+  schema?: number;
+  /** Host/CLI versions where detectable; absent = undetected (fail soft). */
+  hosts: { kimiWork?: string; opencode?: string; codex?: string };
+}
+
+/**
+ * Version telemetry (#115): one copy-pasteable block so external bug reports
+ * are reproducible. Every probe fails soft — a missing CLI or an unreadable
+ * file yields "unknown"/absent, never an error. No network calls: host
+ * versions come from local `--version` invocations with bounded timeouts.
+ */
+export async function collectVersions(options: {
+  databasePath: string;
+  probe?: HostVersionProbe;
+}): Promise<VersionsBlock> {
+  let hosts: VersionsBlock["hosts"] = {};
+  try {
+    hosts = await (options.probe ?? defaultHostProbe)();
+  } catch {
+    // Fail soft (#115): undetectable host versions must never break the report.
+  }
+  return {
+    synloq: await synloqVersion(),
+    node: process.version,
+    protocol: PROTOCOL_VERSION,
+    ...schemaVersion(options.databasePath),
+    hosts,
+  };
+}
+
+async function synloqVersion(): Promise<string> {
+  try {
+    // dist/diagnostics/versions.js -> ../../../package.json at the package root.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = await readFile(join(here, "..", "..", "..", "package.json"), "utf8");
+    const version = (JSON.parse(raw) as { version?: unknown }).version;
+    return typeof version === "string" ? version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function schemaVersion(databasePath: string): { schema?: number } {
+  try {
+    const database = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      const row = database.prepare("PRAGMA user_version").get() as
+        { user_version: number } | undefined;
+      return { schema: row?.user_version ?? 0 };
+    } finally {
+      database.close();
+    }
+  } catch {
+    return {};
+  }
+}
+
+export type HostVersionProbe = () => Promise<VersionsBlock["hosts"]>;
+
+function runVersion(command: string, args: string[]): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), 3_000);
+    execFile(command, args, { timeout: 3_000, windowsHide: true }, (error, stdout) => {
+      clearTimeout(timer);
+      if (error) return resolve(undefined);
+      const line = stdout.trim().split(/\r?\n/)[0]?.trim();
+      resolve(line === undefined || line === "" ? undefined : line.slice(0, 120));
+    });
+  });
+}
+
+const defaultHostProbe: HostVersionProbe = async () => {
+  const [kimiWork, opencode, codex] = await Promise.all([
+    runVersion("kimi-work", ["--version"]),
+    runVersion("opencode", ["--version"]),
+    runVersion("codex", ["--version"]),
+  ]);
+  return {
+    ...(kimiWork ? { kimiWork } : {}),
+    ...(opencode ? { opencode } : {}),
+    ...(codex ? { codex } : {}),
+  };
+};

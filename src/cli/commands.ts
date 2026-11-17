@@ -54,6 +54,7 @@ import {
   type SynloqHomeProbe,
   type PlacementHealth,
 } from "./doctor.js";
+import { collectVersions, type HostVersionProbe } from "../diagnostics/versions.js";
 import {
   inspectChannelConfig,
   repairTeamConfigs,
@@ -94,6 +95,11 @@ export interface DoctorCommandOptions {
   // the flag doctor stays offline-safe; the host client is injectable for
   // tests, exactly like remove-role.
   checkHost?: boolean;
+  // Issue #115: injectable host-version probe so tests stay hermetic and
+  // offline. Defaults to local --version invocations with bounded timeouts.
+  hostVersionProbe?: HostVersionProbe;
+  // Issue #115: skip the versions block entirely (embedding scenarios).
+  skipVersions?: boolean;
   openCodeHost?: OpenCodeSessionHost;
 }
 
@@ -761,10 +767,19 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
     // takes a write lock on the live relay database (issue #68).
     messages = new SQLiteMessageStore(paths.database, undefined, { readOnly: true });
     sessions = new SessionStore(paths.database, clock, { readOnly: true });
+    // Issue #115: one copy-pasteable version block for reproducible reports.
+    const versions =
+      options.skipVersions === true
+        ? undefined
+        : await collectVersions({
+            databasePath: paths.database,
+            ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+          });
     return createDoctorReport({
       project,
       participants,
       databasePath: paths.database,
+      ...(versions ? { versions } : {}),
       home,
       credentials: credentialsHealth,
       configs: configsHealth,
@@ -781,10 +796,19 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       ...(repair ? { repair } : {}),
     });
   } catch (error) {
+    // Issue #115: one copy-pasteable version block for reproducible reports.
+    const versions =
+      options.skipVersions === true
+        ? undefined
+        : await collectVersions({
+            databasePath: paths.database,
+            ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+          });
     return createDoctorReport({
       project,
       participants,
       databasePath: paths.database,
+      ...(versions ? { versions } : {}),
       home,
       credentials: credentialsHealth,
       configs: configsHealth,
@@ -823,6 +847,15 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
   const audit = { path: auditPath, entries: await readAuditTail(auditPath, 20) };
   const directoryHealth = await readDirectoryHealth(auditPath, project);
   const directory = directoryHealth;
+  // Issue #115: compute outside the try so the degraded (storage-error) report
+  // carries versions too.
+  const statusVersions =
+    options.skipVersions === true
+      ? undefined
+      : await collectVersions({
+          databasePath: paths.database,
+          ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+        });
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;
   try {
@@ -833,6 +866,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       project,
       participants,
       databasePath: paths.database,
+      ...(statusVersions ? { versions: statusVersions } : {}),
       home,
       messages,
       sessions,
@@ -849,6 +883,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       project,
       participants,
       databasePath: paths.database,
+      ...(statusVersions ? { versions: statusVersions } : {}),
       home,
       storageError: storageError(error),
       clock,
