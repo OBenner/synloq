@@ -111,6 +111,14 @@ function transcript() {
 }
 
 describe("Claude cooperative ownership", () => {
+  it("releases idempotently when the operator has already removed the lock", async () => {
+    const path = join(await temp(), `${session}.jsonl`);
+    await writeFile(path, "persisted\n");
+    const owner = await acquireClaudeOwnership(path, session, "nudger");
+    await rm(owner.path);
+    await expect(owner.release()).resolves.toBeUndefined();
+    await expect(owner.release()).resolves.toBeUndefined();
+  });
   it("excludes two nudgers and a cooperating manual launcher until release", async () => {
     const path = join(await temp(), `${session}.jsonl`);
     await writeFile(path, "persisted\n");
@@ -671,6 +679,19 @@ describe("Claude attempt ledger", () => {
 });
 
 describe("Claude durable proof", () => {
+  it("rejects a fork whose final assistant points to the pre-nudge ancestor", () => {
+    expect(
+      verifyClaudeTurn({
+        delta: transcript().replace('"parentUuid":"4"', '"parentUuid":"prior"'),
+        sessionId: session,
+        agentId: "arch",
+        targetId: target,
+        marker,
+        previousUuid: "prior",
+        acknowledged: () => true,
+      }),
+    ).toBe(false);
+  });
   const check = (delta: string, acked = true) =>
     verifyClaudeTurn({
       delta,

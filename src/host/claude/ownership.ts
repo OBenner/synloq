@@ -26,7 +26,11 @@ export async function acquireClaudeOwnership(
     transcript: canonical,
     async release() {
       if (released) return;
-      await unlink(path);
+      try {
+        await unlink(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
       released = true;
     },
   };
