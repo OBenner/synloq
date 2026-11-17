@@ -22,7 +22,7 @@ The stand has:
 - `project/synloq.yaml`: only `cto` and `arch`.
 - `synloq-home/`: isolated credentials, database, runtime and audit files.
 - `role-cto/` and `role-arch/`: one role-specific `.mcp.json` each, an adapter
-  config with a credential **path**, and `.claude/settings.json`.
+  config with a credential **path**, and explicit `live-settings.json`.
 - `evidence/`: local-only tool outputs, observed session IDs, hook metadata,
   read-only SQLite snapshots, timestamps and operator observations.
 
@@ -45,12 +45,15 @@ team channel; the operator's two stand sessions own their stand MCP tools.
    or the client's own session display. Do not invent IDs. The stand helper's
    capture hook stores only time, role, session ID and event; it does not register
    a role or submit any model prompt.
-4. Close the capture session; bind its observed ID to that role's adapter config.
+4. Complete a harmless visible exchange before closing the capture session:
+   SessionStart alone may not persist a resumable conversation. Close it and
+   bind its observed ID to that role's adapter config.
    Configure exactly one `synloq-<role>` server in its `.mcp.json`, invoking
    `node <checkout>/dist/cli/main.js adapter --config <role>/adapter.json`.
    The MCP child and hooks must inherit the isolated `SYNLOQ_HOME`.
 5. Resume the **same** session with `--resume <observed-id> --mcp-config .mcp.json
---strict-mcp-config`. Review the host's ordinary trust prompts. Inspect `/mcp`
+--strict-mcp-config --settings ./live-settings.json`. This avoids hot-loading
+   live hooks into capture-only sessions. Review ordinary trust prompts. Inspect `/mcp`
    and `/hooks`; record what is actually loaded. A config file alone proves
    neither pickup nor host-enforced isolation.
 6. Verify six Synloq tools: list/send/reply/inbox/wait/ack; no registration or
@@ -62,6 +65,13 @@ Lifecycle hooks invoke the public `claude-hook` command for `SessionStart`,
 The wrapper must preserve stdin and empty stdout, record event metadata plus
 exit status, and take a read-only relay snapshot. Never save the hook prompt or
 last assistant message. Hook stdout must not inject context or approval.
+
+Record provider prerequisites without secrets. On machines with approved TLS
+inspection, use `NODE_EXTRA_CA_CERTS` with the locally verified public CA; never
+disable TLS verification or recommend a machine's CA universally. Verify the
+provider key supports inference (a management key may not). Secret changes need
+direct operator approval. Record host versions per phase if the host changes
+mid-window; do not imply a single-version run.
 
 An initial SessionStart can run before the MCP child registers. Record any
 failure as observed; do not count an unobserved startup transition as PASS.

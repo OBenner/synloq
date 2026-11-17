@@ -4,7 +4,7 @@ This is an operator-executed acceptance procedure, not an automated test. Record
 
 ## Current execution status
 
-**PARTIAL — OpenCode live verification completed 2026-11-13 (see the per-row evidence below); Claude Code, Codex, and Kimi live verification remain UNVERIFIED.** On 2026-11-10 in the implementation environment, `claude`, `opencode`, and `kimi` were not found on PATH. On 2026-11-11, `codex` was also not found. Node was `v24.21.0` and pnpm was `12.18.0`. Codex active delivery is unsupported and disabled. Kimi remains `inbox-only` and its live ACP status remains UNVERIFIED. The OpenCode rows were executed on the adopted stand (relay on loopback, roles `cto` + `arch`, OpenCode desktop 2.2.7) per `docs/runbooks/2026-11-13-opencode-adapter-matrix.md` (run r3 + targeted busy-row rerun r3b); evidence is kept in the external evidence directory, message IDs are recorded per row.
+**PARTIAL — OpenCode live verification completed 2026-11-13 (see the per-row evidence below); the original full-client Claude Code, Codex, and Kimi rows remain UNVERIFIED. The separately scoped Claude Code inbox/lifecycle results from 2026-11-17 are recorded in section 10a (including startup FAIL).** On 2026-11-10 in the implementation environment, `claude`, `opencode`, and `kimi` were not found on PATH. On 2026-11-11, `codex` was also not found. Node was `v24.21.0` and pnpm was `12.18.0`. Codex active delivery is unsupported and disabled. Kimi remains `inbox-only` and its live ACP status remains UNVERIFIED. The OpenCode rows were executed on the adopted stand (relay on loopback, roles `cto` + `arch`, OpenCode desktop 2.2.7) per `docs/runbooks/2026-11-13-opencode-adapter-matrix.md` (run r3 + targeted busy-row rerun r3b); evidence is kept in the external evidence directory, message IDs are recorded per row.
 
 Use the evidence template at the end for a later run. A client missing from any required step leaves that client's status UNVERIFIED.
 
@@ -523,12 +523,15 @@ reads, reconnect and relay restart. Sections 4–5 channel activation and the
 notification-admission expectations in section 8 are **not executed** in this
 window. Neither activation field is set; autonomous wake is out of scope.
 
-Record each capability separately in the
-[acceptance index](../../docs/testing/2026-11-17-claude-code-live.md). In particular,
-idle plus a later operator-triggered inbox read is next-interaction evidence,
-not channel admission or autonomous delivery. Until actual observations complete
-a row, its verdict remains UNVERIFIED; preflight/build and helper scripts are
-not live-client evidence.
+The [acceptance index](../../docs/testing/2026-11-17-claude-code-live.md) now records
+observed PASS for the scoped inbox cycle, dedup/provenance, busy/idle,
+next-interaction reads, reconnect and relay restart. The initial startup race
+remains FAIL; permission-prompt behavior remains UNVERIFIED and final shutdown
+is pending. Final snapshot: four messages, all acked, no quarantine. Claude
+version drifted from 2.1.81 during setup to 2.1.326 during the recorded tool
+probes. This scoped result does not upgrade the older full-client or activation
+rows above. Idle plus an operator-triggered inbox read is next-interaction
+evidence, not channel admission or autonomous delivery.
 
 ## 11. Evidence record and verdict
 
