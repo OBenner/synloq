@@ -868,6 +868,7 @@ export class RelayHttpServer {
         // Authenticated as the role, but not as its active writer session.
         return { status: 403, error };
       case "UNKNOWN_RECIPIENT":
+      case "UNKNOWN_SENDER":
       case "NOT_FOUND":
         return { status: 404, error };
       case "IDEMPOTENCY_CONFLICT":
