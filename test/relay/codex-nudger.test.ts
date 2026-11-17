@@ -6,6 +6,7 @@ import { CodexQueueNudger } from "../../src/relay/codex-nudger.js";
 import { NudgeLedger, NUDGE_COOLDOWN_MS } from "../../src/storage/nudge-ledger.js";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import type { QueueNudgeOptions, QueueResult } from "../../src/host/codex/queue.js";
+import { DatabaseSync } from "node:sqlite";
 
 const project = "fixture";
 const agentId = "staff1";
@@ -139,7 +140,7 @@ describe("durable relay-side Codex nudger", () => {
     expect(f.logs.join("\n")).toContain("blocked=reserved");
   });
 
-  it("queues identifiers only and never changes delivery state; actual ack ends retries", async () => {
+  it("queues identifiers with read preview without changing delivery state; actual ack ends retries", async () => {
     const f = fixture();
     const message = f.add();
     const w = f.watcher();
@@ -149,7 +150,8 @@ describe("durable relay-side Codex nudger", () => {
     expect(reminder).toContain(message.id);
     expect(reminder).toContain(message.threadId);
     expect(reminder).toContain("synloq_inbox");
-    expect(reminder).not.toContain(message.text);
+    expect(reminder).toContain(message.text);
+    expect(reminder).toContain("From dev.");
     expect(f.messages.getMessage(message.id, project)?.deliveryState).toBe("stored");
     f.messages.acknowledge(message.id, project, agentId);
     f.advance();
@@ -157,6 +159,36 @@ describe("durable relay-side Codex nudger", () => {
     expect(f.queue).toHaveBeenCalledTimes(1);
     expect(f.logs.join("\n")).toContain("nudge does not guarantee turn start");
     expect(f.logs.join("\n")).not.toContain(message.text);
+  });
+
+  it("keeps preview out of the ledger and re-reads source content after restart", async () => {
+    const f = fixture();
+    const message = f.add(agentId, "original excerpt");
+    const first = f.watcher();
+    await first.tick();
+    await first.stop();
+    const ledger = new DatabaseSync(f.ledgerPath);
+    try {
+      const attempts = ledger.prepare("SELECT * FROM nudge_attempts").all();
+      const owners = ledger.prepare("SELECT * FROM nudge_owners").all();
+      expect(attempts).toHaveLength(1);
+      expect(JSON.stringify([attempts, owners])).not.toContain(message.text);
+      expect(Object.keys(attempts[0]!)).not.toContain("text");
+      expect(Object.keys(attempts[0]!)).not.toContain("preview");
+    } finally {
+      ledger.close();
+    }
+    // The persistent attempt exists, but cannot reconstruct a vanished payload.
+    const source = vi.spyOn(f.messages, "getMessage").mockReturnValue(undefined);
+    f.advance();
+    const restarted = f.watcher();
+    await restarted.tick();
+    expect(f.queue).toHaveBeenCalledTimes(1);
+    source.mockReturnValue({ ...message, text: "current source excerpt" });
+    await restarted.tick();
+    expect(f.queue).toHaveBeenCalledTimes(2);
+    expect(f.queue.mock.calls[1]![0].message).toContain("current source excerpt");
+    expect(f.queue.mock.calls[1]![0].message).not.toContain("original excerpt");
   });
 
   it("enforces a durable role cooldown across restarts and head changes, then caps at five", async () => {

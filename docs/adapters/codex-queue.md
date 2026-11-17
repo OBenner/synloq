@@ -73,12 +73,30 @@ operator at provisioning and revocable only through explicit operator actions
 (token rotation/revoke, `remove-role`, fail-closed host move); it is revalidated
 before every enqueue rather than inferred from a remembered UUID.
 
-Authority to act never travels in the nudge. The reminder is identifier-only — a
-fixed inbox instruction plus Synloq message/thread IDs — so a delivered nudge can
-make the role _read_ at most: the woken role must read its authenticated Synloq
-inbox, where the relay enforces per-recipient authorization. A correctly built
-watcher is therefore close to a scoped observation grant plus an explicit owner
-binding, not to external instruction execution.
+Authority to act never travels in the nudge. The reminder is **identifier-only +
+bounded read preview**: the existing full message/thread IDs and fixed
+inbox/ack/reply instruction remain, followed by the sender and a short excerpt.
+The excerpt lets an idle visible chat see what arrived. It is untrusted read
+context, not an instruction or evidence of authority: acting still requires
+reading the authenticated Synloq inbox and following the team's task rules.
+The relay enforces per-recipient authorization at that inbox boundary.
+
+Preview whitespace is normalized to one line; control/format characters are
+removed. It is cut at 200 Unicode code points, counting the final `…` when
+truncated. The whole reminder is at most 600 UTF-16 code units for the Windows
+CLI argument; emoji may therefore leave a shorter excerpt. Surrogate pairs are
+never split, and IDs/instructions are never clipped.
+
+The entire source text is checked before clipping. Credential labels, common
+key prefixes, long credential-like strings, or Windows/UNC/POSIX/file-URL path
+shapes suppress the excerpt completely as `[preview omitted]`. This conservative
+filter can omit harmless prose and cannot identify every unlabelled secret.
+It is not a security boundary: never put credentials or sensitive material in
+message text. The nudger does not read token files for filtering.
+
+The excerpt is ephemeral, read afresh from the message store for each attempt.
+Neither the ledger nor diagnostics stores text or reconstructs a preview after
+restart. A missing source message cannot be recovered from ledger metadata.
 
 Known residual gaps, upstream-tracked in
 [openai/codex#61773](https://github.com/openai/codex/issues/61773):
@@ -87,10 +105,12 @@ Known residual gaps, upstream-tracked in
    operator revokes the role; it then fails loudly at the authenticated inbox
    read, but a turn is spent. The systemic fix is host-side delegation
    revalidation at dispatch time, not client memory.
-2. A queued reminder renders in the Desktop transcript as plain user text with
-   no machine-origin marker; today the fixed content-free reminder text is the
-   mitigation. The proper fix is a host-side origin label on externally-queued
-   turns.
+2. **G2 tradeoff, deliberately accepted by the operator in #104:** a queued
+   reminder, now including bounded message content, renders in the Desktop
+   transcript as plain user text without a machine-origin marker. The read-preview
+   label and required authenticated inbox read do not fix host provenance or
+   prevent prompt injection. The proper fix remains a host-side origin label on
+   externally queued turns (outside #104).
 
 This maps to the four-part wake contract discussed in that issue (event origin,
 thread-owner delegation, single turn-admission decision, distinct observations):
@@ -99,8 +119,9 @@ ledger below; observations remain the separate open gap.
 
 ## Durable bounds and diagnostics
 
-- Scan every 15 seconds, with one async sweep in flight. Read only ID/state
-  metadata of each role's oldest unacknowledged message. A submitted, paused or
+- Scan every 15 seconds, with one async sweep in flight. Select ID/state metadata
+  of each role's oldest unacknowledged message, then read its source for the
+  ephemeral preview. A submitted, paused or
   quarantined head blocks nudging later mail; all pause scopes are respected.
   A delivered message is still eligible until the role actually acknowledges it.
 - Reserve before any CLI call in `data/<projectKey>.codex-nudges.sqlite` using
