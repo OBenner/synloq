@@ -69,7 +69,13 @@ function fakeHost(getSession: (id: string) => Promise<boolean>): OpenCodeSession
 async function testerCheck(
   options: Partial<Parameters<typeof doctorCommand>[0]> = {},
 ): Promise<{ hostCheck: OpenCodeHostCheck; credential: { status: string } | undefined }> {
-  const report = await doctorCommand({ projectRoot: root, synloqHome: home, ...options });
+  const report = await doctorCommand({
+    projectRoot: root,
+    synloqHome: home,
+    // Hermetic default: no reads of the machine's real OpenCode backend log.
+    openCodeMcpStates: async () => new Map(),
+    ...options,
+  });
   const tester = report.participants.find((participant) => participant.agentId === "tester");
   expect(tester?.hostCheck).toBeDefined();
   return { hostCheck: tester!.hostCheck!, credential: tester?.credential };
@@ -86,6 +92,7 @@ describe("doctor OpenCode host checks (#32 W6)", () => {
       sessionId: SESSION_ID,
       session: "unknown",
       opencodeConfig: "present",
+      mcp: "unknown",
     });
     expect(credential?.status).toBe("ok");
   });
@@ -142,8 +149,69 @@ describe("doctor OpenCode host checks (#32 W6)", () => {
   });
 
   it("does not attach hostCheck to Kimi Work-bound roles", async () => {
-    const report = await doctorCommand({ projectRoot: root, synloqHome: home });
+    const report = await doctorCommand({
+      projectRoot: root,
+      synloqHome: home,
+      openCodeMcpStates: async () => new Map(),
+    });
     const cto = report.participants.find((participant) => participant.agentId === "cto");
     expect(cto?.hostCheck).toBeUndefined();
+  });
+});
+
+describe("doctor OpenCode MCP backend state (#92)", () => {
+  it("surfaces a failed MCP server with the backend-restart guidance", async () => {
+    const { hostCheck } = await testerCheck({
+      openCodeMcpStates: async () =>
+        new Map([
+          [
+            "synloq-tester",
+            {
+              server: "synloq-tester",
+              state: "failed" as const,
+              at: "2026-11-16T12:11:32.885Z",
+              exitCode: 1,
+            },
+          ],
+        ]),
+    });
+
+    expect(hostCheck.mcp).toBe("failed");
+    expect(hostCheck.note).toContain("MCP server failed (exit code 1)");
+    expect(hostCheck.note).toContain("restart the OpenCode backend");
+    expect(hostCheck.note).toContain("opencode-cli serve");
+  });
+
+  it("reports a connected MCP server without a note", async () => {
+    const { hostCheck } = await testerCheck({
+      openCodeMcpStates: async () =>
+        new Map([
+          [
+            "synloq-tester",
+            {
+              server: "synloq-tester",
+              state: "connected" as const,
+              at: "2026-11-16T12:11:32.885Z",
+            },
+          ],
+        ]),
+    });
+
+    expect(hostCheck.mcp).toBe("connected");
+    expect(hostCheck.note).toBeUndefined();
+  });
+
+  it("degrades to unknown when the backend log has no entry for the role", async () => {
+    const { hostCheck } = await testerCheck({});
+    expect(hostCheck.mcp).toBe("unknown");
+  });
+
+  it("never throws when the log reader fails", async () => {
+    const { hostCheck } = await testerCheck({
+      openCodeMcpStates: async () => {
+        throw new Error("log unreadable");
+      },
+    });
+    expect(hostCheck.mcp).toBe("unknown");
   });
 });

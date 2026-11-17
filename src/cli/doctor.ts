@@ -33,11 +33,14 @@ export interface CredentialHealth {
  * host. `session` is "unknown" unless doctor ran with --check-host and the
  * host answered; `opencodeConfig` reflects the project opencode.json entry
  * ("unreadable" when the file exists but does not parse).
+ * Issue #92: `mcp` is the last state of the role's MCP server in the backend
+ * log — "failed" means the backend will not retry it until restarted.
  */
 export interface OpenCodeHostCheck {
   sessionId: string;
   session: "alive" | "dead" | "unknown";
   opencodeConfig: "present" | "missing" | "unreadable";
+  mcp?: "connected" | "failed" | "unknown";
   note?: string;
 }
 
