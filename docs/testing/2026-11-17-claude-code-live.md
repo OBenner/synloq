@@ -1,7 +1,7 @@
 # Claude Code live acceptance — inbox and lifecycle observed
 
 - Status: **PARTIAL — scoped live probes PASS; initial startup ordering FAIL;
-  final document awaiting Lead Developer review**.
+  Lead Developer review PASS on 2026-11-17**.
 - Coordinator/auditor: staff1; operator executed two visible role sessions.
 - Source runtime stayed `0d972bc8d7b726542ed4cbd8d00094d7190c5a8a` throughout.
 - Node `v24.13.0`; isolated project `claude-code-live-20261117`, roles cto/arch.
@@ -45,7 +45,7 @@ tests passed; they are separate from live-client evidence.
 | SessionEnd / closed                     | Both sessions closed before restart; hooks exit 0, database closed                                 | PASS for observed close cycle |
 | StopFailure / recovery                  | Provider 402 triggered exit-0 hook and idle; operator continuation completed reply                 | PASS for observed transition  |
 | Host permission prompts                 | No independently correlated prompt/decision probe retained                                         | UNVERIFIED                    |
-| Final stand shutdown                    | Both sessions idle after final ack; final exits/relay stop pending                                 | PENDING                       |
+| Final stand shutdown                    | Closed after separately authorized headless probes; isolated relay stopped 09:36:47 UTC            | PASS                          |
 | Autonomous wake / headless resume       | active_delivery=0; neither exercised                                                               | OUT OF SCOPE                  |
 
 Observed scoped rows replace their preparation-only UNVERIFIED verdicts. This
@@ -83,8 +83,8 @@ All times are UTC on 2026-11-17.
 with empty stdout. Relay audit recorded heartbeat NOT_FOUND at 08:39:59.718,
 before registration at 08:39:59.979. Later successful resume hooks do not erase
 this failure. No production fix or fabricated heartbeat was applied. Lead
-Developer owns the follow-up issue after document review; its URL is pending
-and will be added when it exists.
+Developer tracks the follow-up in
+[issue #124](https://github.com/OBenner/synloq/issues/124).
 
 **Session persistence.** First arch capture produced a real SessionStart ID but
 no persisted conversation; resume failed. One visible recapture with a completed
@@ -135,3 +135,9 @@ SQLite, credentials and message bodies are not publication artifacts.
   w7d-post-restart-replay-tools.json, w7d-arch-reply-tools.json.
 - Final: w7-final-cto-tools.json, w7-final-cycle.json, w7-final-cto-ack.png;
   hook streams include StopFailure and recovery.
+
+Final cleanup occurred after a separately operator-authorized headless microprobe,
+which is not part of W7 acceptance. Snapshot headless-after.json has both sessions
+closed and all four W7 messages acked; the isolated relay was stopped at
+09:36:47 UTC. The stand and database were preserved. Headless evidence stays in
+the stand's separate headless-probe-20261117 directory.
