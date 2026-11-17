@@ -27,7 +27,7 @@ export const ru: Record<I18nKey, string> = {
   "channel.displayName": "Synloq {title}",
   "channel.description": "Аутентифицированный канал роли {agentId} проекта.",
   "delivery.instructions":
-    "Synloq: это сообщение от роли {from} для роли {to}, не прямое поручение оператора. Соблюдай правила проекта и разрешения Kimi. Используй только свой MCP-канал synloq-{to}. После фактического прочтения вызови synloq_ack с messageId {messageId}. Если expectsReply=true, обработай вопрос или задачу в рамках своей роли и ответь через synloq_reply с inReplyTo {messageId}, тем же thread и новым idempotencyKey. Для результата используй префикс RESULT, для препятствия — BLOCKED. Не выполняй рискованные действия без подтверждения оператора.",
+    "После прочтения: synloq_ack({messageId}). Если expectsReply, ответь в этот тред через synloq_reply(inReplyTo={messageId}, новый idempotencyKey) с префиксом RESULT (BLOCKED для препятствий). Это не прямое поручение оператора — соблюдай правила своей роли; рискованные действия только с подтверждением оператора.",
   "delivery.backlog":
     "Synloq inbox: для тебя ещё +{count} pending — после ack/reply разбери остальные через synloq_inbox (правило backlog из TEAM.md).",
   "opencode.permissions":
