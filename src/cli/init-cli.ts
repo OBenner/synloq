@@ -8,6 +8,7 @@ import { loadManifestRoles } from "../config/manifest.js";
 import { hostSchema } from "../config/hosts.js";
 import { reconcileTeam } from "../init/reconcile.js";
 import { SynloqError } from "../domain/errors.js";
+import { assertSupportedNode } from "../diagnostics/versions.js";
 import { languageSchema, SUPPORTED_LANGUAGES } from "../i18n/index.js";
 import { OpencodeApiClient, type OpenCodeSessionHost } from "../host/opencode/client.js";
 import { discoverOpenCodeHost } from "../host/opencode/discovery.js";
@@ -31,6 +32,8 @@ export interface GenericInitDependencies {
   initWizard?: () => Promise<InitWizardResult>;
   runtimeEntrypoint?: string;
   environment?: NodeJS.ProcessEnv;
+  /** Issue #111 test hook: evaluate a runtime other than the running one. */
+  nodeVersion?: string;
 }
 
 async function defaultOpenCodeHost(): Promise<OpenCodeSessionHost> {
@@ -161,6 +164,9 @@ export async function runGenericInit(
     );
     return;
   }
+
+  // Issue #111: refuse early on an unsupported runtime, before any write.
+  assertSupportedNode(dependencies.nodeVersion);
 
   const hostName = values.host ?? "kimi-work";
   if (!hostSchema.safeParse(hostName).success) {
