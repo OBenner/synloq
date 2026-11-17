@@ -381,6 +381,42 @@ export class SQLiteMessageStore {
     );
   }
 
+  /** Bounded metadata-only snapshot; never skip paused, quarantined or submitted mail. */
+  claudeNudgeCandidates(
+    project: string,
+    recipient: string,
+  ): { id: string; threadId: string; ids: string[] } | undefined {
+    return this.read(() => {
+      if (!this.nudgeCandidate(project, recipient)) return undefined;
+      const rows = this.database
+        .prepare(
+          `SELECT id, thread_id, delivery_state,
+        EXISTS(SELECT 1 FROM delivery_quarantine WHERE message_id=messages.id) AS quarantined
+        FROM messages WHERE project=? AND recipient=? AND delivery_state!='acked'
+        ORDER BY created_at,id LIMIT 101`,
+        )
+        .all(project, recipient) as unknown as {
+        id: string;
+        thread_id: string;
+        delivery_state: string;
+        quarantined: number;
+      }[];
+      const first = rows[0];
+      if (
+        !first ||
+        rows.length > 100 ||
+        rows.some(
+          (row) =>
+            row.delivery_state === "submitted" ||
+            row.quarantined ||
+            this.isPaused(project, "thread", row.thread_id),
+        )
+      )
+        return undefined;
+      return { id: first.id, threadId: first.thread_id, ids: rows.map((row) => row.id) };
+    });
+  }
+
   nextPending(project: string, recipient: string): Message | undefined {
     return this.read(() => {
       const row = this.database

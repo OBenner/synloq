@@ -42,6 +42,7 @@ import { startRetentionSweep } from "../relay/retention.js";
 import { startCodexNudger } from "../relay/codex-nudger-lifecycle.js";
 import { startWebhook } from "../relay/webhook-lifecycle.js";
 import { readWebhookStatus } from "../config/webhook-status.js";
+import { startClaudeNudger, type ClaudeNudgerHandle } from "../relay/claude-nudger-lifecycle.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
 import { acquireServeLock, type ServeLock } from "../relay/serve-lock.js";
@@ -197,6 +198,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   let stopRetention: (() => void) | undefined;
   let stopCodexNudger: (() => Promise<void>) | undefined;
   let webhook: ReturnType<typeof startWebhook> | undefined;
+  let claudeNudger: ClaudeNudgerHandle | undefined;
   try {
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
@@ -207,7 +209,13 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     server = new RelayHttpServer({
       project,
       relay: new RelayService(directory, messages, sessions, protection, undefined, clock, audit, {
-        created: (message) => webhook?.observer.created(message),
+        created: (message) => {
+          try {
+            webhook?.observer.created(message);
+          } finally {
+            claudeNudger?.notify(message.to);
+          }
+        },
         acknowledged: (message) => webhook?.observer.acknowledged(message),
       }),
       credentials: new CredentialStore(options.projectRoot, options.synloqHome),
@@ -238,6 +246,16 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       now: () => clock.now(),
     });
     const openSessions = sessions;
+    claudeNudger = await startClaudeNudger({
+      project,
+      projectRoot: options.projectRoot,
+      paths,
+      messages,
+      sessions,
+      directory,
+      relayUrl: baseUrl,
+      now: () => clock.now(),
+    });
     const openServer = server;
     let closed = false;
     return {
@@ -252,6 +270,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
         try {
           await webhook?.close();
           await stopCodexNudger?.();
+          await claudeNudger?.stop();
           await openServer.close();
         } finally {
           try {
@@ -270,6 +289,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     stopRetention?.();
     await webhook?.close();
     await stopCodexNudger?.();
+    await claudeNudger?.stop();
     if (server) await server.close();
     sessions?.close();
     messages.close();

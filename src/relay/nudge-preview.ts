@@ -1,4 +1,5 @@
 import type { Message } from "../domain/message.js";
+import { requireNudgeIds } from "./nudge-identifiers.js";
 
 export const NUDGE_PREVIEW_LIMIT = 200;
 export const NUDGE_PAYLOAD_LIMIT = 600;
@@ -29,9 +30,7 @@ function clip(text: string, units: number): string {
 }
 
 export function nudgeReminder(message: Pick<Message, "id" | "threadId" | "from" | "text">): string {
-  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-  if (!uuid.test(message.id) || !uuid.test(message.threadId))
-    throw new Error("invalid reminder identifiers");
+  requireNudgeIds(message.id, message.threadId);
   // Keep the full IDs and original read/ack/reply instruction unchanged.
   const instruction = `Synloq: pending messageId=${message.id}, threadId=${message.threadId}. Run synloq_inbox on your assigned channel, read the backlog, then ack and reply in the original Synloq thread.`;
   const sender = /^[a-z][a-z0-9-]{0,63}$/.test(message.from) ? message.from : "unknown";
