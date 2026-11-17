@@ -1,5 +1,11 @@
 # Live acceptance: Codex Desktop per-role directories (#43) and non-Kimi two-role loop (#14)
 
+> Auth-v2 update (#1): this dated acceptance record predates mutual relay authentication.
+> Its health marker is discovery only. For new runs, update relay and all callers
+> together and regenerate MCP configs with trusted `project`/`agentId`; manual CLI
+> commands need the local project root/home. Use the [current rollout](../security/transport-auth-v2.md).
+> Historical observations below do not certify auth-v2.
+
 **Status: PASS, 2026-11-15.** Prepared by the CTO role from PR #50 (commit
 `851899a`) and the dev checklist; executed by the operator on an isolated
 stand. Duration ~30–45 minutes. Operator drove the Codex Desktop GUI;

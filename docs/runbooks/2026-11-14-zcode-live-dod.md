@@ -1,5 +1,11 @@
 # Live runbook: ZCode (Z.ai) verification on the real stand
 
+> Auth-v2 update (#1): this dated acceptance record predates mutual relay authentication.
+> Its health marker is discovery only. For new runs, update relay and all callers
+> together and regenerate MCP configs with trusted `project`/`agentId`; manual CLI
+> commands need the local project root/home. Use the [current rollout](../security/transport-auth-v2.md).
+> Historical observations below do not certify auth-v2.
+
 **Executor:** an agent running inside ZCode on this machine (Windows).
 **Auditor:** Synloq dev role — validates everything afterwards against the relay
 SQLite, the files, and the saved evidence. Self-reports are not evidence; saved

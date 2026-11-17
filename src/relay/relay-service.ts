@@ -15,6 +15,7 @@ import {
   type AuditedAction,
   type SecurityAuditLog,
 } from "./audit-log.js";
+import { reachTag } from "../config/contact-card.js";
 import { StaticParticipantDirectory, type ParticipantDirectory } from "./participant-directory.js";
 import type { ProtectionPolicy } from "./protection.js";
 
@@ -84,7 +85,19 @@ export class RelayService {
   }
 
   async listParticipants(identity: Identity): Promise<Participant[]> {
-    return this.directory.list(identity.project);
+    const participants = await this.directory.list(identity.project);
+    // Issue #108: derived reachability tag for synloq_list. English by
+    // convention (relay surfaces stay English); the numbers come from the
+    // nudger constants, never literals.
+    return Promise.all(
+      participants.map(async (participant) => ({
+        ...participant,
+        reach: reachTag({
+          agentId: participant.agentId,
+          host: await this.directory.hostOf?.(identity.project, participant.agentId),
+        }),
+      })),
+    );
   }
 
   async send(identity: Identity, raw: SendRequest): Promise<Message> {
@@ -125,6 +138,19 @@ export class RelayService {
       project: identity.project,
       from: identity.operator ? "operator" : identity.agentId,
     });
+    // Protocol v1.1 §2.5 (issue #10): the sender must be a registered
+    // participant BEFORE any dedup/replay effect and before any write — an
+    // unregistered sender must never receive a replay of someone else's
+    // ledger entry. Rejection is synchronous at the acceptance boundary.
+    if (!identity.operator) {
+      if (identity.agentId === "relay" || identity.agentId === "operator") {
+        throw new SynloqError(
+          "UNKNOWN_SENDER",
+          `reserved id '${identity.agentId}' cannot originate participant messages`,
+        );
+      }
+      await this.requireParticipant(input.project, identity.agentId, "UNKNOWN_SENDER");
+    }
     const replay = this.messages.replay(input);
     if (replay) return replay;
     await this.requireParticipant(input.project, input.to);
@@ -254,12 +280,21 @@ export class RelayService {
     }
   }
 
-  private async requireParticipant(project: string, agentId: string): Promise<void> {
+  private async requireParticipant(
+    project: string,
+    agentId: string,
+    code: "UNKNOWN_RECIPIENT" | "UNKNOWN_SENDER" = "UNKNOWN_RECIPIENT",
+  ): Promise<void> {
     if (await this.directory.isParticipant(project, agentId)) return;
     // The registry may have changed since this relay started (issue #36):
     // force one manifest re-read before rejecting the recipient.
     await this.directory.refresh();
     if (await this.directory.isParticipant(project, agentId)) return;
-    throw new SynloqError("UNKNOWN_RECIPIENT", "recipient is not a project participant");
+    throw new SynloqError(
+      code,
+      code === "UNKNOWN_SENDER"
+        ? "sender is not a project participant"
+        : "recipient is not a project participant",
+    );
   }
 }

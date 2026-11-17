@@ -148,7 +148,7 @@ export async function initializeOpenCodeTeam(
         });
         sessionId = created.id;
         permissionsApplied = created.permissionsApplied;
-        await host.postPrompt(sessionId, rolePromptOpenCode(role, language));
+        await host.postPrompt(sessionId, rolePromptOpenCode(role, language, roles));
       }
       const conversation: OpenCodeTeamConversation = {
         kind: "opencode",
@@ -180,6 +180,8 @@ export async function initializeOpenCodeTeam(
     // Paths under the Synloq home are relative to the config file (#7/#32);
     // projectRoot is relative the same way, with an absolute fallback.
     await writeJsonAtomic(configPath, {
+      project,
+      agentId: role.agentId,
       relayUrl,
       ...relativeHomePaths(paths.key, role.agentId),
       language,

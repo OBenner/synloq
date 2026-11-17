@@ -121,6 +121,9 @@ export function withTransaction<T>(database: DatabaseSync, operation: () => T): 
   }
 }
 
+/** Current on-disk schema version. Bumped by additive forward-only migrations. */
+export const CURRENT_SCHEMA_VERSION = 5;
+
 export function openDatabase(path: string, options?: { readOnly?: boolean }): DatabaseSync {
   const readOnly = options?.readOnly === true && path !== ":memory:";
   let database: DatabaseSync | undefined;
@@ -136,12 +139,9 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
     const version = database.prepare("PRAGMA user_version").get() as
       { user_version: number } | undefined;
     if (
-      version?.user_version !== 0 &&
-      version?.user_version !== 1 &&
-      version?.user_version !== 2 &&
-      version?.user_version !== 3 &&
-      version?.user_version !== 4 &&
-      version?.user_version !== 5
+      version?.user_version === undefined ||
+      version.user_version < 0 ||
+      version.user_version > CURRENT_SCHEMA_VERSION
     ) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
@@ -156,7 +156,7 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
     // is already current — otherwise every connection open (including the
     // per-tick diagnostic opens) takes a BEGIN IMMEDIATE write lock on the
     // shared file and contends with the relay writer.
-    if (version?.user_version === 5) {
+    if (version?.user_version === CURRENT_SCHEMA_VERSION) {
       return database;
     }
 

@@ -86,8 +86,14 @@ describe("reference end-to-end acceptance", () => {
       if (!ctoToken || !archToken) throw new Error("missing reference credentials");
 
       relay = await serveCommand({ projectRoot: root });
-      let ctoRelay = new RelayHttpClient(relay.baseUrl, () => ctoToken);
-      let archRelay = new RelayHttpClient(relay.baseUrl, () => archToken);
+      let ctoRelay = new RelayHttpClient(relay.baseUrl, () => ctoToken, {
+        project: PROJECT,
+        agentId: "cto",
+      });
+      let archRelay = new RelayHttpClient(relay.baseUrl, () => archToken, {
+        project: PROJECT,
+        agentId: "arch",
+      });
       const ctoAdapter = new ReferenceAdapter();
       const archAdapter = new ReferenceAdapter();
       let ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);
@@ -235,8 +241,14 @@ describe("reference end-to-end acceptance", () => {
       connections = [];
       await relay.close();
       relay = await serveCommand({ projectRoot: root });
-      ctoRelay = new RelayHttpClient(relay.baseUrl, () => ctoToken);
-      archRelay = new RelayHttpClient(relay.baseUrl, () => archToken);
+      ctoRelay = new RelayHttpClient(relay.baseUrl, () => ctoToken, {
+        project: PROJECT,
+        agentId: "cto",
+      });
+      archRelay = new RelayHttpClient(relay.baseUrl, () => archToken, {
+        project: PROJECT,
+        agentId: "arch",
+      });
       ctoAdapter.setState(CTO_SESSION, "idle");
       archAdapter.setState(ARCH_SESSION, "idle");
       ctoBinding = await register(ctoRelay, ctoAdapter, CTO_SESSION);

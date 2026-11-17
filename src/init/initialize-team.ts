@@ -285,6 +285,7 @@ export async function initializeTeam(
     await writeJsonAtomic(
       configPath,
       roleRuntimeConfig({
+        project,
         relayUrl,
         projectKey: paths.key,
         language,

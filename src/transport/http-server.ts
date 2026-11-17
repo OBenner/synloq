@@ -1,6 +1,19 @@
 import { EventEmitter } from "node:events";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { z } from "zod";
+import {
+  AUTH_VERSION,
+  CHALLENGE_TTL_MS,
+  MAX_CHALLENGES,
+  challengeRequestSchema,
+  challengeProof,
+  newNonce,
+  equalProof,
+  requestDigest,
+  requestProof,
+  responseProof,
+  type Challenge,
+} from "./auth-proof.js";
 import type { CredentialStore, Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import { agentId, type Message } from "../domain/message.js";
@@ -180,6 +193,16 @@ export class RelayHttpServer {
   private readonly events = new EventEmitter();
   private readonly audit: SecurityAuditLog;
   private closing = false;
+  private readonly bootId = newNonce();
+  private readonly instanceId = newNonce();
+  private readonly challenges = new Map<string, Challenge>();
+  private readonly bodies = new WeakMap<IncomingMessage, Buffer>();
+  private readonly proofs = new WeakMap<
+    ServerResponse,
+    { challenge: Challenge; verifier: string; requestHash: string }
+  >();
+  private issueWindow = 0;
+  private issueCount = 0;
 
   constructor(private readonly options: RelayHttpServerOptions) {
     this.events.setMaxListeners(0);
@@ -227,26 +250,43 @@ export class RelayHttpServer {
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? "/", "http://loopback");
-    if (request.method === "GET" && url.pathname === "/v1/health") {
+    if (
+      request.headers.authorization === undefined &&
+      request.method === "GET" &&
+      url.pathname === "/v1/health"
+    ) {
       // Unauthenticated compatibility marker: lets probes verify the service
       // before any credential is sent. Carries no project or session data.
-      this.sendJson(response, 200, { service: "synloq-relay", protocolVersion: PROTOCOL_VERSION });
+      this.sendJson(response, 200, {
+        service: "synloq-relay",
+        protocolVersion: PROTOCOL_VERSION,
+        authVersion: AUTH_VERSION,
+      });
       return;
     }
 
     let identity: Identity;
     try {
-      identity = await this.authenticate(request.headers.authorization);
+      if (request.headers.authorization !== undefined)
+        throw new SynloqError("INCOMPATIBLE_PROTOCOL", "auth_v2_required; bearer_rejected");
+      if (request.method === "POST" && url.pathname === "/v1/auth/challenge") {
+        await this.issueChallenge(request, response);
+        return;
+      }
+      identity = await this.authenticate(request, response);
     } catch (error) {
-      if (error instanceof SynloqError) {
+      if (error instanceof SynloqError || error instanceof z.ZodError) {
         this.audit.record({
           at: new Date().toISOString(),
           project: this.options.project,
           agentId: "unknown",
           action: "authenticate",
           decision: "deny",
-          reasonCode: error.code,
-          detail: denialDetail("authenticate"),
+          reasonCode: error instanceof SynloqError ? error.code : "INVALID_INPUT",
+          detail:
+            denialDetail("authenticate") +
+            ": " +
+            (error instanceof SynloqError ? this.authReason(error) : "invalid_challenge"),
         });
       }
       this.sendError(response, error, true);
@@ -269,10 +309,91 @@ export class RelayHttpServer {
     }
   }
 
-  private async authenticate(header: string | undefined): Promise<Identity> {
-    const match = header === undefined ? undefined : /^Bearer ([^\s]+)$/.exec(header);
-    if (!match?.[1]) throw new SynloqError("UNAUTHORIZED", "a bearer credential is required");
-    return this.options.credentials.authenticate(this.options.project, match[1]);
+  private async issueChallenge(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const now = Date.now();
+    if (now - this.issueWindow >= 1000) {
+      this.issueWindow = now;
+      this.issueCount = 0;
+    }
+    if (++this.issueCount > 100) throw new SynloqError("RATE_LIMITED", "challenge_rate_limit");
+    for (const [id, challenge] of this.challenges)
+      if (challenge.expiresAt <= now) this.challenges.delete(id);
+    if (this.challenges.size >= MAX_CHALLENGES)
+      throw new SynloqError("RATE_LIMITED", "challenge_capacity");
+    const raw = await this.readJson(request);
+    if (
+      !raw ||
+      typeof raw !== "object" ||
+      !("authVersion" in raw) ||
+      raw.authVersion !== AUTH_VERSION
+    ) {
+      throw new SynloqError("INCOMPATIBLE_PROTOCOL", "version_mismatch");
+    }
+    const input = challengeRequestSchema.parse(raw);
+    if (input.project !== this.options.project)
+      throw new SynloqError("UNAUTHORIZED", "project_mismatch");
+    const credential = await this.options.credentials.proofCredential(input.project, input.kid);
+    // Recheck after async credential lookup; concurrent issuance must respect cap.
+    if (this.challenges.size >= MAX_CHALLENGES)
+      throw new SynloqError("RATE_LIMITED", "challenge_capacity");
+    const unsigned = {
+      ...input,
+      agentId: credential.identity.agentId,
+      instanceId: this.instanceId,
+      bootId: this.bootId,
+      serverNonce: newNonce(),
+      expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    };
+    const challenge = { ...unsigned, proof: challengeProof(credential.verifier, unsigned) };
+    this.challenges.set(challenge.serverNonce, challenge);
+    this.sendJson(response, 200, challenge);
+  }
+
+  private async authenticate(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<Identity> {
+    if (request.headers["x-synloq-auth-version"] !== String(AUTH_VERSION)) {
+      throw new SynloqError("INCOMPATIBLE_PROTOCOL", "version_mismatch");
+    }
+    const id = request.headers["x-synloq-challenge"];
+    const proof = request.headers["x-synloq-proof"];
+    if (typeof id !== "string" || typeof proof !== "string")
+      throw new SynloqError("UNAUTHORIZED", "missing_proof");
+    const body = await this.readBody(request);
+    const candidate = this.challenges.get(id);
+    if (!candidate) throw new SynloqError("UNAUTHORIZED", "stale_challenge");
+    const credential = await this.options.credentials.proofCredential(
+      this.options.project,
+      candidate.kid,
+    );
+    // No await between the final lookup/verification and consume.
+    const challenge = this.challenges.get(id);
+    if (!challenge || challenge.expiresAt <= Date.now()) {
+      this.challenges.delete(id);
+      throw new SynloqError("UNAUTHORIZED", "stale_challenge");
+    }
+    const requestHash = requestDigest(challenge, request.method ?? "GET", request.url ?? "/", body);
+    if (!equalProof(proof, requestProof(credential.verifier, challenge, requestHash)))
+      throw new SynloqError("UNAUTHORIZED", "mac_mismatch");
+    this.challenges.delete(id);
+    this.proofs.set(response, { challenge, verifier: credential.verifier, requestHash });
+    return credential.identity;
+  }
+
+  private authReason(error: SynloqError): string {
+    const known = [
+      "unknown_kid",
+      "stale_challenge",
+      "mac_mismatch",
+      "version_mismatch",
+      "missing_proof",
+      "project_mismatch",
+      "challenge_rate_limit",
+      "challenge_capacity",
+      "auth_v2_required; bearer_rejected",
+    ];
+    return known.includes(error.message) ? error.message : "authentication_failed";
   }
 
   private recordTransportDeny(
@@ -302,6 +423,11 @@ export class RelayHttpServer {
     const method = request.method;
     const path = url.pathname;
     const { project } = this.options;
+
+    if (method === "GET" && path === "/v1/auth/health") {
+      this.sendJson(response, 200, { service: "synloq-relay", protocolVersion: PROTOCOL_VERSION });
+      return;
+    }
 
     if (method === "GET" && path === "/v1/participants") {
       this.sendJson(response, 200, {
@@ -684,7 +810,9 @@ export class RelayHttpServer {
     }
   }
 
-  private async readJson(request: IncomingMessage): Promise<unknown> {
+  private async readBody(request: IncomingMessage): Promise<Buffer> {
+    const cached = this.bodies.get(request);
+    if (cached) return cached;
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of request) {
@@ -696,8 +824,15 @@ export class RelayHttpServer {
       throw new SynloqError("INVALID_INPUT", "JSON body exceeds the 64 KiB limit");
     }
 
+    const bytes = Buffer.concat(chunks);
+    this.bodies.set(request, bytes);
+    return bytes;
+  }
+
+  private async readJson(request: IncomingMessage): Promise<unknown> {
+    const bytes = await this.readBody(request);
     try {
-      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+      return JSON.parse(bytes.toString("utf8")) as unknown;
     } catch {
       throw new SynloqError("INVALID_INPUT", "malformed JSON body");
     }
@@ -733,6 +868,7 @@ export class RelayHttpServer {
         // Authenticated as the role, but not as its active writer session.
         return { status: 403, error };
       case "UNKNOWN_RECIPIENT":
+      case "UNKNOWN_SENDER":
       case "NOT_FOUND":
         return { status: 404, error };
       case "IDEMPOTENCY_CONFLICT":
@@ -755,6 +891,18 @@ export class RelayHttpServer {
   private sendJson(response: ServerResponse, status: number, value: unknown): void {
     if (response.destroyed || response.writableEnded) return;
     const body = JSON.stringify(value);
+    const proof = this.proofs.get(response);
+    if (proof)
+      response.setHeader(
+        "x-synloq-proof",
+        responseProof(
+          proof.verifier,
+          proof.challenge,
+          proof.requestHash,
+          status,
+          Buffer.from(body),
+        ),
+      );
     response.writeHead(status, {
       "content-type": "application/json; charset=utf-8",
       "content-length": Buffer.byteLength(body),

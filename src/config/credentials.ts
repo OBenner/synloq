@@ -8,6 +8,7 @@ import type { TokenProvider } from "../transport/http-client.js";
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-file.js";
 import { projectPaths } from "./paths.js";
 import { withFileLock } from "./file-lock.js";
+import { keyId } from "../transport/auth-proof.js";
 
 interface CredentialEntry {
   agentId: string;
@@ -268,6 +269,33 @@ export class CredentialStore {
       }
     }
     throw new SynloqError("UNAUTHORIZED", "invalid project credential");
+  }
+
+  /** Internal transport verifier. Never serialize or log the returned material. */
+  async proofCredential(
+    project: string,
+    kid: string,
+  ): Promise<{ identity: Identity; verifier: string }> {
+    const paths = await projectPaths(this.projectRoot, this.synloqHome);
+    const credentials = await this.read(paths.credentials, project);
+    if (credentials.project === project && /^[a-f0-9]{64}$/.test(kid)) {
+      for (const entry of credentials.entries) {
+        const context = { project, agentId: entry.agentId };
+        if (
+          /^[a-f0-9]{64}$/.test(entry.tokenHash) &&
+          timingSafeEqual(
+            Buffer.from(keyId(entry.tokenHash, context), "hex"),
+            Buffer.from(kid, "hex"),
+          )
+        ) {
+          return {
+            identity: { ...context, operator: entry.agentId === "operator" },
+            verifier: entry.tokenHash,
+          };
+        }
+      }
+    }
+    throw new SynloqError("UNAUTHORIZED", "unknown_kid");
   }
 
   private async read(path: string, project: string): Promise<CredentialFile> {

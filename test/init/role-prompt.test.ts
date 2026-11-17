@@ -26,6 +26,35 @@ describe("coreRules (#32 W4)", () => {
   });
 });
 
+describe("coreRules contact card (#108)", () => {
+  const team = [
+    { agentId: "tester", host: "opencode" as const },
+    { agentId: "staff1", host: "codex-desktop" as const },
+    { agentId: "staff2", host: "generic" as const },
+  ];
+
+  it("inserts the derived reachability block before the charter", () => {
+    const lines = coreRules(role, "en", team);
+    expect(lines.at(-1)).toBe(TEAM_CHARTER_SUMMARY);
+    const headerIndex = lines.findIndex((line) => line.includes("Reachability"));
+    expect(headerIndex).toBeGreaterThan(-1);
+    expect(headerIndex).toBeLessThan(lines.length - 1);
+    // The line after the header is the self line (tester = opencode = push).
+    expect(lines[headerIndex + 1]).toContain("Your delivery: push");
+    expect(lines.join("\n")).toContain("queue nudge");
+    expect(lines.join("\n")).toContain("staff2 (generic): inbox-only");
+  });
+
+  it("renders the self line for the addressed role", () => {
+    const lines = coreRules(role, "en", [{ agentId: "tester", host: "opencode" }]);
+    expect(lines.join("\n")).toContain("Your delivery: push");
+  });
+
+  it("omits the block when no team is passed", () => {
+    expect(coreRules(role).join("\n")).not.toContain("Reachability");
+  });
+});
+
 describe("roleInstructionsKimi", () => {
   it("is the core rules joined, with no host mechanics", () => {
     const prompt = roleInstructionsKimi(role);

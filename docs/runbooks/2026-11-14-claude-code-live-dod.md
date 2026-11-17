@@ -1,5 +1,11 @@
 # Live runbook: Claude Code inbox and lifecycle verification
 
+> Auth-v2 update (#1): this dated acceptance record predates mutual relay authentication.
+> Its health marker is discovery only. For new runs, update relay and all callers
+> together and regenerate MCP configs with trusted `project`/`agentId`; manual CLI
+> commands need the local project root/home. Use the [current rollout](../security/transport-auth-v2.md).
+> Historical observations below do not certify auth-v2.
+
 Updated 2026-11-17 for TASK fdb77ccf. Coordinator/auditor: staff1. Executor:
 operator-led visible Claude Code sessions, roles `cto` and `arch`.
 

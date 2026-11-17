@@ -103,6 +103,7 @@ agents:
   reviewer:
     title: Reviewer
     role: Review evidence and risks
+    notes: Optional operator note (≤500 chars) shown to teammates in synloq_list.
 ```
 
 The optional top-level `language` field (`en` or `ru`, fail-loud on any other
@@ -112,6 +113,12 @@ English. Init also accepts `--language en|ru`; re-running init without the flag
 preserves the language already in `synloq.yaml`. A language change takes effect
 after re-init and a channel restart, like any other manifest change. A missing
 locale key falls back to English with a warning.
+
+The optional per-role `notes` field (≤500 characters) is a free-form
+operator annotation; teammates see it in `synloq_list` next to the role
+description, and the relay's `synloq_list` output also carries a derived
+English reachability tag per participant (push / queue-nudge /
+next-interaction — computed from the role's host, no configuration needed).
 
 The optional `retention.days` setting accepts integers from 1 to 36500
 (default 7). The relay periodically removes only acknowledged messages older
@@ -161,6 +168,8 @@ required:
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
+  "project": "example",
+  "agentId": "reviewer",
   "credentialPath": "/secure/synloq-home/tokens/reviewer.token",
   "synloqHome": "/secure/synloq-home",
   "kimiWork": {
@@ -222,6 +231,8 @@ setup, create a strict JSON file outside Git, for example
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
+  "project": "example",
+  "agentId": "reviewer",
   "credentialPath": "/secure/reviewer.token"
 }
 ```
@@ -239,3 +250,10 @@ synloq mcp --config /secure/reviewer-mcp.json
 
 Use the recipient role's own credential in each chat. Do not place a token in
 JSON or on a command line.
+
+## Auth-v2 coordinated upgrades
+
+Relay and every HTTP client must be upgraded together. Regenerate MCP configs
+with trusted local `project` and `agentId`, and restart channels. The public health
+marker is discovery only; old/new authentication combinations fail closed without
+Bearer fallback. See [the wire profile](../security/transport-auth-v2.md).

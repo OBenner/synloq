@@ -30,7 +30,10 @@ it("discovers the desktop endpoint and composes the default MCP adapter with exc
       ping: vi.fn(),
     };
     vi.mocked(runOpenCodeAdapter).mockResolvedValue(adapter as never);
-    const relay = new RelayHttpClient("http://127.0.0.1:4100", () => "relay-secret");
+    const relay = new RelayHttpClient("http://127.0.0.1:4100", () => "relay-secret", {
+      project: "stand",
+      agentId: "arch",
+    });
     const onUnauthorized = vi.fn();
     const composed = await defaultOpenCodeFactory({
       binding: { workspacePath: root, agentId: "arch", sessionId: "ses_arch" },

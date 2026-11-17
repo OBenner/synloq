@@ -51,6 +51,12 @@ async function unusedUrl(): Promise<string> {
 // retry: 1 is the bounded second chance for peak-load scheduling stalls
 // (issue #13); afterEach closes supervisors and cleans temp roots, so a
 // retried attempt starts from a clean slate.
+// Issue #108: listParticipants derives a reachability tag; these fixtures
+// are hostless kimi-work roles, so the tag is push.
+const reachPush = {
+  reach: "push delivery — replies appear in the chat automatically",
+};
+
 describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
   it("elects a survivor after owner shutdown and preserves durable messages", async () => {
     const { root, home, token, participants } = await fixture();
@@ -63,7 +69,8 @@ describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
       token,
       synloqHome: home,
       retryDelayMs: 5,
-      monitorIntervalMs: 10,
+      // Auth-v2 issuance is bounded; election speed must not be a rate-limit test.
+      monitorIntervalMs: 100,
       maxReconnectAttempts: 30,
       probeTimeoutMs: 1_000,
     };
@@ -83,7 +90,9 @@ describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
 
     await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 15_000 });
     expect(ownerLost).toHaveBeenCalledTimes(1);
-    await expect(second.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(second.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
     await expect(second.client.inbox({ limit: 10 })).resolves.toMatchObject({
       messages: [{ id: sent.message.id, text: "durable across failover" }],
     });
@@ -100,7 +109,7 @@ describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
       token,
       synloqHome: home,
       retryDelayMs: 5,
-      monitorIntervalMs: 20,
+      monitorIntervalMs: 100,
       probeTimeoutMs: 1_000,
     };
 

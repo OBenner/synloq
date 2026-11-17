@@ -84,8 +84,18 @@ describe("RelayService", () => {
   it("lists only manifest participants from the authenticated project", async () => {
     const { relay, cto, otherProjectArch } = await makeRelay();
 
-    await expect(relay.listParticipants(cto)).resolves.toEqual(participants.slice(0, 3));
-    await expect(relay.listParticipants(otherProjectArch)).resolves.toEqual([participants[3]]);
+    // Issue #108: every listed participant carries a derived reachability tag.
+    // These fixtures have no host — the derivation defaults them to kimi-work,
+    // which is push-capable.
+    const pushReach = {
+      reach: "push delivery — replies appear in the chat automatically",
+    };
+    await expect(relay.listParticipants(cto)).resolves.toEqual(
+      participants.slice(0, 3).map((participant) => ({ ...participant, ...pushReach })),
+    );
+    await expect(relay.listParticipants(otherProjectArch)).resolves.toEqual([
+      { ...participants[3], ...pushReach },
+    ]);
   });
 
   it("derives the sender and project from the authenticated connection", async () => {

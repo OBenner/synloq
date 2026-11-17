@@ -75,7 +75,7 @@ beforeEach(async () => {
     audit: auditLog,
   });
   const baseUrl = await relayServer.listen("127.0.0.1", 0);
-  const arch = new RelayHttpClient(baseUrl, () => archToken);
+  const arch = new RelayHttpClient(baseUrl, () => archToken, { project: PROJECT, agentId: "arch" });
   const mcpServer = new McpServer({ name: "synloq-test", version: "0.1.0" });
   registerSynloqTools(mcpServer, arch);
   const mcpClient = new Client({ name: "synloq-test-client", version: "0.1.0" });
@@ -88,7 +88,7 @@ beforeEach(async () => {
     relayServer,
     messages,
     sessions,
-    cto: new RelayHttpClient(baseUrl, () => ctoToken),
+    cto: new RelayHttpClient(baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" }),
     archToken,
     baseUrl,
     root,
@@ -198,12 +198,19 @@ describe("Synloq agent-facing MCP tools", () => {
   });
 
   it("lists participants with JSON text and equivalent structured content", async () => {
+    // Issue #108: every participant carries a derived reachability tag. The
+    // fixture directory is static and hostless, so the derivation defaults to
+    // kimi-work — push.
+    const reach = {
+      reach: "push delivery — replies appear in the chat automatically",
+    };
+    const withReach = participants.map((participant) => ({ ...participant, ...reach }));
     const result = await fixture.mcpClient.callTool({ name: "synloq_list", arguments: {} });
 
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent).toEqual({ participants });
+    expect(result.structuredContent).toEqual({ participants: withReach });
     expect((result as { content: Array<{ type: string; text: string }> }).content).toEqual([
-      { type: "text", text: JSON.stringify({ participants }) },
+      { type: "text", text: JSON.stringify({ participants: withReach }) },
     ]);
   });
 
@@ -462,7 +469,10 @@ describe("Synloq agent-facing MCP tools", () => {
     const writerClient = new Client({ name: "synloq-writer-client", version: "0.1.0" });
     registerSynloqTools(
       writerServer,
-      new RelayHttpClient(fixture.baseUrl, () => fixture.archToken),
+      new RelayHttpClient(fixture.baseUrl, () => fixture.archToken, {
+        project: PROJECT,
+        agentId: "arch",
+      }),
       "ses-arch-main",
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

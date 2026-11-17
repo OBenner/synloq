@@ -28,6 +28,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+// Issue #108: listParticipants derives a reachability tag; these fixtures
+// are hostless kimi-work roles, so the tag is push.
+const reachPush = {
+  reach: "push delivery — replies appear in the chat automatically",
+};
+
 async function fixture(project = "example"): Promise<{
   root: string;
   home: string;
@@ -73,10 +79,14 @@ describe("ensureRelay", () => {
 
     expect(reused.owned).toBe(false);
     expect(reused.baseUrl).toBe(existing.baseUrl);
-    await expect(reused.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(reused.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
     await reused.close();
     await expect(existing.server).toBe(existing.server);
-    await expect(reused.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(reused.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
   });
 
   it("owns exactly one new relay on a refused loopback endpoint", async () => {
@@ -92,7 +102,9 @@ describe("ensureRelay", () => {
     });
     expect(owned.owned).toBe(true);
     expect(owned.baseUrl).toBe(relayUrl);
-    await expect(owned.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(owned.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
     await owned.close();
     await expect(owned.client.listParticipants()).rejects.toThrow();
   });
@@ -120,7 +132,7 @@ describe("ensureRelay", () => {
     expect(server.listening).toBe(true);
   });
 
-  it("never sends the credential to a listener without the health marker", async () => {
+  it("never sends the credential to a listener without a relay proof", async () => {
     const { root, home, token } = await fixture();
     const requests: { path: string | undefined; authorization: string | undefined }[] = [];
     const server = createServer((request, response) => {
@@ -143,10 +155,10 @@ describe("ensureRelay", () => {
       }),
     ).rejects.toMatchObject({ code: "STORAGE_FAILURE" });
 
-    expect(requests).toEqual([{ path: "/v1/health", authorization: undefined }]);
+    expect(requests).toEqual([{ path: "/v1/auth/challenge", authorization: undefined }]);
   });
 
-  it("sends the credential only after the health marker matches", async () => {
+  it("rejects an unsigned auth denial without sending the credential", async () => {
     const { root, home, token } = await fixture();
     const requests: { path: string | undefined; authorization: string | undefined }[] = [];
     const server = createServer((request, response) => {
@@ -174,10 +186,7 @@ describe("ensureRelay", () => {
       }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 
-    expect(requests).toEqual([
-      { path: "/v1/health", authorization: undefined },
-      { path: "/v1/participants", authorization: `Bearer ${token}` },
-    ]);
+    expect(requests).toEqual([{ path: "/v1/auth/challenge", authorization: undefined }]);
   });
 
   it("rejects the wrong project and wrong credential without starting another relay", async () => {
@@ -197,7 +206,7 @@ describe("ensureRelay", () => {
         token: first.token,
         synloqHome: first.home,
       }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(
       ensureRelay({
         projectRoot: first.root,

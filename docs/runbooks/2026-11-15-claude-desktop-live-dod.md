@@ -1,5 +1,11 @@
 # Live runbook: Claude Desktop (Code tab) verification on the real stand
 
+> Auth-v2 update (#1): this dated acceptance record predates mutual relay authentication.
+> Its health marker is discovery only. For new runs, update relay and all callers
+> together and regenerate MCP configs with trusted `project`/`agentId`; manual CLI
+> commands need the local project root/home. Use the [current rollout](../security/transport-auth-v2.md).
+> Historical observations below do not certify auth-v2.
+
 > **Status: EXECUTED 2026-11-15 — verdict: MCP INBOX VERIFIED, active delivery
 > UNSUPPORTED (disabled).** Audited by the Synloq dev role against the relay
 > SQLite and saved evidence. Audit outcome and doc updates:

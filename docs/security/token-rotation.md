@@ -12,20 +12,24 @@ implementer; the audit-log steps use the M4-min audit scope (issue #3, landed
 
 ## Concepts
 
-- Each project role (and `operator`) authenticates to the relay with a bearer token.
+- Each project role (and `operator`) authenticates with auth-v2 MAC proofs derived
+  from its token; the token is not sent over relay HTTP.
 - Tokens are stored as plaintext files at
   `<synloqHome>/credentials/<project-key>/<agentId>.token` (mode `0600`); the relay
-  keeps only SHA-256 hashes in `<synloqHome>/credentials/<project-key>.json`.
+  keeps SHA-256 hashes in `<synloqHome>/credentials/<project-key>.json`. These are
+  **authentication-equivalent secrets**, not safe-to-disclose verifiers. A store
+  leak requires rotating every affected role, including `operator`. Treat copies
+  and backups as credential leaks too; never print or commit the hashes.
 - **Rotation replaces** all previously issued hashes of the role: every older token
   becomes invalid immediately. Re-issuing without rotation (lost state, fresh init)
   is _not_ revocation — old tokens keep working while their hashes remain in the
-  credential store.
-- Running MCP channel processes hold their token in memory. After rotation the
-  affected role's channels must be restarted (close/reopen the chat's MCP server or
-  the client conversation); the relay itself does not need a restart — it
-  authenticates against the credential store on every request, so a rotated token
-  works as soon as the channel reloads it. A `401` after rotation almost always
-  means the channel was not restarted.
+  credential store. Rotation changes V/kid, so outstanding challenges fail closed;
+  an already admitted operation may finish using its verified request context.
+- MCP channels re-read their token files for each request. A fresh request can
+  self-heal after rotation; an in-flight request may fail. Static-token CLI/adapter
+  clients require reloading/restarting. Restart the affected channel if failures
+  persist, and check its credential path. The relay re-reads the store at challenge
+  issuance and request verification; no relay restart is needed for rotation.
 - Both commands are idempotent in their own sense: repeating `revoke-token` succeeds
   with an "already absent" note; repeating `rotate-token` performs a new rotation.
 
@@ -63,10 +67,10 @@ Behavior:
    last events are readable via `synloq doctor --project-root <path>` under
    the `audit` section.
 
-Afterwards: restart the role's MCP channels. Generated Kimi Work channels re-read
-the token file on process start, so restarting the channel (or letting the host
-respawn it) is sufficient. A `401`/`UNAUTHORIZED` from a channel that was not
-restarted is expected, not a malfunction.
+Afterwards: verify the next authenticated operation. MCP channels re-read the
+token file on each request; a request already in flight may fail during rotation.
+Static-token adapters need a restart. If the MCP channel continues to report
+`UNAUTHORIZED`, verify its credential path and restart it before retrying.
 
 For the operator credential use `--agent-id operator` and then update every manual
 CLI invocation that references the old operator token file contents.
@@ -104,8 +108,9 @@ doctor --repair` fixes both by re-issuing the token file and re-rendering
    changes nothing on a healthy setup. Repair does not update the installed
    plugin copy — a `plugin.stale` flag still requires Install/Update in the
    host.
-1. If this follows a rotation: restart the role's MCP channels first — running
-   channels hold the old token in memory, and the relay already rejects it.
+1. If this follows a rotation: retry a fresh request after checking the token file.
+   Restart static-token adapters or a channel whose authentication failures persist.
+   Auth-v2 outstanding challenges for the old credential are invalidated.
 2. Confirm which token file the channel's MCP configuration points to
    (`credentialPath` in the role's MCP JSON under
    `<synloqHome>/runtime/mcp/<agentId>.json`).

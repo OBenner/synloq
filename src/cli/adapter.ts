@@ -42,7 +42,7 @@ export async function startStandaloneAdapter(
 ): Promise<StandaloneAdapterHandle> {
   const loaded = await loadAdapterConfiguration(configPath);
   const { configuration } = loaded;
-  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token);
+  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token, configuration);
 
   if (configuration.kind === "opencode") {
     const authToken =
@@ -201,7 +201,7 @@ export async function runStandaloneClaudeHook(
   if (configuration.kind !== "claude") {
     throw new SynloqError("INVALID_INPUT", "Claude hooks require a Claude adapter configuration");
   }
-  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token);
+  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token, configuration);
   await runClaudeHook(
     relay,
     {
@@ -222,6 +222,6 @@ export async function runStandaloneCodexHook(
   if (configuration.kind !== "codex") {
     throw new SynloqError("INVALID_INPUT", "Codex hooks require a Codex adapter configuration");
   }
-  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token);
+  const relay = new RelayHttpClient(configuration.relayUrl, () => loaded.token, configuration);
   await runCodexHook(relay, configuration, io);
 }

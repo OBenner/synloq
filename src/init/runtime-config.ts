@@ -35,6 +35,7 @@ export function relativeConfigPath(configDir: string, target: string): string {
 }
 
 export interface RoleRuntimeConfigInput {
+  project: string;
   relayUrl: string;
   /** Project key — used to render the credential path relative to the config. */
   projectKey: string;
@@ -59,6 +60,8 @@ export interface RoleRuntimeConfigInput {
  */
 export function roleRuntimeConfig(input: RoleRuntimeConfigInput): Record<string, unknown> {
   return {
+    project: input.project,
+    agentId: input.agentId,
     relayUrl: input.relayUrl,
     ...relativeHomePaths(input.projectKey, input.agentId),
     language: input.language,
