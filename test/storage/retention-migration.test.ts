@@ -5,7 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
 import { SynloqError } from "../../src/domain/errors.js";
-import { CURRENT_SCHEMA_VERSION, openDatabase } from "../../src/storage/sqlite.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  openDatabase,
+  v5RebuildDecision,
+} from "../../src/storage/sqlite.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -140,4 +144,18 @@ it("names both versions and the escape hatch when the DB is newer than the binar
   expect(failure.message).toContain(`supports up to ${CURRENT_SCHEMA_VERSION}`);
   expect(failure.message).toContain("npm i -g synloq@latest");
   expect(failure.message).toContain("forward-only");
+});
+
+it("v5 rebuild skips when a racing migrator already committed CURRENT (#106 review)", async () => {
+  // Deterministic unit for the racing-migrator guard: the pre-BEGIN read may
+  // still say 5 while another connection already committed v6. The rebuild
+  // transaction must skip, not refuse. (Cross-process interleaving repro:
+  // staff1 review-106-race.mjs, 2026-11-17.)
+  expect(v5RebuildDecision(5)).toBe("skip");
+  expect(v5RebuildDecision(CURRENT_SCHEMA_VERSION)).toBe("skip");
+  expect(v5RebuildDecision(0)).toBe("rebuild");
+  expect(v5RebuildDecision(4)).toBe("rebuild");
+  expect(v5RebuildDecision(undefined)).toBe("refuse");
+  expect(v5RebuildDecision(-1)).toBe("refuse");
+  expect(v5RebuildDecision(CURRENT_SCHEMA_VERSION + 1)).toBe("refuse");
 });

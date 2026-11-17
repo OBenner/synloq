@@ -136,6 +136,26 @@ export function withTransaction<T>(database: DatabaseSync, operation: () => T): 
 /** Current on-disk schema version. Bumped by additive forward-only migrations. */
 export const CURRENT_SCHEMA_VERSION = 6;
 
+/**
+ * Whether the v5-rebuild transaction should run, given the version re-read
+ * INSIDE BEGIN IMMEDIATE. A racing migrator may have committed CURRENT while
+ * this connection still holds the pre-transaction read (#106 review, 2026-11-17)
+ * — skipping on CURRENT is what keeps that race fail-soft instead of
+ * "unsupported user_version". Unknown versions stay a hard refuse.
+ */
+export function v5RebuildDecision(
+  lockedVersion: number | undefined,
+): "rebuild" | "skip" | "refuse" {
+  if (lockedVersion === 5 || lockedVersion === CURRENT_SCHEMA_VERSION) return "skip";
+  if (
+    typeof lockedVersion !== "number" ||
+    lockedVersion < 0 ||
+    lockedVersion > CURRENT_SCHEMA_VERSION
+  )
+    return "refuse";
+  return "rebuild";
+}
+
 export function openDatabase(path: string, options?: { readOnly?: boolean }): DatabaseSync {
   const readOnly = options?.readOnly === true && path !== ":memory:";
   let database: DatabaseSync | undefined;
@@ -186,10 +206,13 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
     // validate the remaining quarantine FK before committing the forward migration.
     migrated.exec("PRAGMA foreign_keys = OFF");
     withTransaction(migrated, () => {
-      // Another process may have migrated while BEGIN IMMEDIATE waited.
+      // Another process may have migrated while BEGIN IMMEDIATE waited — all
+      // the way to CURRENT (v6), not just to the v5 rebuild this transaction
+      // performs.
       const lockedVersion = migrated.prepare("PRAGMA user_version").get()?.user_version;
-      if (lockedVersion === 5) return;
-      if (typeof lockedVersion !== "number" || lockedVersion < 0 || lockedVersion > 4) {
+      const decision = v5RebuildDecision(lockedVersion as number | undefined);
+      if (decision === "skip") return;
+      if (decision === "refuse") {
         throw new Error(`unsupported SQLite user_version: ${lockedVersion}`);
       }
       migrated.exec(schema);
