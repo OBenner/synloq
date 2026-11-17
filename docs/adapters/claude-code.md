@@ -91,6 +91,12 @@ See [README.md](README.md) for shared adapter configuration rules and the proces
 
 ## Claude Desktop (Code tab)
 
+For the separate opt-in Claude Code CLI delivery path, see the
+[persisted-session nudger design and operator procedure](../design/2026-11-17-claude-nudge.md).
+It resumes an explicitly handed-off persisted session; live UI refresh remains
+unverified and raw concurrent manual resume is unsupported. It does not enable
+Claude Desktop push or change the channel activation gates above.
+
 **Live status 2026-11-15: MCP inbox VERIFIED, active delivery UNSUPPORTED (disabled), per-role server isolation UNVERIFIED.** Executed runbook: `docs/runbooks/2026-11-15-claude-desktop-live-dod.md`; audited against the relay database.
 
 Desktop differs from the CLI: there are no launch flags and no development-channel loading, so the channel protocol and the activation gate above do not apply. What works is the MCP inbox pattern on per-role project folders:

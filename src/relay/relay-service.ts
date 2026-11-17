@@ -182,7 +182,7 @@ export class RelayService {
       try {
         this.observer?.created(result.message);
       } catch {
-        /* Best-effort observation only. */
+        /* Observation cannot undo durable send. */
       }
     }
     return result.message;
