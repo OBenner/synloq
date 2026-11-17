@@ -41,6 +41,7 @@ import { startRetentionSweep } from "../relay/retention.js";
 import { startCodexNudger } from "../relay/codex-nudger-lifecycle.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
+import { acquireServeLock, type ServeLock } from "../relay/serve-lock.js";
 import { SQLiteMessageStore, type PauseScope } from "../storage/message-store.js";
 import { SessionStore } from "../storage/session-store.js";
 import {
@@ -145,6 +146,10 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
+  // Issue #110: exactly one serve per project database — the advisory lock is
+  // taken before any storage write. A second serve fails ALREADY_RUNNING with
+  // the owning PID; ensureRelay treats that like a busy port and re-probes.
+  const serveLock = await acquireServeLock(paths.database);
   const messages = new SQLiteMessageStore(paths.database, clock);
   const audit = new FileSecurityAuditLog(auditLogPath(paths.home, paths.key));
   // The participant registry is hot (issue #36): adding a role to
@@ -222,7 +227,11 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
           try {
             openSessions.close();
           } finally {
-            messages.close();
+            try {
+              messages.close();
+            } finally {
+              await serveLock.release();
+            }
           }
         }
       },
@@ -233,6 +242,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     if (server) await server.close();
     sessions?.close();
     messages.close();
+    await serveLock.release();
     throw error;
   }
 }

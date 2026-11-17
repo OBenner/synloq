@@ -104,6 +104,23 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
         throw unavailable();
       }
     }
+    // ALREADY_RUNNING (issue #110): a racing channel won the database lock
+    // but may still be binding its port — give it a bounded moment before
+    // declaring the endpoint unavailable.
+    if (hasErrorCode(error, "ALREADY_RUNNING")) {
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        try {
+          return await compatible();
+        } catch (probeError) {
+          if (!hasErrorCode(probeError, "ECONNREFUSED") || Date.now() >= deadline) {
+            if (probeError instanceof SynloqError) throw probeError;
+            throw unavailable();
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+    }
     throw unavailable();
   }
 
