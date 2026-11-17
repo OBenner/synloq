@@ -16,10 +16,17 @@ its inbox.
 
 ## 401 / UNAUTHORIZED after token rotation
 
-Rotation rewrites the role's token file, but running channels keep their old
-token in memory. Restart the affected role channel (or the whole client) after
-`rotate-token`/`revoke-token`. See
+Rotation rewrites the role's token file. MCP channels re-read it for each request,
+so a fresh request can self-heal; an in-flight auth-v2 challenge may fail during
+rotation. Static-token adapters need a restart. If failures persist, check the
+channel's credential path and restart that channel. Revocation issues no replacement
+credential. See
 [security/token-rotation.md](security/token-rotation.md).
+
+Auth-v2 also requires updating relay and clients together and regenerating channel
+configs with trusted `project`/`agentId`; old/new combinations deliberately fail.
+The public health marker is not proof of an authenticated relay. See the
+[coordinated rollout](security/transport-auth-v2.md).
 
 ## I changed `synloq.yaml` and nothing happened
 
