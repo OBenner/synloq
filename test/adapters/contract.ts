@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inactiveReason, type Clock, type DeliveryAdapter } from "../../src/adapters/types.js";
+import { extractEnvelope } from "../../src/adapters/reference.js";
 import type { Message } from "../../src/domain/message.js";
 import {
   PROTOCOL_VERSION,
@@ -204,9 +205,12 @@ export function runAdapterContract(name: string, factory: AdapterHarnessFactory)
 
       await expectDelivered(h, message);
 
-      expect(h.visible[0]?.content).toBe(
+      // Frame v2 (#105): visible content is header + body + fenced envelope;
+      // the machine envelope is preserved verbatim inside the frame.
+      expect(extractEnvelope(h.visible[0]!.content)).toBe(
         `<synloq project="${message.project}" from="${message.from}" message="${message.id}" thread="${message.threadId}">\n${message.text}\n</synloq>`,
       );
+      expect(h.visible[0]?.content).toContain("📬 Synloq");
     });
 
     it("deduplicates retry", async () => {
