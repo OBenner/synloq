@@ -67,10 +67,10 @@ Behavior:
    last events are readable via `synloq doctor --project-root <path>` under
    the `audit` section.
 
-Afterwards: restart the role's MCP channels. Generated Kimi Work channels re-read
-the token file on process start, so restarting the channel (or letting the host
-respawn it) is sufficient. A `401`/`UNAUTHORIZED` from a channel that was not
-restarted is expected, not a malfunction.
+Afterwards: verify the next authenticated operation. MCP channels re-read the
+token file on each request; a request already in flight may fail during rotation.
+Static-token adapters need a restart. If the MCP channel continues to report
+`UNAUTHORIZED`, verify its credential path and restart it before retrying.
 
 For the operator credential use `--agent-id operator` and then update every manual
 CLI invocation that references the old operator token file contents.
@@ -108,8 +108,9 @@ doctor --repair` fixes both by re-issuing the token file and re-rendering
    changes nothing on a healthy setup. Repair does not update the installed
    plugin copy — a `plugin.stale` flag still requires Install/Update in the
    host.
-1. If this follows a rotation: restart the role's MCP channels first — running
-   channels hold the old token in memory, and the relay already rejects it.
+1. If this follows a rotation: retry a fresh request after checking the token file.
+   Restart static-token adapters or a channel whose authentication failures persist.
+   Auth-v2 outstanding challenges for the old credential are invalidated.
 2. Confirm which token file the channel's MCP configuration points to
    (`credentialPath` in the role's MCP JSON under
    `<synloqHome>/runtime/mcp/<agentId>.json`).

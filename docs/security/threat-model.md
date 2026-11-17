@@ -91,8 +91,9 @@ stdio channels authenticated by credential-derived auth-v2 MAC proofs.
 - **Single relay writer is a discipline, not a mechanism.** Running two writers for
   one project database preserves storage integrity (SQLite serializes writes) but
   splits in-memory rate limiting and dispatching.
-- **No per-identity connection limits.** An authenticated participant can exhaust
-  relay resources with parallel long polls (tracked as M2).
+- **Resource caps are not availability guarantees.** Per-identity and relay-wide
+  long-poll caps (M2) and auth-v2 challenge limits bound admitted work; a local
+  attacker can still compete for capacity or hold unauthenticated connections.
 - **Token files and authentication-equivalent hashes are secrets at rest**;
   file permissions are the only barrier.
 
