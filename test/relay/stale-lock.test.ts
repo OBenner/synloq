@@ -1,12 +1,34 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it, vi } from "vitest";
 import { acquireServeLock, probeProcess } from "../../src/relay/serve-lock.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }));
+});
+it("retains both the original refusal and a failing rollback", async () => {
+  const db = fixture();
+  const rollbackError = new Error("rollback failed");
+  const exec = DatabaseSync.prototype.exec;
+  vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (
+    this: DatabaseSync,
+    sql: string,
+  ) {
+    if (sql === "ROLLBACK") throw rollbackError;
+    return exec.call(this, sql);
+  });
+  const error = await acquireServeLock(db, { probePid: () => "alive" }).catch(
+    (error: unknown) => error,
+  );
+  expect(error).toMatchObject({ code: "STORAGE_FAILURE", cause: expect.any(AggregateError) });
+  const aggregate = (error as Error).cause as AggregateError;
+  expect(aggregate.errors[0]).toMatchObject({ code: "ALREADY_RUNNING" });
+  expect(aggregate.errors[1]).toBe(rollbackError);
+  expect(aggregate.cause).toBe(aggregate.errors[0]);
 });
 function fixture(body = JSON.stringify({ pid: 12345, startedAt: "2026-01-01" })) {
   const root = mkdtempSync(join(tmpdir(), "synloq-stale-"));

@@ -51,7 +51,13 @@ function locked<T>(path: string, action: () => T): T {
       db.exec("COMMIT");
       return result;
     } catch (error) {
-      db.exec("ROLLBACK");
+      try {
+        db.exec("ROLLBACK");
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "SQLite transaction and rollback failed", {
+          cause: error,
+        });
+      }
       throw error;
     }
   } catch (error) {
