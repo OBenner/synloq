@@ -451,4 +451,22 @@ describe("standalone adapter CLI", () => {
     expect(runHook).toHaveBeenCalledWith("/tmp/claude.json");
     expect(output()).toEqual({ stdout: "", stderr: "" });
   });
+
+  it("forwards a declared host timeout and rejects a limit without startup margin", async () => {
+    const { io } = testIo();
+    const runHook = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      runMain(["claude-hook", "--config", "/tmp/claude.json", "--host-timeout-ms", "3000"], io, {
+        runHook,
+      }),
+    ).resolves.toBe(0);
+    expect(runHook).toHaveBeenCalledExactlyOnceWith("/tmp/claude.json", { hostTimeoutMs: 3000 });
+    runHook.mockClear();
+    await expect(
+      runMain(["claude-hook", "--config", "/tmp/claude.json", "--host-timeout-ms", "1000"], io, {
+        runHook,
+      }),
+    ).resolves.toBe(1);
+    expect(runHook).not.toHaveBeenCalled();
+  });
 });
