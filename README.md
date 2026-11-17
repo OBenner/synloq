@@ -6,22 +6,48 @@
 ![Node.js >= 24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)
 [![M8ven Score](https://m8ven.ai/badge/mcp/obenner-synloq-13lfif?v=217ad9235fa6c5a72917940b272eaa78)](https://m8ven.ai/mcp/obenner-synloq-13lfif?s=readme)
 
-Synloq is a local-first coordination plugin for visible coding-agent chats. Generic initialization creates explicitly configured Kimi Work client conversations for arbitrary project roles. A supervised loopback HTTP relay owns durable SQLite state, starts automatically with the generated role channels, and gives each chat only six agent-facing MCP tools.
+Synloq is a local-first coordination layer between **visible** coding-agent
+chats. A supervised loopback HTTP relay owns durable SQLite state, starts
+automatically with the generated role channels, and gives each role chat only
+six agent-facing MCP tools (`synloq_list`, `synloq_send`, `synloq_reply`,
+`synloq_inbox`, `synloq_wait`, `synloq_ack`).
 
-Synloq is not an orchestrator. It does not hide work in replacement chats, run one-shot model subprocesses, execute workflows autonomously, operate a dashboard, merge or push changes, or deliver to remote clients. The operator can inspect and steer every visible role conversation directly.
+Synloq is not an orchestrator. It does not hide work in replacement chats, run
+one-shot model subprocesses, execute workflows autonomously, operate a
+dashboard, merge or push changes, or deliver to remote clients. The operator
+can inspect and steer every visible role conversation directly.
 
-> **Alpha (0.x).** Synloq is pre-1.0: the wire protocol and on-disk formats may change between releases, and database migrations are forward-only. Pin a commit and read the release notes before upgrading.
+> **Alpha (0.x).** Synloq is pre-1.0: the wire protocol and on-disk formats may
+> change between releases, and database migrations are forward-only. Pin a
+> commit and read the release notes before upgrading.
 
 ## Quickstart
 
-1. Build from a checkout: `pnpm install --frozen-lockfile && pnpm build` (Node.js 24+).
-2. Register `plugins/synloq` as a personal plugin source in Kimi Work and use the single Install/Update action.
-3. In a project chat, ask the agent to **Initialize Synloq for this project** and confirm each role's name and responsibilities.
-4. The role chats appear in the project and coordinate through the local relay automatically — no separate server or manual MCP configuration is required.
+Prerequisite: Node.js 24+.
+
+```bash
+npx synloq@latest init --project-root /absolute/path/to/project
+```
+
+Then pick your host:
+
+- **Kimi Work** — register the generated `plugins/synloq` as a personal plugin
+  source and use the single Install/Update action. Role chats appear and
+  coordinate through the local relay automatically.
+- **Other hosts** (OpenCode, Codex CLI/Desktop, Claude Desktop) — each host
+  registers its MCP channel natively; see
+  [docs/adapters/](docs/adapters/README.md).
+
+Verify with `synloq doctor --project-root <project>`. Full walkthrough
+(installation, the `synloq.yaml` manifest, relay lifecycle, the six tools):
+[docs/guide/installation.md](docs/guide/installation.md).
 
 ## How each host connects
 
-Synloq is host-agnostic: the relay, the CLI, and the per-role MCP channels know nothing about any specific client. A role joins a host by registering its MCP server in whatever form that host natively supports — there are no per-IDE plugin codebases.
+Synloq is host-agnostic: the relay, the CLI, and the per-role MCP channels know
+nothing about any specific client. A role joins a host by registering its MCP
+server in whatever form that host natively supports — there are no per-IDE
+plugin codebases.
 
 | Host           | Connection mechanism                                                                                                                                                       | Live status                                                                                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -32,351 +58,73 @@ Synloq is host-agnostic: the relay, the CLI, and the per-role MCP channels know 
 | Claude Desktop | MCP config; inbox and lifecycle state; next-interaction reminder injection confirmed on the Code tab                                                                       | **Inbox + next-interaction verified** (2026-11-16); no autonomous wake — upstream request tracked (anthropics/claude-code#110364)                                                          |
 | ZCode          | API-created chats do not load the workspace MCP config (vendor limitation)                                                                                                 | **Blocked** — manual UI retry pending                                                                                                                                                      |
 
-Role placement is declared per role in `synloq.yaml` (the `host:` field) and reconciled by `synloq init` ([ADR 0004](docs/adr/0004-role-placement-and-claim.md)). Where a host exposes no session API, init emits an explicit next-steps checklist or a one-time claim code — never a silent degradation.
+Role placement is declared per role in `synloq.yaml` (the `host:` field) and
+reconciled by `synloq init`
+([ADR 0004](docs/adr/0004-role-placement-and-claim.md)). Where a host exposes
+no session API, init emits an explicit next-steps checklist or a one-time
+claim code — never a silent degradation.
 
 ## Clone and run your own stand
 
-A clone of a project that commits a `synloq.yaml` is an **independent stand**, not a node of someone else's team. The committed manifest declares the default role roster and travels with the repository; credentials, session bindings, and the relay database are always machine-local under the Synloq home and are never committed.
+A clone of a project that commits a `synloq.yaml` is an **independent stand**,
+not a node of someone else's team. The committed manifest declares the default
+role roster; credentials, session bindings, and the relay database are always
+machine-local under the Synloq home and are never committed.
 
 1. Clone the repository.
-2. Run `synloq init` against your checkout — it reconciles the manifest into _your_ hosts: your own role sessions, per-role tokens, and your own loopback relay.
-3. The role chats appear in your client and coordinate through your local relay. Two clones never see each other: identical role names are different identities on different stands.
+2. Run `synloq init` against your checkout — it reconciles the manifest into
+   _your_ hosts: your own role sessions, per-role tokens, and your own loopback
+   relay.
+3. The role chats appear in your client and coordinate through your local
+   relay. Two clones never see each other: identical role names are different
+   identities on different stands.
 
-The project key is derived deterministically from the canonical project root path, so two clones at the same absolute path on different machines share a key value. This is harmless because the relay is loopback-only per machine; revisit this assumption if remote relays are ever introduced.
+The project key is derived deterministically from the canonical project root
+path, so two clones at the same absolute path on different machines share a key
+value. This is harmless because the relay is loopback-only per machine; revisit
+this assumption if remote relays are ever introduced.
 
-Want a different roster or different hosts per role on your stand without forking the committed manifest? Add a gitignored `synloq.local.yaml` next to `synloq.yaml`. It is merged over the committed manifest at load time, key by key: an overlay entry for an existing role overrides only the fields it names (`title`, `role`, `host`, `placement`), a full `title` + `role` entry adds a new role, and `language`/`retention` override the defaults. The overlay must not redefine `project` — the namespace is shared. A malformed overlay fails loud at load instead of silently falling back.
+Want a different roster or different hosts per role on your stand without
+forking the committed manifest? Add a gitignored `synloq.local.yaml` overlay
+next to `synloq.yaml` — it merges key by key over the committed manifest
+(roles can be added or partially overridden; `project` is the shared namespace
+and must not be redefined; a malformed overlay fails loud). Details:
+[docs/guide/installation.md](docs/guide/installation.md).
 
 ## Support status
 
-**Supported (verified live):**
-
-- **Kimi Work** visible delivery to an exact bound client conversation: visible two-way turns, autonomous acknowledgement/reply, idempotent resend, and busy deferral — verified on the local CTO ↔ Architect stand, 2026-11-11.
-- **Kimi Work** generic arbitrary-role initialization and automatic relay startup/recovery: exact visible chat creation, idempotent reconciliation, two visible reply cycles, role-initiated acknowledgements, live host respawn recovery — verified on an isolated local Product ↔ Reviewer stand, 2026-11-11. Surviving-peer election is covered by a real loopback/SQLite integration test, not claimed as live-host evidence.
-- **OpenCode** active delivery — verified by the live evidence matrix on the adopted stand, 2026-11-13 (`docs/runbooks/2026-11-13-opencode-adapter-matrix.md`, runs r3/r3b); the §8 fault-injection rows of `test/e2e/real-clients.md` remain pending.
-
-**Experimental (not verified live)** — see [docs/adapters/](docs/adapters/README.md):
-
-- Claude Code active delivery — **UNVERIFIED** until the manual evidence matrix is executed. Claude Desktop is inbox-only (no active delivery).
-- Codex MCP inbox and lifecycle state reporting (active delivery unsupported) — CLI live run in progress; Desktop configured per [ADR 0004](docs/adr/0004-role-placement-and-claim.md), verification pending.
-- ZCode — **BLOCKED**: API-created chats do not load the workspace MCP config (vendor limitation; manual UI retry pending).
-- The reference adapter is covered by automated contract and end-to-end tests; controlled transports and fake SDK clients are contract evidence, not live-client evidence.
-
-Known-unverified regardless of host: host-enforced per-chat MCP isolation, Kimi Code CLI active delivery. Controlled tests are not live-client evidence. See `docs/client-compatibility.md` and `test/e2e/real-clients.md`.
-
-## Requirements and installation
-
-- Node.js 24 or newer (SQLite support is provided by `node:sqlite`).
-- pnpm 12.18.0 for a repository checkout.
-
-One-command install without a checkout:
-
-```bash
-npx synloq@latest init --project-root /absolute/path/to/project
-```
-
-`npx` downloads the published package, which ships the compiled `dist` runtime and the Kimi Work plugin template; `init` renders the role channels from that template directly.
-
-From a clean checkout instead:
-
-```bash
-pnpm install --frozen-lockfile
-pnpm build
-```
-
-To create a local installable archive without publishing:
-
-```bash
-pnpm pack --pack-destination .tmp-pack
-```
-
-The archive contains the compiled `dist` runtime, the `plugins` template, README, and package metadata. It excludes sources, tests, runtime databases, credentials, logs, IDE state, and message bodies.
-
-The examples below use the installed `synloq` command (`npm i -g synloq` once, or prefix any command with `npx synloq@latest`). From a repo checkout the equivalent is `node dist/cli/main.js`.
-
-## 1. Install the plugin and initialize roles
-
-For Kimi Work, register `plugins/synloq` through the supported personal-plugin source flow and install it in the client. Ask the agent to **Initialize Synloq for this project**. The skill confirms the project name and each role's stable ID, display name, responsibilities, boundaries, and optional instructions before running `synloq init`.
-
-With no role arguments, `synloq init` starts the same confirmation wizard directly:
-
-```bash
-synloq init --project-root /absolute/path/to/project
-```
-
-A non-interactive example with two arbitrary roles:
-
-```bash
-synloq init \
-  --project-root /absolute/path/to/project \
-  --project example \
-  --role "product:Product:Own scope and priorities" \
-  --role "reviewer:Reviewer:Review evidence and risks" \
-  --plugin-source /secure/synloq-plugin \
-  --synloq-home /secure/synloq-home \
-  --non-interactive
-```
-
-Initialization creates ordinary visible Kimi Work client chats without activating them, binds each exact conversation to its role, writes resumable state after every creation, and renders the personal plugin source with one authenticated MCP channel per role. Re-running the same command reconciles exact bindings and does not create duplicate chats. Use `--conversation <role-id:conversationKey>` to bind an existing visible chat instead.
-
-The JSON result contains role bindings and generated file paths, but no plaintext tokens. Per-role token files are reused from the explicit Synloq home and never copied into plugin source. Do not commit token files, MCP configuration, SQLite files, logs, evidence containing message bodies, or IDE state.
-
-When the result contains `registrationRequired: true`, use the client's single **Install/Update** action for the generated personal plugin. The result also carries `channelsChanged` and a human-readable `nextStep`: when a re-init did not change the channel set, no Install/Update is needed; when it did, the next step says so explicitly (relay and role tokens need no restart). Source registration, plugin installation, channel availability, and end-to-end readiness are different states: do not claim readiness until both generated role channels have been checked. Adding a role to a live project is covered by [docs/add-role.md](docs/add-role.md).
-
-An existing `synloq.yaml` can supply the same role declarations without `--role` arguments:
-
-```yaml
-version: 1
-project: example
-language: en # en | ru — agent-facing wrapper and role instructions (default en)
-retention:
-  days: 7 # optional; acknowledged message retention (default 7)
-agents:
-  product:
-    title: Product
-    role: Own scope and priorities
-  reviewer:
-    title: Reviewer
-    role: Review evidence and risks
-```
-
-The optional top-level `language` field (`en` or `ru`, fail-loud on any other value) selects the language of the delivered-message wrapper and the generated role instructions. Protocol frames, reason codes, and relay notices stay English. Init also accepts `--language en|ru`; re-running init without the flag preserves the language already in `synloq.yaml`. A language change takes effect after re-init and a channel restart, like any other manifest change. A missing locale key falls back to English with a warning.
-
-The optional `retention.days` setting accepts integers from 1 to 36500 (default 7).
-The relay periodically removes only acknowledged messages older than that many days;
-unread messages remain available. Idempotency records last the full seven-day window
-even when a shorter policy removes bodies earlier. Init preserves this setting;
-restart the relay after changing it. See [retention, migration and limits](docs/storage-retention.md).
-
-## 2. Automatic relay lifecycle
-
-Generated Kimi Work role channels reuse or start the project relay automatically at `http://127.0.0.1:4100`; no separate `synloq serve` terminal is required. The first compatible MCP process owns the loopback listener and SQLite writer, while other roles reuse it after authenticated project validation. If the owner stops, a surviving channel performs bounded reconnection and listener election, invalidates its old host registration, and registers a new generation after recovery. Durable messages remain in SQLite.
-
-Only explicit loopback HTTP origins with nonzero ports are accepted. An unrelated listener, wrong project, invalid credential, malformed response, or ambiguous endpoint fails closed instead of starting a second writer. A Kimi Work delivery failure does not remove the six MCP inbox tools while the relay remains healthy.
-
-For advanced diagnostics or a custom standalone topology, `serve` remains available:
-
-```bash
-synloq serve \
-  --project-root /absolute/path/to/project \
-  --host 127.0.0.1 \
-  --port 4100
-```
-
-The command prints a `relayUrl` and runs until SIGINT or SIGTERM. Port `0` selects a free port for automated tests. Run exactly one writer for a project database; do not start this command alongside the generated automatic topology unless they intentionally share the single compatible relay.
-
-### Kimi Work embedded visible delivery
-
-Generic initialization writes a strict `kimiWork` binding and explicit `synloqHome` for each role. The same MCP child process then supervises the relay and owns the active-delivery runner; no separate adapter process is required:
-
-```json
-{
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/synloq-home/tokens/reviewer.token",
-  "synloqHome": "/secure/synloq-home",
-  "kimiWork": {
-    "projectRoot": "/absolute/path/to/project",
-    "agentId": "reviewer",
-    "conversationKey": "agent:main:main:conversation:exact-client-conversation-uuid",
-    "workAgentId": "main"
-  }
-}
-```
-
-`agentId` is the Synloq role declared in `synloq.yaml`; it is distinct from Kimi Work's `workAgentId`. The relay authenticates the role token and validates its project, role, and session binding during adapter registration. `conversationKey` must identify an existing visible `origin: "client"` conversation in the same canonical project workspace. The installed Kimi Work local-control endpoint and token are discovered in memory through `kimi-daimon status --json`; tokens are never added to role JSON. `KIMI_WORK_EXECUTABLE`, `KIMI_WORK_CLI`, and `KIMI_WORK_CONFIG` are optional installation overrides.
-
-The bridge revalidates exact metadata and fresh idle state before one `conversations.send`. `delivered` means visible user-turn admission only, not model completion, reading, acknowledgement, or task completion. The receiving agent must call `synloq_ack` after actual reading and use `synloq_reply` for the original thread. Ambiguous sends receive bounded read-only history reconciliation; they are never blindly replayed. Risky actions still require operator approval.
-
-If host initialization fails, all six MCP inbox tools remain available while relay startup succeeds. Closing the MCP process closes its runner, adapter, and Synloq registration without closing Kimi Work; it closes only a relay listener owned by that process, allowing surviving roles to recover.
-
-## 3. The six agent-facing tools
-
-| Tool           | Purpose                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| `synloq_list`  | List project participants and role descriptions.                     |
-| `synloq_send`  | Send one direct message with an idempotency key.                     |
-| `synloq_reply` | Reply to an incoming message in its original thread.                 |
-| `synloq_inbox` | Read the authenticated role's incoming history.                      |
-| `synloq_wait`  | Bounded long poll for the next incoming message; timeout is normal.  |
-| `synloq_ack`   | Acknowledge a delivered message addressed to the authenticated role. |
-
-There are no agent-facing registration, credential, pause, resume, replacement, doctor, permission, or capability-management tools.
-
-The application-level message protocol between roles and the relay (message types, envelope, idempotency, hop limit, failure handling) is specified in [docs/protocol/v1.md](docs/protocol/v1.md) (status: Accepted).
-
-### Manual MCP configuration (advanced)
-
-Generic initialization writes these files automatically. For a manual legacy setup, create a strict JSON file outside Git, for example `/secure/reviewer-mcp.json`:
-
-```json
-{
-  "relayUrl": "http://127.0.0.1:4100",
-  "credentialPath": "/secure/reviewer.token"
-}
-```
-
-This legacy shape requires a compatible relay to be running already. Automatic startup is enabled only for generated configuration with an explicit `synloqHome` and exact `kimiWork` binding. The stdio command is:
-
-```bash
-synloq mcp --config /secure/reviewer-mcp.json
-```
-
-(From a repo checkout the same command is `node /absolute/path/to/synloq/dist/cli/main.js mcp --config /secure/reviewer-mcp.json`.)
-
-Use the recipient role's own credential in each chat. Do not place a token in JSON or on a command line.
-
-## 4. Other hosts (experimental)
-
-Active-delivery adapters for Claude Code and OpenCode, and the Codex MCP inbox bridge, are implemented but **not verified against live clients**. They are documented separately:
-
-- [docs/adapters/README.md](docs/adapters/README.md) — adapter model, shared configuration rules, process topology
-- [docs/adapters/claude-code.md](docs/adapters/claude-code.md) — Claude Code channel child (UNVERIFIED)
-- [docs/adapters/opencode.md](docs/adapters/opencode.md) — OpenCode sidecar process (UNVERIFIED)
-- [docs/adapters/codex.md](docs/adapters/codex.md) — Codex MCP inbox and lifecycle state (UNVERIFIED)
-
-Do not rely on these paths in production until the manual evidence matrix in `test/e2e/real-clients.md` has been executed for the host in question.
-
-## 5. Operator controls and diagnostics
-
-A role has one visible session binding. Re-registering the same session supports reconnect; binding a different session requires explicit operator replacement:
-
-```bash
-synloq replace-session \
-  --relay-url http://127.0.0.1:4100 \
-  --credential /secure/operator.token \
-  --agent-id arch \
-  --session-id replacement-visible-session \
-  --protocol-version 1 \
-  --active-delivery true \
-  --state-reporting true \
-  --client-idempotency true
-```
-
-Use capabilities observed from the replacement adapter, never values inferred from a client version. Update the standalone adapter config to the same session before restarting it.
-
-A role has a single writer: the chat that owns the registered session. Other chats holding the same role's token can read (`synloq_inbox`, `synloq_list`, `synloq_wait`) but their writes (`synloq_send`, `synloq_reply`, `synloq_ack`) are rejected with `NOT_WRITER` naming the active writer session — takeover goes through `synloq replace-session` only, and every refusal lands in the audit log. Channel tooling injects the writer proof automatically from the role's MCP config (`kimiWork.conversationKey`, `opencode.sessionId`, or an explicit top-level `sessionId` for hook-style hosts); agents never set it by hand. Roles without any registered session keep token-only writes — the guarantee starts with the first registration.
-
-Pause or resume delivery with the operator credential:
-
-```bash
-synloq pause \
-  --relay-url http://127.0.0.1:4100 \
-  --credential /secure/operator.token \
-  --scope participant --scope-id arch
-
-synloq resume \
-  --relay-url http://127.0.0.1:4100 \
-  --credential /secure/operator.token \
-  --scope participant --scope-id arch
-```
-
-Scopes are `project`, `participant`, and `thread`; named scopes require `--scope-id`. Pause gates are durable and do not delete messages.
-
-Rotate or revoke a role credential with the operator token file. Rotation replaces every stored hash of the role and rewrites its token file, so previously issued tokens stop working immediately; revocation removes the hashes without issuing a new token. Running channels keep their old token in memory, so restart the role's channel after a rotation. Command output never contains the token itself. See `docs/security/token-rotation.md` for the incident runbook.
-
-```bash
-synloq rotate-token \
-  --project-root /absolute/path/to/project \
-  --agent-id arch \
-  --credential /secure/operator.token
-
-synloq revoke-token \
-  --project-root /absolute/path/to/project \
-  --agent-id arch \
-  --credential /secure/operator.token
-```
-
-Inspect local storage and registered sessions:
-
-```bash
-synloq doctor --project-root /absolute/path/to/project
-synloq doctor --help
-```
-
-For a human-readable per-role queue view — state, queued count, and why a role
-is waiting (`busy`, stale session, awaiting ack, operator pause) — run:
-
-```bash
-synloq status --project-root /absolute/path/to/project
-synloq status --project-root . --json   # machine-readable for scripting
-```
-
-`synloq status` reads the same local storage as `doctor`, never talks to the
-relay, and always exits 0: failures are reported as rows, not exit codes. It
-also surfaces acked messages that expected a reply but stayed unanswered for
-over 30 minutes. Delivered prompts carry a `+N more pending` hint when the
-recipient's backlog is non-empty.
-
-Stored-mail nudge: when a role has stored messages older than 15 minutes while
-its chat is live and idle on a push-capable host (`kimi-work`, `opencode`),
-the role's channel posts a content-free nudge into the chat ("N incoming
-message(s) waiting — run synloq_inbox") — at most once per backlog epoch,
-repeated every 30 minutes while the backlog stays unread. Busy, dead, or
-paused chats are never nudged, and the nudge never contains message text.
-Opt out per role with `"storedPing": false` in the role's channel config. On
-hosts without push, `synloq status` instead marks queued roles with a
-`no push on host <host> — check synloq_inbox manually` note.
-
-Codex Desktop has a separate, **opt-in CLI queue nudger** owned by the relay:
-[configuration and bounds](docs/adapters/codex-queue.md),
-[acceptance runbook](docs/runbooks/codex-queue-nudger.md). It queues only reminder
-IDs, at most five iterations per message with a durable 30-minute role cooldown.
-`queue accepted` does not prove delivery or turn start; unloaded chats may remain
-inactive. Actual MCP read/ack and thread RESULT remain authoritative. This does
-not enable the Codex active-delivery adapter or replace its inbox-only status.
-
-Diagnostic output: every line that long-lived processes (the MCP stdio bridge
-and the relay supervisor loop) write to stderr is prefixed with an ISO 8601 UTC
-timestamp, so an incident timeline can be reconstructed from logs alone. Deny
-decisions are additionally recorded in the security audit log at
-`~/.synloq/data/<project-key>-audit.jsonl` (one JSON object per line with `at`,
-`agentId`, `action`, `reasonCode`). Claim events are recorded the same way —
-both accepted claims and refusals (an expired claim code is operational noise
-and is not recorded). Session registrations are recorded too — accepted and
-refused (duplicate or protocol-mismatched) — with the session id, generation,
-and the client-reported `surface`, which is a hint, not proof of the client
-binary, so "who bound this role, when, and from where" is answerable from the
-log; heartbeat lease renewals are not recorded. Long-poll rejections from the
-concurrency caps (per-identity and relay-wide) are recorded with the route
-that hit the cap, so a connection-exhaustion attempt is visible in the log.
-Neither stream ever contains tokens or
-message bodies.
-
-`unknown`, stale, busy, closed, unsupported, paused, or mismatched sessions fail closed. Message text cannot grant tools, permissions, registration, or capabilities.
-
-## Runtime paths and external state
-
-By default Synloq stores per-project state under:
-
-```text
-~/.synloq/credentials/<project-key>.json
-~/.synloq/data/<project-key>.sqlite
-```
-
-Use `synloq init --synloq-home <path>` to relocate both trees for generated channels. The same absolute path is passed explicitly to the relay supervisor; it does not depend on mutable process environment. Inside generated MCP configurations the Synloq home and the credential path are stored relative to the config file, so moving the whole Synloq home tree keeps the channels valid. Only `kimiWork.projectRoot` stays absolute by nature — `synloq doctor` flags the exact config whose project root or credential file no longer resolves. Configurations generated by older releases used absolute paths and keep working; `synloq doctor --repair` rewrites them to the relative form. Legacy commands can use `SYNLOQ_HOME`. The project key is derived from the canonical project root. Keep MCP/adapter JSON, plaintext token files, logs, and manual evidence outside the repository as well. Runtime logs and evidence indexes should identify participants and message IDs only; do not commit credentials or message bodies.
-
-## Security notes and known limitations
-
-All relay traffic stays on explicit loopback HTTP origins, and every authenticated endpoint requires a per-role bearer credential. Before a role channel sends its credential, it verifies the relay's unauthenticated `GET /v1/health` marker: an unrelated process that merely occupies the relay port never receives a token.
-
-**Residual risk R1 (accepted):** the health marker is static and public. A targeted squatting process that mimics the `/v1/health` response can still capture a role token during a probe or reconnect cycle and then impersonate that role on the real relay. On multi-user machines, treat the relay port as untrusted and keep role token files as machine-local secrets. For a single-user machine this residual risk is below the significance threshold. Mutual relay authentication via a per-project challenge is tracked as the follow-up hardening in `docs/backlog.md`.
-
-Operational notes:
-
-- Role tokens are stored as plaintext files under the Synloq home; protect them like any other local credential and never commit them.
-- Database migrations are forward-only: once a newer release migrates the project database, older binaries refuse to open it.
-- Project isolation is structural at the store layer: every id-based message lookup is project-scoped in the query itself (`WHERE id = ? AND project = ?`), so cross-project access stays impossible even if a shared multi-project database or a new wire-input store method ever appears (issue #51).
-- The participant registry is hot-reloaded: adding a role to `synloq.yaml` takes effect on a running relay (the manifest is re-read when it changes and when an unknown recipient is addressed). A manifest that fails to re-parse is ignored — the relay keeps serving the last good snapshot and records a `directory`/`degraded` event in the security audit log. Removing a role still warrants a relay restart to drop its in-memory state.
-
-## Verification
-
-```bash
-pnpm verify
-pnpm vitest run test/e2e/reference.e2e.test.ts
-pnpm pack --pack-destination .tmp-pack
-synloq doctor --help
-synloq adapter --help
-synloq claude-hook --help
-synloq codex-hook --help
-```
-
-The automated reference scenario uses real relay/SQLite, real MCP in-memory transport, and the HTTP adapter path. It does not establish live Claude, OpenCode, Codex, or Kimi support. Complete `test/e2e/real-clients.md` with an operator before changing any live support status.
+Verified live on stands 2026-11-11 through 2026-11-16: Kimi Work visible
+delivery, generic init and relay recovery; OpenCode active delivery; Codex
+Desktop provisioning and queue nudger; Claude Desktop inbox + next-interaction
+reminders. Fault-injection rows and the remaining hosts are tracked in
+[docs/client-compatibility.md](docs/client-compatibility.md) and the live
+evidence matrix [test/e2e/real-clients.md](test/e2e/real-clients.md) — complete
+it with an operator before changing any live support status.
+
+## Documentation
+
+- [docs/README.md](docs/README.md) — the documentation hub: guides per task,
+  per-host adapters, protocol spec, ADRs, runbooks, security.
+- [docs/guide/installation.md](docs/guide/installation.md) — installation,
+  initialization, relay lifecycle, the six tools.
+- [docs/guide/operator.md](docs/guide/operator.md) — sessions, single-writer,
+  pause/resume, credentials, diagnostics, nudges.
+- [docs/faq.md](docs/faq.md) — troubleshooting.
+- [AGENTS.md](AGENTS.md) — **for AI assistants**: how to install and work with
+  a Synloq project (including the no-clone `npx` install path).
+
+## Security
+
+All relay traffic stays on explicit loopback HTTP origins; every authenticated
+endpoint requires a per-role credential. The full threat model, including the
+accepted residual risks (R1 health-marker squatting — mutual authentication
+tracked as follow-up hardening), operational notes, and the security audit
+trail: [docs/security/threat-model.md](docs/security/threat-model.md). Never
+commit credentials, `~/.synloq` state, or message bodies.
+
+## Development and verification
+
+Repository checkout: `pnpm install --frozen-lockfile`, then `pnpm verify`
+(format, imports, typecheck, tests, build). The automated reference scenario
+uses real relay/SQLite and in-memory MCP transport; it does not establish live
+host support. Contributing rules: [CONTRIBUTING](CONTRIBUTING.md).
