@@ -54,7 +54,11 @@ import {
   type SynloqHomeProbe,
   type PlacementHealth,
 } from "./doctor.js";
-import { collectVersions, type HostVersionProbe } from "../diagnostics/versions.js";
+import {
+  assertSupportedNode,
+  collectVersions,
+  type HostVersionProbe,
+} from "../diagnostics/versions.js";
 import {
   inspectChannelConfig,
   repairTeamConfigs,
@@ -69,6 +73,8 @@ export interface ServeOptions {
   port?: number;
   adapters?: ReadonlyMap<string, DeliveryAdapter>;
   clock?: Clock;
+  /** Test hook: evaluate a runtime other than the running process (#111). */
+  nodeVersion?: string;
 }
 
 export interface ServeHandle {
@@ -100,6 +106,8 @@ export interface DoctorCommandOptions {
   hostVersionProbe?: HostVersionProbe;
   // Issue #115: skip the versions block entirely (embedding scenarios).
   skipVersions?: boolean;
+  /** Issue #111 test hook: evaluate a runtime other than the running one. */
+  nodeVersion?: string;
   openCodeHost?: OpenCodeSessionHost;
 }
 
@@ -133,6 +141,9 @@ function manifestProject(participants: Participant[]): string {
 }
 
 export async function serveCommand(options: ServeOptions): Promise<ServeHandle> {
+  // Issue #111: fail loudly on an unsupported runtime before any write —
+  // node:sqlite would otherwise crash opaquely at the first DB open.
+  assertSupportedNode(options.nodeVersion);
   const participants = await loadManifest(options.projectRoot);
   const retention = await loadManifestRetention(options.projectRoot);
   const project = manifestProject(participants);
@@ -774,6 +785,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
         : await collectVersions({
             databasePath: paths.database,
             ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+            ...(options.nodeVersion ? { nodeVersion: options.nodeVersion } : {}),
           });
     return createDoctorReport({
       project,
@@ -803,6 +815,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
         : await collectVersions({
             databasePath: paths.database,
             ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+            ...(options.nodeVersion ? { nodeVersion: options.nodeVersion } : {}),
           });
     return createDoctorReport({
       project,
@@ -855,6 +868,7 @@ export async function statusCommand(options: DoctorCommandOptions): Promise<Stat
       : await collectVersions({
           databasePath: paths.database,
           ...(options.hostVersionProbe ? { probe: options.hostVersionProbe } : {}),
+          ...(options.nodeVersion ? { nodeVersion: options.nodeVersion } : {}),
         });
   let messages: SQLiteMessageStore | undefined;
   let sessions: SessionStore | undefined;

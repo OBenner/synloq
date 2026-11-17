@@ -3,11 +3,36 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { SynloqError } from "../domain/errors.js";
 import { PROTOCOL_VERSION } from "../domain/session.js";
+
+/** node:sqlite is experimental in Node 22 and stable from 24 — the engines floor. */
+export const MINIMUM_NODE_MAJOR = 24;
+
+export function isSupportedNode(version: string): boolean {
+  const major = Number(/^v?(\d+)/.exec(version)?.[1]);
+  return Number.isInteger(major) && major >= MINIMUM_NODE_MAJOR;
+}
+
+/**
+ * Fail-loud runtime gate (issue #111): on an old Node the first DB open would
+ * crash opaquely. Commands that write (init, serve) call this BEFORE any
+ * write; the message names the requirement and states nothing was written.
+ */
+export function assertSupportedNode(version: string = process.version): void {
+  if (isSupportedNode(version)) return;
+  throw new SynloqError(
+    "INVALID_INPUT",
+    `Synloq requires Node.js ${MINIMUM_NODE_MAJOR} or newer (node:sqlite is required); ` +
+      `this process runs ${version}. Install Node 24+ and retry — nothing was written.`,
+  );
+}
 
 export interface VersionsBlock {
   synloq: string;
   node: string;
+  /** Issue #111: whether the running Node satisfies the node:sqlite floor. */
+  nodeSupported: boolean;
   protocol: number;
   schema?: number;
   /** Host/CLI versions where detectable; absent = undetected (fail soft). */
@@ -23,7 +48,10 @@ export interface VersionsBlock {
 export async function collectVersions(options: {
   databasePath: string;
   probe?: HostVersionProbe;
+  /** Test hook: evaluate a runtime other than the running process. */
+  nodeVersion?: string;
 }): Promise<VersionsBlock> {
+  const node = options.nodeVersion ?? process.version;
   let hosts: VersionsBlock["hosts"] = {};
   try {
     hosts = await (options.probe ?? defaultHostProbe)();
@@ -32,7 +60,8 @@ export async function collectVersions(options: {
   }
   return {
     synloq: await synloqVersion(),
-    node: process.version,
+    node,
+    nodeSupported: isSupportedNode(node),
     protocol: PROTOCOL_VERSION,
     ...schemaVersion(options.databasePath),
     hosts,

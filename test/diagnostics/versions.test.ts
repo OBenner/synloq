@@ -1,11 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectVersions } from "../../src/diagnostics/versions.js";
-import { doctorCommand, statusCommand } from "../../src/cli/commands.js";
+import {
+  assertSupportedNode,
+  collectVersions,
+  isSupportedNode,
+} from "../../src/diagnostics/versions.js";
+import { doctorCommand, serveCommand, statusCommand } from "../../src/cli/commands.js";
+import { runGenericInit } from "../../src/cli/init-cli.js";
 import { projectPaths } from "../../src/config/paths.js";
-import { writeFileSync } from "node:fs";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -76,5 +81,68 @@ describe("version telemetry (#115)", () => {
     });
     expect(status.versions?.protocol).toBe(1);
     expect(status.versions?.hosts.opencode).toBe("0.5.0");
+  });
+});
+
+describe("Node version gate (#111)", () => {
+  it("evaluates the runtime floor: 22 fails, 24+ pass", () => {
+    expect(isSupportedNode("v22.11.0")).toBe(false);
+    expect(isSupportedNode("v24.0.0")).toBe(true);
+    expect(isSupportedNode("v25.3.1")).toBe(true);
+    expect(isSupportedNode("not-a-version")).toBe(false);
+    expect(() => assertSupportedNode("v22.11.0")).toThrowError(
+      expect.objectContaining({ code: "INVALID_INPUT" }),
+    );
+    expect(() => assertSupportedNode("v22.11.0")).toThrowError(/Node\.js 24/);
+    expect(() => assertSupportedNode(process.version)).not.toThrow();
+  });
+
+  it("doctor reports nodeSupported for the injected runtime", async () => {
+    const { root, home } = stand();
+    const doctor = await doctorCommand({
+      projectRoot: root,
+      synloqHome: home,
+      hostVersionProbe: async () => ({}),
+      nodeVersion: "v22.11.0",
+    });
+    expect(doctor.versions?.node).toBe("v22.11.0");
+    expect(doctor.versions?.nodeSupported).toBe(false);
+
+    const healthy = await doctorCommand({
+      projectRoot: root,
+      synloqHome: home,
+      hostVersionProbe: async () => ({}),
+    });
+    expect(healthy.versions?.nodeSupported).toBe(true);
+  });
+
+  it("serve refuses an old runtime before any write", async () => {
+    const { root, home } = stand();
+    await expect(
+      serveCommand({ projectRoot: root, synloqHome: home, port: 0, nodeVersion: "v22.11.0" }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("24") });
+    // Nothing was written: no database file appeared.
+    const paths = await projectPaths(root, home);
+    expect(existsSync(paths.database)).toBe(false);
+  });
+
+  it("init refuses an old runtime before any write", async () => {
+    const { root, home } = stand();
+    const output: string[] = [];
+    await expect(
+      runGenericInit(
+        ["--project-root", root, "--synloq-home", home, "--non-interactive"],
+        {
+          stdout: {
+            write: (text) => {
+              output.push(text);
+              return true;
+            },
+          },
+        },
+        { nodeVersion: "v22.11.0" },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT", message: expect.stringContaining("24") });
+    expect(existsSync(join(home, "credentials"))).toBe(false);
   });
 });
