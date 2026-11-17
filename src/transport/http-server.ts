@@ -882,8 +882,11 @@ export class RelayHttpServer {
         return { status: 429, error };
       case "STORAGE_FAILURE":
       case "PERMISSION_DENIED":
+      case "ALREADY_RUNNING":
         // A local filesystem condition of the relay host; the client cannot
         // fix it, so it stays a 500 — but with an explicit code and path.
+        // ALREADY_RUNNING is CLI-side (serve lock) and never crosses the wire;
+        // it is mapped defensively to keep this switch exhaustive.
         return { status: 500, error };
     }
   }

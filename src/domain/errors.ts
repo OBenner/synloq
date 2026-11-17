@@ -12,6 +12,7 @@ export class SynloqError extends Error {
       | "PAUSED"
       | "STORAGE_FAILURE"
       | "PERMISSION_DENIED"
+      | "ALREADY_RUNNING"
       | "UNAUTHORIZED"
       | "DELIVERY_UNCERTAIN"
       | "NOT_FOUND"
