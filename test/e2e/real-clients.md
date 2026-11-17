@@ -514,6 +514,22 @@ This section verifies only the implemented Codex inbox/state foundation. It cann
    - [ ] Both sanitized probe reports are stored outside Git.
    - [ ] No active-delivery acceptance is possible in this increment; mocks or a successful read-only probe do not upgrade active-delivery status.
 
+## 10a. Claude Code inbox/lifecycle window (2026-11-17)
+
+The current operator window uses two visible Claude Code roles and the updated
+[W7 runbook](../../docs/runbooks/2026-11-14-claude-code-live-dod.md). It accepts
+only inbox/ack/dedup/provenance, lifecycle hooks, busy/idle, next-interaction
+reads, reconnect and relay restart. Sections 4–5 channel activation and the
+notification-admission expectations in section 8 are **not executed** in this
+window. Neither activation field is set; autonomous wake is out of scope.
+
+Record each capability separately in the
+[acceptance index](../../docs/testing/2026-11-17-claude-code-live.md). In particular,
+idle plus a later operator-triggered inbox read is next-interaction evidence,
+not channel admission or autonomous delivery. Until actual observations complete
+a row, its verdict remains UNVERIFIED; preflight/build and helper scripts are
+not live-client evidence.
+
 ## 11. Evidence record and verdict
 
 Copy this template into `$SECURE/evidence/result.md` and complete it with observed values:

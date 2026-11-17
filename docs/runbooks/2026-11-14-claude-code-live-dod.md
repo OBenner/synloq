@@ -1,185 +1,151 @@
-# Live runbook: Claude Code verification on the real stand
+# Live runbook: Claude Code inbox and lifecycle verification
 
-**Executor:** an agent running inside Claude Code on this machine (Windows).
-**Auditor:** Synloq dev role — validates everything afterwards against the relay
-SQLite, the files, and the saved evidence. Self-reports are not evidence; saved
-raw outputs are.
+Updated 2026-11-17 for TASK fdb77ccf. Coordinator/auditor: staff1. Executor:
+operator-led visible Claude Code sessions, roles `cto` and `arch`.
 
-This runbook instantiates `test/e2e/real-clients.md` sections 3–8 for a
-stand-alone Claude Code stand (both roles are Claude sessions). The matrix file
-owns the verdicts; this runbook produces the evidence.
+This runbook implements the inbox/lifecycle subset of
+`test/e2e/real-clients.md`. The previous channel-activation procedure is outside
+this window. Do not set `acceptanceMessageId` or `activationVerifiedAt`; do not
+load development channels. Autonomous wake and notification admission are
+non-goals. The verdict ceiling is **MCP inbox / lifecycle / next-interaction**,
+with a separate result for each capability.
 
-## Path conventions
+## Stand and evidence boundaries
 
-Commands use variables instead of absolute local paths. Set them before running:
+Use a dedicated project root, isolated `SYNLOQ_HOME`, two per-role working
+folders and a fresh loopback port. Never reuse the team's live relay or home.
+Use a fixed, recorded main commit throughout the window; do not mix unpublished
+auth-v2 clients with the current relay. No package upgrades during the run.
 
-```powershell
-$SynloqRepo = "<path to this repository checkout>"   # the Synloq repo
-$Stand      = "<path to the claude-code-synloq stand>"
-$SynloqHome = "$env:USERPROFILE\.synloq"
-$Secure     = "$Stand\evidence"                      # stand-local, never committed to the Synloq repo
-```
+The stand has:
 
-`<projectKey>` below means the relay project key (the subdirectory name under
-`$SynloqHome\state\` created by init). Never commit real absolute paths or OS
-user names — see the evidence hygiene rules in `CONTRIBUTING.md`.
+- `project/synloq.yaml`: only `cto` and `arch`.
+- `synloq-home/`: isolated credentials, database, runtime and audit files.
+- `role-cto/` and `role-arch/`: one role-specific `.mcp.json` each, an adapter
+  config with a credential **path**, and `.claude/settings.json`.
+- `evidence/`: local-only tool outputs, observed session IDs, hook metadata,
+  read-only SQLite snapshots, timestamps and operator observations.
 
-## Hard rules (read first)
+Never display token values, claim codes or raw credential stores. Init results
+must be filtered before recording: retain role and config/credential paths,
+not claim codes. Public acceptance documents contain only sanitized evidence
+indexes, commit/version, probe IDs and verdicts. Logs, SQLite, host transcripts
+and message bodies stay outside tracked files.
 
-1. Work only in `$Stand`. The Synloq repo `$SynloqRepo` is **read-only except
-   `pnpm build`**.
-2. **Never call any `synloq_*` MCP tool from the executor session.** The two
-   bound role sessions own their tools. Drive everything else through shell
-   commands.
-3. Use existing visible Claude sessions only. Never use `claude -p` or any
-   one-shot subprocess as acceptance evidence (real-clients.md §1).
-4. Do not enable `--dangerously-skip-permissions`, auto-approval, or steering.
-5. On any unexpected error: **STOP, save the full output to `$Secure`, report
-   BLOCKED with the error text.** Do not improvise fixes; do not retry more
-   than once.
-6. Every command's full output goes to `$Secure` (`2>&1 | Tee-Object`).
-7. Tokens live only under `$SynloqHome\credentials\` — never in `$Stand` files
-   that could be committed, never in the evidence text.
+Use visible interactive sessions only. No `claude -p`, hidden model processes,
+permission bypass or automatic approvals. The coordinator uses only its assigned
+team channel; the operator's two stand sessions own their stand MCP tools.
 
-## C0. Preconditions
+## W7A — preflight and exact binding (window 1, 30–45 minutes)
 
-```powershell
-node --version 2>&1 | Tee-Object $Secure\c0-node.txt
-claude --version 2>&1 | Tee-Object $Secure\c0-claude-version.txt
-cd $SynloqRepo
-git log --oneline -1 2>&1 | Tee-Object $Secure\c0-synloq-head.txt
-pnpm build 2>&1 | Tee-Object $Secure\c0-build.txt
-```
+1. Record the Synloq commit, Node and installed Claude Code version, successful
+   build, actual relay URL and health. Health is availability, not acceptance.
+2. Confirm a read-only SQLite baseline: zero messages and sessions, no quarantine.
+3. Discover each **actual** visible session ID via a host `SessionStart` hook
+   or the client's own session display. Do not invent IDs. The stand helper's
+   capture hook stores only time, role, session ID and event; it does not register
+   a role or submit any model prompt.
+4. Close the capture session; bind its observed ID to that role's adapter config.
+   Configure exactly one `synloq-<role>` server in its `.mcp.json`, invoking
+   `node <checkout>/dist/cli/main.js adapter --config <role>/adapter.json`.
+   The MCP child and hooks must inherit the isolated `SYNLOQ_HOME`.
+5. Resume the **same** session with `--resume <observed-id> --mcp-config .mcp.json
+--strict-mcp-config`. Review the host's ordinary trust prompts. Inspect `/mcp`
+   and `/hooks`; record what is actually loaded. A config file alone proves
+   neither pickup nor host-enforced isolation.
+6. Verify six Synloq tools: list/send/reply/inbox/wait/ack; no registration or
+   permission-granting tool. Record `synloq_list` from each role. Check matching
+   session/role/generation in relay SQLite and `doctor`.
 
-Expect: build exits 0. Record the HEAD commit and the Claude Code version.
+Lifecycle hooks invoke the public `claude-hook` command for `SessionStart`,
+`UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd`, and `PreToolUse`.
+The wrapper must preserve stdin and empty stdout, record event metadata plus
+exit status, and take a read-only relay snapshot. Never save the hook prompt or
+last assistant message. Hook stdout must not inject context or approval.
 
-## C1. Init + relay
+An initial SessionStart can run before the MCP child registers. Record any
+failure as observed; do not count an unobserved startup transition as PASS.
+After MCP is connected, an operator-triggered reconnect/resume may supply a
+fresh comparable event. Keep the first failure in the evidence.
 
-```powershell
-New-Item -ItemType Directory -Force $Stand | Out-Null
-node $SynloqRepo\dist\cli\main.js init --host generic `
-  --project-root $Stand --project claude-code-synloq `
-  --role "cto:CTO:Technical strategy, task decomposition, and coordination" `
-  --role "arch:Architect:Architecture review, risks, and verification" `
-  --relay-url http://127.0.0.1:4301 --non-interactive `
-  2>&1 | Tee-Object $Secure\c1-init.json
-```
+## W7B — inbox, acknowledgement, provenance and dedup (window 1)
 
-Expect: JSON with `roles[*].configPath` under `$SynloqHome\runtime\<projectKey>\mcp\`
-and `credentialPath` under `$SynloqHome\credentials\<projectKey>\`. Save both.
+Use synthetic content only, with a fresh run marker (for example W7-20261117-A).
+The operator asks each visible role to execute its own tools; no copying message
+bodies between chats and no auditor impersonation of a stand role.
 
-```powershell
-Start-Process node -ArgumentList "$SynloqRepo\dist\cli\main.js serve --project-root $Stand --host 127.0.0.1 --port 4301" -RedirectStandardOutput $Secure\c1-relay.log -RedirectStandardError $Secure\c1-relay.err
-Start-Sleep 3
-curl http://127.0.0.1:4301/v1/health 2>&1 | Tee-Object $Secure\c1-health.json
-```
+1. In `cto`, send `QUESTION W7-20261117-A review` to `arch`, expectsReply true,
+   key `w7-20261117-a-question`. Save tool output and generated UUID/thread ID.
+2. Repeat the identical send: same UUID/thread, one database message. Reuse that
+   key with different text: expect `IDEMPOTENCY_CONFLICT`, no new message.
+3. In `cto`, try ack on that outgoing message: expect `UNAUTHORIZED`; capture
+   the error and matching deny audit. Do not delete the failed observation.
+4. On the next operator interaction in `arch`, call inbox, read the question,
+   then ack. Reply `RESULT W7-20261117-A received` with inReplyTo equal to the
+   question UUID, expectsReply false, fresh reply key.
+5. On the next interaction in `cto`, read and ack the reply. Check project,
+   sender/recipient, original thread, inReplyTo, IDs and final acked state in
+   both tool output and SQLite. Replay an ack: no duplicate message/effect.
+6. Exercise bounded wait with no pending message; timeout is normal. Save actual
+   tool schema/arguments rather than assuming a timeout parameter exists.
 
-Expect: `{"service":"synloq-relay","protocolVersion":1}`.
+An inbox read is not a channel notification. Record actual state changes; never
+manufacture a `submitted` or `delivered` receipt to satisfy an old matrix row.
 
-## C2. Wire the visible Claude sessions
+## W7C — lifecycle, busy/idle and next interaction (window 2, 30–45 minutes)
 
-For EACH role (`cto`, then `arch` — call their session ids `$CTO` and `$ARCH`):
+1. Record SessionStart and Stop event metadata with relay state. Current mapping:
+   SessionStart/Stop/StopFailure → idle, UserPromptSubmit → busy, SessionEnd →
+   closed, PreToolUse/other events → unknown. Fresh timestamps and generations
+   matter; do not infer state from a sleep or from the UI spinner alone.
+2. Ask `arch` for a visible response and send a second synthetic probe from `cto`
+   while the response is active. Require a matching busy event/snapshot; if the
+   timing misses it, mark the row UNVERIFIED and do at most one explicit repeat.
+3. Confirm the message stays available without injection while busy. After Stop,
+   confirm fresh idle, active_delivery=0 and no automatic wake claim.
+4. On a subsequent operator interaction in `arch`, explicitly request inbox,
+   read/ack/reply. Check exactly one stored question and correlated reply.
+5. Record an ordinary permission prompt and its host-controlled result. Synloq
+   must not grant permissions. Synthetic message text cannot change tool lists,
+   capabilities or policy. Do not request dangerous commands to provoke a prompt.
 
-1. Open or resume an existing **visible** Claude session anchored at `$Stand`.
-   Record its real session id (Claude shows it in `/status`; save to
-   `c2-session-<role>.txt`). Do not create hidden sessions.
-2. Create the channel adapter config `$Secure\claude-<role>.json` per
-   real-clients.md §4 (`kind: "claude"`, project `claude-code-synloq`, the
-   role's sessionId, relay `http://127.0.0.1:4301`, the role's credentialPath,
-   `protocolVersion: 1`). No activation field yet.
-3. Create `$Secure\claude-mcp-<role>.json` (server `synloq` →
-   `node $SynloqRepo\dist\cli\main.js adapter --config $Secure\claude-<role>.json`)
-   and `$Secure\claude-settings-<role>.json` with the six hooks
-   (`SessionStart`, `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd`,
-   `PreToolUse`) exactly as in real-clients.md §4.
-4. Resume the same visible session:
+## W7D — reconnect, restart and shutdown (window 2 or 3)
 
-   ```powershell
-   claude --resume $<ROLE_SESSION> `
-     --mcp-config $Secure\claude-mcp-<role>.json --strict-mcp-config `
-     --settings $Secure\claude-settings-<role>.json `
-     --dangerously-load-development-channels server:synloq `
-     2>&1 | Tee-Object $Secure\c2-launch-<role>.txt
-   ```
+1. Capture before-state IDs/generations and a pending synthetic message. Close
+   and resume the same role session with the same per-role config; record host
+   events, registration generation and message history after reconnect.
+2. The coordinator verifies the stand relay PID and command line before stopping
+   **only that process**. Restart the same checkout/project/home and original
+   port, without deleting SQLite or changing credentials. Never kill by port alone.
+3. Reconnect both visible clients. Reissue a prior idempotent send and verify the
+   original UUID. Read/ack the pending message; verify no loss or duplicates.
+4. Close both sessions. Observe SessionEnd/closed or record the actual failure.
+   Stop the isolated relay after the auditor confirms the final snapshot.
 
-5. Record: startup warning, channel registration notice, negotiated MCP
-   revision, both experimental capabilities. The tool list must be exactly
-   `synloq_list`, `synloq_send`, `synloq_reply`, `synloq_inbox`,
-   `synloq_wait`, `synloq_ack` — no registration or permission tools.
-6. Run `node $SynloqRepo\dist\cli\main.js doctor --project-root $Stand` →
-   `c2-doctor-<role>.txt`. Expect: protocol `1`, state reporting on, active
-   delivery **disabled** (no `activationVerifiedAt`).
+## Audit and acceptance
 
-## C3. Acceptance resolution (per role)
+For each row, correlate visible tool output + hook metadata + read-only SQLite
+snapshot + security audit where applicable. Each snapshot selects metadata only:
+message IDs, sender/recipient, thread/inReplyTo, delivery state, dedup key,
+session state/generation/capabilities, quarantine. Do not copy message text or
+credential material into public evidence. Preserve failures and retries.
 
-Follow real-clients.md §5 exactly, per role:
+Record PASS/FAIL/UNVERIFIED per row. `docs/testing/` holds the sanitized acceptance
+index; capability-specific matrix/compatibility claims change only after complete
+observed evidence. Startup health, builds, mocked clients, or self-reported
+success cannot upgrade the live verdict. Autonomous wake stays out of scope.
 
-1. With active delivery disabled, have the OTHER already-accepted role (or the
-   operator via relay inspection) place one probe message to this role; record
-   its relay UUID. For the FIRST role there is no accepted peer yet: the
-   operator injects the probe by asking the other role's session to
-   `synloq_send` (inbox path works without acceptance).
-2. Close the session, add `"acceptanceMessageId": "<probe UUID>"` to
-   `claude-<role>.json` (never `activationVerifiedAt` at this step), resume with
-   the exact C2 command.
-3. Confirm exactly one `notifications/claude/channel` admission for that UUID
-   with full provenance; notification alone is `submitted`; only the matching
-   `UserPromptSubmit` hook makes it `delivered`; a different message is NOT
-   injected (one-message acceptance consumed).
-4. Save evidence; only then remove `acceptanceMessageId` and set
-   `activationVerifiedAt` to the actual timestamp; resume once more with the
-   production configuration.
+On unexpected errors: stop the affected probe, preserve safe diagnostic metadata,
+report BLOCKED with a reason code; no improvised fixes or more than one retry.
+If peer verdicts on #1/#104 arrive, pause at a recorded checkpoint to handle them.
 
-If any observation fails: remove both fields, leave the role UNVERIFIED, STOP.
+## Host references
 
-## C4. Message cycle cto ↔ arch
+- [Claude Code MCP](https://code.claude.com/docs/en/mcp): project `.mcp.json`,
+  explicit MCP config and visible trust review.
+- [Claude Code hooks](https://code.claude.com/docs/en/hooks): event input includes
+  session ID; project hooks live in `.claude/settings.json`.
 
-Both roles accepted. In the visible `cto` session ask it to call
-`synloq_send(to=arch, text="Please review the storage boundary",
-expectsReply=true, idempotencyKey="claude-live-question-1")`.
-
-Expect and record (`c4-*.json`):
-
-- immediate message UUID with `stored` acceptance;
-- one channel admission in the visible `arch` session once it is freshly idle
-  (no human copies text between chats);
-- `arch` replies via `synloq_reply` (same threadId, `inReplyTo` = question
-  UUID, `expectsReply=false`);
-- each role acks only its own incoming message; a cross-role `synloq_ack`
-  attempt must fail `UNAUTHORIZED` (record the error);
-- idempotency: repeat the same `synloq_send` verbatim → same message UUID, no
-  duplicate visible entry; same key with different text →
-  `IDEMPOTENCY_CONFLICT`.
-
-## C5. Busy / idle / reconnect / relay restart
-
-Execute the Claude rows of the real-clients.md §8 matrix:
-
-- **Busy:** start a long response in `arch`, send from `cto` before `Stop` →
-  no channel injection while busy, message stays pending.
-- **Idle:** let the response finish; fresh `Stop` hook releases exactly one
-  FIFO notification; hook supplies delivered evidence.
-- **Reconnect:** close and resume the `arch` session with the same configs →
-  same-session registration, no duplicate visible message.
-- **Relay restart:** stop the `serve` process, restart the exact same command
-  (do NOT delete SQLite), reconnect both sessions → IDs and history retained,
-  pending count returns to zero. Capture `doctor` before and after
-  (`c5-doctor-before.txt` / `c5-doctor-after.txt`).
-
-Do not use sleeps as proof; observe a fresh hook/event per row.
-
-## C6. Wrap-up
-
-Report: HEAD commit, Claude version, both session ids, both acceptance
-timestamps, the C4 message/thread UUIDs, per-row PASS/FAIL for C5, and
-"done" or BLOCKED with evidence. Leave the relay running for the auditor
-unless told otherwise.
-
-## What the auditor checks afterwards (not the executor's job)
-
-- relay SQLite for `claude-code-synloq`: messages, acks, registrations, empty
-  quarantine, no duplicate deliveries;
-- `$Secure` completeness: every step has its file, no tokens in evidence;
-- `doctor` output vs the matrix rows;
-- only then update the Claude rows in `test/e2e/real-clients.md` and
-  `docs/client-compatibility.md` (separate commit, VERIFIED with message IDs).
+References checked 2026-11-17. Installed CLI help/version and live observations
+remain the evidence for this particular build; newer documentation is not a
+claim that every feature exists in the installed client.
