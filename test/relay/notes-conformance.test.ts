@@ -102,6 +102,7 @@ describe("notes conformance (#22)", () => {
       // zod INVALID_INPUT that a smaller-but-over-limit body would get.
       await expect(cto.noteWrite("k", "x".repeat(65_537))).rejects.toMatchObject({
         code: "UNAUTHORIZED",
+        message: "invalid_relay_response_proof",
       });
     } finally {
       await handle.close();
@@ -125,9 +126,11 @@ describe("notes conformance (#22)", () => {
   it("caps keys per role without affecting other roles", async () => {
     const { handle, cto, arch, root, home } = await fixture();
     try {
-      // Seed at store level: 257 challenge round trips would trip the auth-v2
-      // challenge rate limit (100/s). The cap behavior is HTTP-visible on the
-      // overflow write alone; a second connection waits out the relay writer
+      // Seed at store level: 257 sequential note writes would issue 257
+      // challenges, and challenge issuance is capped at 100 per 1s window
+      // (http-server) — fast runners can trip that limit before the cap
+      // behavior is reached. The cap itself is HTTP-visible on the overflow
+      // write alone; a second connection waits out the relay writer
       // (busy_timeout) exactly like doctor's offline probes do.
       const { projectPaths } = await import("../../src/config/paths.js");
       const { openDatabase } = await import("../../src/storage/sqlite.js");
