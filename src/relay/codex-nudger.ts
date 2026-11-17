@@ -3,6 +3,7 @@ import { formatDiagnostic } from "../diagnostics.js";
 import { queueCodexNudge, type QueueNudgeOptions, type QueueResult } from "../host/codex/queue.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { NudgeLedger } from "../storage/nudge-ledger.js";
+import { nudgeReminder } from "./nudge-preview.js";
 
 export const CODEX_NUDGE_INTERVAL_MS = 15_000;
 interface Options {
@@ -82,6 +83,9 @@ export class CodexQueueNudger {
       if (!(await this.options.eligible(binding.agentId))) continue;
       const head = messages.nudgeCandidate(project, binding.agentId);
       if (!head) continue;
+      // Preview is ephemeral and comes only from the authoritative message store.
+      const message = messages.getMessage(head.id, project);
+      if (!message || message.to !== binding.agentId) continue;
       this.reportExhausted(binding.agentId, head.id);
       const count = ledger.reserve(
         project,
@@ -112,7 +116,7 @@ export class CodexQueueNudger {
           executable: config.executable,
           version: config.cliVersion,
           threadId: binding.threadId,
-          message: `Synloq: pending messageId=${head.id}, threadId=${head.threadId}. Run synloq_inbox on your assigned channel, read the backlog, then ack and reply in the original Synloq thread.`,
+          message: nudgeReminder(message),
           signal: this.abort.signal,
           beforeQueue,
         });
