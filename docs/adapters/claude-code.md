@@ -55,6 +55,38 @@ node /absolute/path/to/synloq/dist/cli/main.js claude-hook \
 
 Hook stdout is empty: no injected context or permission decision is emitted. Channel notification success is only `submitted`; a matching `UserPromptSubmit` hook with exact Synloq provenance supplies `delivered` evidence.
 
+### Startup registration race (#124)
+
+The MCP child is the only registration owner. If `SessionStart` runs before its
+registration, the hook retries a typed `NOT_FOUND` heartbeat with delays of
+100, 200, 400, 800 and 1000 ms (at most six attempts). The entire startup heartbeat
+sequence has a 5000 ms budget, including request time; each HTTP request receives
+only the remaining budget. Authentication, permission, invalid-input and transport
+errors fail immediately, and other hook events are never retried. The hook never
+registers a session or invents negotiated capabilities.
+
+Configure the host hook timeout to allow this budget plus CLI startup/shutdown
+margin (at least 6 seconds for the default). For a shorter timeout, explicitly
+declare the host limit to the hook, for example for a 3-second host timeout:
+
+```bash
+node /absolute/path/to/synloq/dist/cli/main.js claude-hook \
+  --config /secure/claude-cto.json --host-timeout-ms 3000
+```
+
+The startup budget then becomes `min(5000, hostTimeoutMs - 1000)`. The host limit
+is not inferred from hook input; this flag must match the host configuration and
+must be an integer greater than 1000 ms. An absent MCP registration still fails
+after the bounded attempts; no background retry or success acknowledgement is
+fabricated.
+
+This addresses initial missing registration only. A heartbeat against an older
+registration followed by re-registration can still reset the observed state to
+`unknown`; that generation-ordering race is outside this fix. The recorded W7A
+startup failure remains historical FAIL until a coordinated live re-test on the
+updated relay and callers supplies new evidence. Do not mix pre-auth-v2 runtime
+with newly generated auth-v2 configurations.
+
 See [README.md](README.md) for shared adapter configuration rules and the process topology.
 
 ## Claude Desktop (Code tab)

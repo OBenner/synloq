@@ -35,6 +35,35 @@ export interface ClaudeHookConfig {
 export interface ClaudeHookIo {
   stdin?: Readable;
   stdout?: Writable;
+  /** Declared host hook timeout; reserve 1 s for CLI startup and shutdown. */
+  hostTimeoutMs?: number;
+}
+
+const STARTUP_BACKOFF_MS = [100, 200, 400, 800, 1_000] as const;
+
+async function startupHeartbeat(
+  client: RelayHttpClient,
+  sessionId: string,
+  deadline: number,
+): ReturnType<RelayHttpClient["heartbeat"]> {
+  let lastError: SynloqError | undefined;
+  for (let attempt = 0; ; attempt++) {
+    const remaining = Math.floor(deadline - performance.now());
+    if (remaining <= 0) {
+      throw lastError ?? new SynloqError("STORAGE_FAILURE", "Claude startup hook budget exhausted");
+    }
+    try {
+      return await client.heartbeat({ sessionId, state: "idle" }, remaining);
+    } catch (error) {
+      // Only the MCP child may register. A missing registration during startup
+      // is transient; auth failures and all other errors must remain fail-closed.
+      if (!(error instanceof SynloqError) || error.code !== "NOT_FOUND") throw error;
+      lastError = error;
+      const delay = STARTUP_BACKOFF_MS[attempt];
+      if (delay === undefined || deadline - performance.now() <= delay) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 async function readInput(input: Readable): Promise<string> {
@@ -79,6 +108,14 @@ export async function runClaudeHook(
   config: ClaudeHookConfig,
   io: ClaudeHookIo = {},
 ): Promise<void> {
+  const startedAt = performance.now();
+  if (
+    io.hostTimeoutMs !== undefined &&
+    (!Number.isSafeInteger(io.hostTimeoutMs) || io.hostTimeoutMs <= 1_000)
+  ) {
+    throw new SynloqError("INVALID_INPUT", "Claude host timeout must be an integer above 1000 ms");
+  }
+  const startupBudgetMs = Math.min(5_000, (io.hostTimeoutMs ?? 6_000) - 1_000);
   let input: unknown;
   try {
     input = JSON.parse(await readInput(io.stdin ?? process.stdin));
@@ -94,7 +131,10 @@ export async function runClaudeHook(
   }
 
   const mapped = mapClaudeHook(hook.hook_event_name);
-  const { session } = await client.heartbeat({ sessionId: hook.session_id, state: mapped.state });
+  const { session } =
+    hook.hook_event_name === "SessionStart"
+      ? await startupHeartbeat(client, hook.session_id, startedAt + startupBudgetMs)
+      : await client.heartbeat({ sessionId: hook.session_id, state: mapped.state });
   if (hook.hook_event_name !== "UserPromptSubmit") return;
 
   const provenance = synloqProvenance(hook.prompt);

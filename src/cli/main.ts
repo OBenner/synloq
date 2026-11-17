@@ -37,6 +37,7 @@ import {
 } from "./commands.js";
 import { formatDoctorReport } from "./doctor.js";
 import { upgradeCheck } from "./upgrade-check.js";
+import type { ClaudeHookIo } from "./claude-hook.js";
 import { projectPaths } from "../config/paths.js";
 import { formatStatusReport } from "./status.js";
 import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
@@ -53,7 +54,7 @@ export interface CliIo {
 export interface MainDependencies extends GenericInitDependencies {
   startMcp?: (configPath: string) => Promise<unknown>;
   startAdapter?: (configPath: string) => Promise<StandaloneAdapterHandle>;
-  runHook?: (configPath: string) => Promise<void>;
+  runHook?: (configPath: string, io?: ClaudeHookIo) => Promise<void>;
   runCodexHook?: (configPath: string) => Promise<void>;
   waitForShutdown?: () => Promise<void>;
 }
@@ -98,7 +99,7 @@ const helpText: Record<CommandName, string> = {
     "Usage: synloq serve --project-root <path> [--synloq-home <path>] [--host <127.0.0.1|::1>] [--port <number>]\n",
   mcp: "Usage: synloq mcp --config <path>\n",
   adapter: "Usage: synloq adapter --config <path>\n",
-  "claude-hook": "Usage: synloq claude-hook --config <path>\n",
+  "claude-hook": "Usage: synloq claude-hook --config <path> [--host-timeout-ms <milliseconds>]\n",
   "codex-hook": "Usage: synloq codex-hook --config <path>\n",
   list: "Usage: synloq list [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
@@ -426,12 +427,26 @@ async function execute(
   }
 
   if (command === "claude-hook") {
-    const { values } = parse(command, args, { config: { type: "string" } });
+    const { values } = parse(command, args, {
+      config: { type: "string" },
+      "host-timeout-ms": { type: "string" },
+    });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
     }
-    await (dependencies.runHook ?? runStandaloneClaudeHook)(requiredString(values, "config"));
+    const timeout = optionalString(values, "host-timeout-ms");
+    const runHook = dependencies.runHook ?? runStandaloneClaudeHook;
+    const configPath = requiredString(values, "config");
+    if (timeout === undefined) {
+      await runHook(configPath);
+    } else {
+      const hostTimeoutMs = Number(timeout);
+      if (!Number.isSafeInteger(hostTimeoutMs) || hostTimeoutMs <= 1_000) {
+        invalid("--host-timeout-ms must be an integer above 1000");
+      }
+      await runHook(configPath, { hostTimeoutMs });
+    }
     return;
   }
 

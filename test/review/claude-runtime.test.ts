@@ -16,6 +16,8 @@ import {
 import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
 import { issueTestCredentials } from "../helpers/credentials.js";
 import type { Message } from "../../src/domain/message.js";
+import { SynloqError } from "../../src/domain/errors.js";
+import { runClaudeHook } from "../../src/cli/claude-hook.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
 import { MutableClock } from "../adapters/contract.js";
@@ -172,6 +174,94 @@ async function observeQuietPeriod(): Promise<void> {
 }
 
 describe("Claude negotiated capabilities and fresh idle", () => {
+  it("retains a SessionStart that precedes real MCP registration", async () => {
+    const current = await fixture();
+    const configPath = await writeConfig(current, {});
+    let missingObserved!: () => void;
+    const missing = new Promise<void>((resolve) => {
+      missingObserved = resolve;
+    });
+    let release!: () => void;
+    const registered = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = RelayHttpClient.prototype.heartbeat;
+    const heartbeat = vi
+      .spyOn(RelayHttpClient.prototype, "heartbeat")
+      .mockImplementation(async function (this: RelayHttpClient, input, timeout) {
+        try {
+          return await original.call(this, input, timeout);
+        } catch (error) {
+          if (error instanceof SynloqError && error.code === "NOT_FOUND") {
+            missingObserved();
+            await registered;
+          }
+          throw error;
+        }
+      });
+    const hook = sessionStart(configPath);
+    const completed = expect(hook).resolves.toBeUndefined();
+    try {
+      await missing;
+      expect(current.relay.sessions.list(PROJECT)).toEqual([]);
+      await connect(configPath, {});
+      expect(current.relay.sessions.list(PROJECT)[0]?.state).toBe("unknown");
+      release();
+      await completed;
+      const session = current.relay.sessions.list(PROJECT)[0];
+      expect(session).toMatchObject({ sessionId: SESSION, generation: 1, state: "idle" });
+      expect(session?.capabilities.activeDelivery).toBe(false);
+      expect(heartbeat).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      heartbeat.mockRestore();
+    }
+  });
+
+  it("fails boundedly when no MCP child registers, without creating a session", async () => {
+    const current = await fixture();
+    const configPath = await writeConfig(current, {});
+    await expect(
+      runStandaloneClaudeHook(configPath, {
+        hostTimeoutMs: 2000,
+        stdin: Readable.from([
+          JSON.stringify({ session_id: SESSION, hook_event_name: "SessionStart" }),
+        ]),
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(current.relay.sessions.list(PROJECT)).toEqual([]);
+  });
+
+  it("does not retry an actual relay authentication failure", async () => {
+    const current = await fixture();
+    const client = new RelayHttpClient(current.relay.baseUrl, () => "invalid-test-credential", {
+      project: PROJECT,
+      agentId: "cto",
+    });
+    const heartbeat = vi.spyOn(RelayHttpClient.prototype, "heartbeat");
+    try {
+      await expect(
+        runClaudeHook(
+          client,
+          {
+            project: PROJECT,
+            agentId: "cto",
+            sessionId: SESSION,
+          },
+          {
+            stdin: Readable.from([
+              JSON.stringify({ session_id: SESSION, hook_event_name: "SessionStart" }),
+            ]),
+          },
+        ),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      expect(heartbeat).toHaveBeenCalledTimes(1);
+      expect(current.relay.sessions.list(PROJECT)).toEqual([]);
+    } finally {
+      heartbeat.mockRestore();
+    }
+  });
+
   it.each([
     ["acceptance", "claude/channel"],
     ["acceptance", "claude/channel/permission"],
