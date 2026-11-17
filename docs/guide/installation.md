@@ -28,21 +28,20 @@ pnpm build
 To create a local installable archive without publishing:
 
 ```bash
-pnpm pack --pack_destination .tmp-pack
+pnpm pack --pack-destination .tmp-pack
 ```
 
-(The flag is `--pack-destination`.) The archive contains the compiled `dist`
-runtime, the `plugins` template, README, and package metadata. It excludes
-sources, tests, runtime databases, credentials, logs, IDE state, and message
-bodies.
+The archive contains the compiled `dist` runtime, the `plugins` template,
+README, and package metadata. It excludes sources, tests, runtime databases,
+credentials, logs, IDE state, and message bodies.
 
 ## 1. Install the plugin and initialize roles
 
 For Kimi Work, register `plugins/synloq` through the supported personal-plugin
 source flow and install it in the client. Ask the agent to **Initialize Synloq
 for this project**. The skill confirms the project name and each role's stable
-ID, display name, responsibilities, boundaries, and optional instructions before
-running `synloq init`.
+ID, display name, responsibilities, boundaries, and optional instructions
+before running `synloq init`.
 
 With no role arguments, `synloq init` starts the same confirmation wizard
 directly:
