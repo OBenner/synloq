@@ -10,12 +10,24 @@ Synloq is **not** an orchestrator: no hidden or replacement chats, no
 autonomous workflows, no auto-merge/push, no remote delivery. The human
 operator steers every role chat directly.
 
+## Known limitations (know these before you promise anything)
+
+- The relay authenticates the **role credential**, not the calling chat:
+  host-enforced per-chat MCP isolation is not provided (instruction-level on
+  Kimi Work; per-role project config on Codex Desktop). Do not claim chat-level
+  isolation to the user. See `docs/security/threat-model.md` Known limitations.
+- All traffic is loopback HTTP without transport encryption; confidentiality
+  against an active local proxy is out of scope by design.
+- Database migrations are forward-only; protocol and on-disk formats may
+  change between 0.x releases.
+
 ## If the user asks you to set up Synloq on a project
 
 Do **not** clone this repository to install. The published npm package ships
 the compiled runtime and the Kimi Work plugin template.
 
-1. Prerequisite: Node.js 24+ (`node:sqlite` is used).
+1. Prerequisite: Node.js 24 or newer — `node:sqlite` is required, so an older
+   "LTS" Node is not enough.
 2. Run:
 
    ```bash
