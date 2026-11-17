@@ -30,6 +30,8 @@ ASCII letters, digits, slash, underscore, dot, tilde and hyphen. The target port
 must differ from this relay's listening port, even on a different loopback IP.
 TLS verification remains enabled for HTTPS; certificates must match the literal
 address and be trusted by Node.
+HTTPS on loopback is supported explicitly; self-signed certificates are not
+automatically trusted and certificate checks are never bypassed by the exporter.
 
 The transport uses bare `node:http`/`node:https` with `Connection: close`, no
 connection pool, relay authentication, cookies, secret headers or proxy routing.
@@ -70,6 +72,8 @@ delivery receipt, ACK or host wake performed by this worker.
 
 Emission is debounced per `(project, agentId)` for five minutes. The epoch is
 reserved **before** network work, including if global bounds drop the event.
+Dropping an event by a cap consumes that epoch: subsequent mail cannot retry it
+until the five-minute epoch expires or an actually empty backlog resets it.
 More messages in the same epoch do not emit. Once five minutes pass, a subsequent
 new message can create another event; time passing alone sends nothing.
 An actually empty unacknowledged backlog resets the epoch, so new mail can emit
