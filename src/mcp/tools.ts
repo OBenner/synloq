@@ -3,6 +3,7 @@ import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/
 import { z } from "zod";
 import { SynloqError } from "../domain/errors.js";
 import type { InboxOptions, RelayHttpClient } from "../transport/http-client.js";
+import { SYNLOQ_TOOLS } from "./tool-names.js";
 
 const listInputSchema = z.object({}).strict();
 const sendInputSchema = z
@@ -79,7 +80,7 @@ export function registerSynloqTools(
   writerSessionId?: string,
 ): void {
   server.registerTool(
-    "synloq_list",
+    SYNLOQ_TOOLS.list,
     {
       description: "List project participants and role descriptions",
       inputSchema: listInputSchema,
@@ -89,7 +90,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_send",
+    SYNLOQ_TOOLS.send,
     {
       description:
         "Send a direct message to one participant. Retry identical requests with the same idempotencyKey within the 7-day dedup window.",
@@ -105,7 +106,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_reply",
+    SYNLOQ_TOOLS.reply,
     {
       description:
         "Reply in an existing thread. Retry identical requests with the same idempotencyKey within the 7-day dedup window.",
@@ -121,7 +122,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_inbox",
+    SYNLOQ_TOOLS.inbox,
     {
       description: "Read pending or historical incoming messages",
       inputSchema: inboxInputSchema,
@@ -136,7 +137,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_wait",
+    SYNLOQ_TOOLS.wait,
     {
       description: "Wait for an incoming message; timeout is normal",
       inputSchema: waitInputSchema,
@@ -146,7 +147,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_ack",
+    SYNLOQ_TOOLS.ack,
     {
       description: "Acknowledge that a message was read",
       inputSchema: ackInputSchema,
@@ -165,7 +166,7 @@ export function registerSynloqTools(
   // Per-role memory notes (#22): local tooling surface, never routed between
   // participants. The relay scopes every note to the authenticated role.
   server.registerTool(
-    "synloq_note_read",
+    SYNLOQ_TOOLS.noteRead,
     {
       description:
         "Read this role's memory note for a key (local only, never routed to other roles)",
@@ -176,7 +177,7 @@ export function registerSynloqTools(
   );
 
   server.registerTool(
-    "synloq_note_write",
+    SYNLOQ_TOOLS.noteWrite,
     {
       description:
         "Write this role's memory note for a key; overwrites the previous body (local only, never routed to other roles)",
