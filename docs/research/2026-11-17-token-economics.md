@@ -46,22 +46,40 @@ small status extension or an ad-hoc query; neither is a protocol change.
 - **Model choice and plan pricing.** Different hosts, plans, and models price
   the same turn differently; the relay does not know either.
 
-## 3. Host-side facts (verified 2026-11-17)
+## 3. Host-side facts (verified 2026-11-17 against public sources)
+
+Per-host surfaces for the "estimated" tier, checked the same day this note was
+written (primary sources: package READMEs, official docs; secondary blog
+claims were cross-checked or dropped):
 
 - **Claude Code**: `/usage` shows session tokens and a locally computed dollar
   estimate; the Usage and Cost Analytics API (beta, Oct 2026) returns per-user
-  spend including `products[]=claude_code`. So Claude-side per-role cost is
-  obtainable — from Anthropic's side, not from Synloq.
-- **Codex CLI, OpenCode, Claude Code (and others)**: the open-source `ccusage`
-  tool parses **local session logs** into per-day token counts and
-  API-equivalent USD, no API key required. This is the pattern that fits
-  local-first best: usage stays on the machine, in the host's own logs.
-- **Kimi Work**: operator-visible quota/balance in the client; no public usage
-  API was verified during this research — treat as unverified until probed.
+  spend including `products[]=claude_code`. Local logs live under `~/.claude`
+  (transcripts are deleted after 30 days by default — `cleanupPeriodDays`).
+- **OpenCode**: `opencode stats` is a documented command (per-model, per-tool,
+  per-project breakdowns; `--days N`); the TUI shows tokens/cost in the status
+  line; sessions are recorded from provider-reported counts into a local
+  SQLite DB (`opencode.db`) and message storage
+  (`~/.local/share/opencode/storage/message/`). No separate billing API — the
+  local record IS the meter for bring-your-own-provider setups.
+- **Codex CLI**: local session logs; in-CLI `/status`; parsed by `ccusage
+codex daily` (secondary source for `/status`, verify on the stand).
+- **Kimi**: `ccusage` supports a `kimi` source from local logs (`ccusage kimi
+daily`, npm README). No first-party Kimi usage API was verified — local-log
+  parsing is the available surface.
+- **ccusage** (github.com/ccusage/ccusage): MIT-licensed CLI (~19k stars),
+  v20+ ships as a native Rust binary via npm; reads local logs of 18-19 agent
+  CLIs (including Claude Code, Codex, OpenCode, **Kimi**, **ZCode**, Gemini
+  CLI, Copilot CLI); `--json` for scripting, `--offline` with pre-cached
+  pricing. Two honest caveats: dollar figures are API-equivalent estimates,
+  not billing records; and it aggregates per machine, no team view.
+- **ZCode** (blocked host for us): also covered by `ccusage zcode daily` —
+  relevant if the vendor ever unblocks API-created chats.
 
 Implication: a future "team cost" feature should **ingest host-side usage
-data** (local logs or host APIs where the operator opts in), not try to
-estimate turns from transport events.
+data** — preferably the same local logs `ccusage` reads (all our supported
+hosts are covered, including Kimi), or first-party APIs where they exist
+(Claude Analytics). Estimating turns from transport events stays a non-goal.
 
 ## 4. Proxy model for FAQ/README (proposal)
 
@@ -71,8 +89,9 @@ Three-tier wording, each tier labeled:
    K nudges, average wake-to-ack of X minutes. Coordination itself is a few
    kilobytes of text per day — negligible."
 2. **Estimated (host)**: "Turn cost depends on your host and plan. Check your
-   host's usage view (`/usage` in Claude Code, client quota in Kimi Work,
-   `npx ccusage daily` for local logs across Codex/OpenCode/Claude)."
+   host's own meters: `/usage` in Claude Code, `opencode stats` in OpenCode,
+   `/status` in Codex CLI, or `npx ccusage daily` for a unified local-log
+   report across Claude Code/Codex/OpenCode/Kimi/ZCode."
 3. **Bounded by design (levers you control)**: Synloq already caps the
    coordination-driven spend: the Codex queue nudger fires at most once per
    30 minutes and at most 5 attempts per message; stored-mail nudges on push
