@@ -1,9 +1,11 @@
 # Claude Code live acceptance — inbox and lifecycle observed
 
-- Status: **PARTIAL — scoped live probes PASS; initial startup ordering FAIL;
-  Lead Developer review PASS on 2026-11-17**.
+- Status: **PARTIAL — original W7 scoped probes PASS; re-init resume startup
+  PASS; #126 automatic proof acceptance BLOCKED**. Original W7 received Lead
+  Developer review PASS on 2026-11-17; the separate re-init results below are new.
 - Coordinator/auditor: staff1; operator executed two visible role sessions.
-- Source runtime stayed `0d972bc8d7b726542ed4cbd8d00094d7190c5a8a` throughout.
+- Original W7 runtime stayed `0d972bc8d7b726542ed4cbd8d00094d7190c5a8a` throughout.
+  The separately authorized re-init used `2097715157a0a39054585de012f9ca03ffe376f4`.
 - Node `v24.13.0`; isolated project `claude-code-live-20261117`, roles cto/arch.
 - Scope: inbox, ack, dedup, provenance, lifecycle, busy/idle, next interaction,
   reconnect and relay restart. Autonomous wake was disabled and out of scope.
@@ -34,6 +36,7 @@ tests passed; they are separate from live-client evidence.
 | --------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------- |
 | W7A binding / tools                     | Captured IDs matched registrations; per-role list succeeded; six tools exercised across both roles | PASS for observed wiring      |
 | Initial arch SessionStart               | Heartbeat NOT_FOUND before MCP registration                                                        | FAIL                          |
+| Re-init SessionStart (#124)             | Actual cto/arch resume hooks exit 0; relay registrations and SQLite idle correlated                | PASS for observed resume      |
 | W7B inbox / own ack / cross-role denial | Both sides read/acked; outgoing ack rejected UNAUTHORIZED                                          | PASS                          |
 | W7B dedup / provenance                  | Replay retained UUID; changed body rejected IDEMPOTENCY_CONFLICT; reply thread/parent matched      | PASS                          |
 | W7B repeated ack / wait                 | Two distinct acks returned acked; waitMs=1000 returned an empty list                               | PASS                          |
@@ -79,12 +82,14 @@ All times are UTC on 2026-11-17.
 
 ## Failures and environment caveats
 
-**Startup ordering remains FAIL.** Arch SessionStart at 08:39:59.284 exited 1
+**Original startup ordering was FAIL.** Arch SessionStart at 08:39:59.284 exited 1
 with empty stdout. Relay audit recorded heartbeat NOT_FOUND at 08:39:59.718,
 before registration at 08:39:59.979. Later successful resume hooks do not erase
 this failure. No production fix or fabricated heartbeat was applied. Lead
 Developer tracks the follow-up in
 [issue #124](https://github.com/OBenner/synloq/issues/124).
+The fresh-runtime resume result is recorded separately below; no absent-channel
+race was forced during that run, so it does not erase the original evidence.
 
 **Session persistence.** First arch capture produced a real SessionStart ID but
 no persisted conversation; resume failed. One visible recapture with a completed
@@ -141,3 +146,93 @@ which is not part of W7 acceptance. Snapshot headless-after.json has both sessio
 closed and all four W7 messages acked; the isolated relay was stopped at
 09:36:47 UTC. The stand and database were preserved. Headless evidence stays in
 the stand's separate headless-probe-20261117 directory.
+
+## Unified re-init window: 2026-11-17
+
+The operator confirmed both visible sessions closed before the isolated restart.
+Process inspection found no Claude process. The team relay was outside this
+window's scope and was not changed by the auditor. Before mutation, the auditor
+saved SQLite/WAL/SHM, a consistent SQLite backup, old stand configs and a SHA256
+index of 124 existing evidence files. The supported generic init generator
+regenerated trusted project/agentId configs; observed session IDs and credential
+file references were retained. No credential value entered the report.
+
+Fresh main `2097715` migrated the preserved database from schema 5 to 6;
+`integrity_check` returned `ok`, with all five previous messages still acked.
+Node remained 24.13.0 and Claude Code 2.1.326; strict TLS used the previously
+approved public CA via `NODE_EXTRA_CA_CERTS`. No provider 402 was observed.
+
+### Startup recheck (#124)
+
+Actual host SessionStart hooks, rather than injected hook JSON, produced:
+
+| Role | Hook started (UTC) | Relay REGISTERED (UTC) | Hook exit       | Correlated SQLite   |
+| ---- | ------------------ | ---------------------- | --------------- | ------------------- |
+| cto  | 14:57:33.246       | 14:57:33.419           | 0, empty stdout | idle, generation 4  |
+| arch | 14:59:55.036       | 14:59:55.321           | 0, empty stdout | idle, generation 10 |
+
+This is PASS for resume startup on the upgraded preserved stand. Existing
+session rows remained present; this window did not force a missing-registration
+NOT_FOUND or demonstrate a live retry. The original cold-start race evidence
+remains FAIL historically; deterministic race coverage belongs to #124's tests.
+
+### Event-driven nudger (#126)
+
+One newly committed synthetic message triggered the actual relay-owned nudger,
+without a manual follow-up prompt or another visible session:
+
+- Seed `d74ca97a-eafe-46c4-995d-48e6d338b34b`, created 14:59:51.737 UTC.
+- Paired inbox tool result returned that seed as `stored` at 15:00:01.186.
+- Paired ACK tool result returned the same ID as `acked` at 15:00:06.746.
+- Exact assistant marker `NUDGE-ACK-93c579cc-fa97-420e-8167-3acbf38d8917`
+  persisted at 15:00:11.550: **19,813 ms from seed to transcript**.
+- Independent SQLite contained six messages, all acked, with zero quarantine.
+  Inbox execution is proven by the paired transcript records, not an invented
+  SQLite inbox-call log. Visible UI rendering was not measured.
+
+These independently correlated delivery facts passed, but the product's durable
+acceptance **failed**: its ledger retained `outcome=uncertain`, `proof=0`.
+An offline call to the unmodified production verifier reproduced `false`.
+The checkpoint selects the last user/assistant UUID, while the next actual user
+row points to the previous `system/stop_hook_summary` UUID. The verifier ignores
+that node and rejects the first parent link. Seven new attachment nodes also
+participate in the transcript graph. A duplicate tool-use seen inside diagnostic
+API-request data is not a second conversational call and is not the root cause.
+
+No runtime patch, ledger reset or blind retry was performed. The uncertain row
+was preserved for investigation; #126 is not fully live-accepted by this window.
+
+### Negative tool-permission case
+
+The saved CTO session ran the production nudger launch arguments with a request
+to attempt send/reply. The actual initialization tool list omitted send, reply,
+list and wait. An attempted send received `No such tool available`; there was
+no actual reply call, and no new database message was created. This establishes
+send denial and reply exclusion, not a separately observed reply-denial result.
+
+The host reported a successful final result, but the process exceeded the 60 s
+limit and was interrupted before SessionEnd. It is not a clean exit-0 acceptance.
+The host's prose about available tools was inaccurate; the initialization list
+is the evidence. That list also exposed #106's `note_read` and `note_write`, so
+this launch policy cannot be described as exposing only inbox/ACK after #106.
+No note-write execution was observed; that permission boundary is tracked in
+[issue #137](https://github.com/OBenner/synloq/issues/137).
+
+### Closure and evidence
+
+After confirming no Claude/MCP child remained, the auditor explicitly closed
+CTO generation 4 through the authenticated stand API as test cleanup. This is
+not host SessionEnd evidence. Arch generation 10 closed through its actual
+SessionEnd hook. The stand nudger config was disabled; ownership became inactive,
+and the isolated relay shut down gracefully at 15:03:21.066 UTC. Final consistent
+database and ledger backups retain six acked messages, both sessions closed,
+zero quarantine and the unchanged uncertain attempt.
+
+Private evidence lives under `reinit-20261117/`: pre-snapshots/index, upgrade
+hashes, `startup-correlation.json`, hook/relay metadata, sanitized transcript
+records, `durable-analysis.json`, negative-probe facts and `finalclosed.json`.
+An intermediate relay restart needed termination of its verified owned PID
+because the execution host closed stdin; its lock was preserved only after
+process exit. Subsequent shutdown used explicit graceful control. No other
+relay or production source was changed. Evidence and database files remain
+untracked; this report contains no message bodies or credentials.
