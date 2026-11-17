@@ -1,3 +1,4 @@
+import { proofRequest } from "./proof-helper.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,9 +89,12 @@ beforeEach(async () => {
     server,
     messages,
     sessions,
-    cto: new RelayHttpClient(baseUrl, () => ctoToken),
-    arch: new RelayHttpClient(baseUrl, () => archToken),
-    operator: new RelayHttpClient(baseUrl, () => operatorToken),
+    cto: new RelayHttpClient(baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" }),
+    arch: new RelayHttpClient(baseUrl, () => archToken, { project: PROJECT, agentId: "arch" }),
+    operator: new RelayHttpClient(baseUrl, () => operatorToken, {
+      project: PROJECT,
+      agentId: "operator",
+    }),
     ctoToken,
     archToken,
     operatorToken,
@@ -146,9 +150,11 @@ describe("binding denial audit (#96)", () => {
       const { message, binding } = await setup();
       const query = new URLSearchParams({ sessionId: binding.sessionId });
       if (mode === "stale") query.set("generation", String(binding.generation + 1));
-      const response = await fetch(`${fixture.baseUrl}/v1/deliveries/next?${query}`, {
-        headers: authorized(fixture.archToken),
-      });
+      const response = await authenticated(
+        `${fixture.baseUrl}/v1/deliveries/next?${query}`,
+        fixture.archToken,
+        {},
+      );
       const code = mode === "missing" ? "INVALID_INPUT" : "UNAUTHORIZED";
       expect(response.status).toBe(mode === "missing" ? 400 : 403);
       expect(await response.json()).toMatchObject({ error: { code } });
@@ -270,12 +276,12 @@ describe("binding denial audit (#96)", () => {
     const foreign = { sessionId: "session-cto-a", generation: binding.generation };
     const response =
       method === "GET"
-        ? await fetch(
+        ? await authenticated(
             `${fixture.baseUrl}${path}?${new URLSearchParams({
               sessionId: foreign.sessionId,
               generation: String(foreign.generation),
             })}`,
-            { headers: authorized(fixture.archToken) },
+            fixture.archToken,
           )
         : await post(
             path,
@@ -308,9 +314,11 @@ describe("binding denial audit (#96)", () => {
 
   it("audits operator doctor rejection without revealing sessions", async () => {
     await setup();
-    const response = await fetch(`${fixture.baseUrl}/v1/operator/doctor`, {
-      headers: authorized(fixture.archToken),
-    });
+    const response = await authenticated(
+      `${fixture.baseUrl}/v1/operator/doctor`,
+      fixture.archToken,
+      {},
+    );
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
       error: { code: "UNAUTHORIZED", message: "operator credential required" },
@@ -354,14 +362,16 @@ describe("binding denial audit (#96)", () => {
   });
 });
 
-function authorized(token: string): Record<string, string> {
-  return { authorization: `Bearer ${token}` };
+function authenticated(url: string, token: string, init: RequestInit = {}): Promise<Response> {
+  const agentId =
+    token === fixture.archToken ? "arch" : token === fixture.operatorToken ? "operator" : "cto";
+  return proofRequest(url, token, { project: PROJECT, agentId }, init);
 }
 
 async function post(path: string, token: string, body: string): Promise<Response> {
-  return fetch(`${fixture.baseUrl}${path}`, {
+  return authenticated(`${fixture.baseUrl}${path}`, token, {
     method: "POST",
-    headers: { ...authorized(token), "content-type": "application/json" },
+    headers: { "content-type": "application/json" },
     body,
   });
 }
@@ -441,6 +451,7 @@ describe("RelayHttpServer authentication and participant routes", () => {
     await expect(anonymous.json()).resolves.toEqual({
       service: "synloq-relay",
       protocolVersion: PROTOCOL_VERSION,
+      authVersion: 2,
     });
 
     await expect(fixture.cto.health()).resolves.toEqual({
@@ -451,17 +462,17 @@ describe("RelayHttpServer authentication and participant routes", () => {
 
   it("requires authentication and derives identity from the token", async () => {
     await expect(fetch(`${fixture.baseUrl}/v1/participants`)).resolves.toMatchObject({
-      status: 401,
+      status: 409,
     });
     await expect(
-      fetch(`${fixture.baseUrl}/v1/participants`, {
-        headers: authorized("wrong-token"),
-      }),
+      authenticated(`${fixture.baseUrl}/v1/participants`, "wrong-token", {}),
     ).resolves.toMatchObject({ status: 401 });
 
-    const response = await fetch(`${fixture.baseUrl}/v1/participants`, {
-      headers: authorized(fixture.ctoToken),
-    });
+    const response = await authenticated(
+      `${fixture.baseUrl}/v1/participants`,
+      fixture.ctoToken,
+      {},
+    );
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
@@ -732,10 +743,13 @@ describe("RelayHttpServer sessions and active delivery", () => {
       generation: String(binding.generation),
       waitMs: "5000",
     });
-    const aborted = fetch(`${fixture.baseUrl}/v1/deliveries/next?${query}`, {
-      headers: authorized(fixture.archToken),
-      signal: controller.signal,
-    });
+    const aborted = authenticated(
+      `${fixture.baseUrl}/v1/deliveries/next?${query}`,
+      fixture.archToken,
+      {
+        signal: controller.signal,
+      },
+    );
     const rejection = expect(aborted).rejects.toThrow();
     observing = true;
     await read;
@@ -839,9 +853,11 @@ describe("RelayHttpServer operator routes and errors", () => {
   });
 
   it("validates query parameters and strict route bodies", async () => {
-    const invalidLimit = await fetch(`${fixture.baseUrl}/v1/inbox?limit=101&waitMs=0`, {
-      headers: authorized(fixture.archToken),
-    });
+    const invalidLimit = await authenticated(
+      `${fixture.baseUrl}/v1/inbox?limit=101&waitMs=0`,
+      fixture.archToken,
+      {},
+    );
     expect(invalidLimit.status).toBe(400);
 
     const forgedIdentity = await post(
@@ -928,15 +944,29 @@ describe("RelayHttpClient resource behavior", () => {
       "http://127.0.0.1:4100/path",
       "http://localhost:4100",
     ]) {
-      expect(() => new RelayHttpClient(baseUrl, () => "token")).toThrowError(
+      expect(
+        () => new RelayHttpClient(baseUrl, () => "token", { project: PROJECT, agentId: "arch" }),
+      ).toThrowError(
         expect.objectContaining({
           name: "SynloqError",
           code: "INVALID_INPUT",
         }),
       );
     }
-    expect(() => new RelayHttpClient("http://127.0.0.1:4100", () => "token")).not.toThrow();
-    expect(() => new RelayHttpClient("http://[::1]:4100/", () => "token")).not.toThrow();
+    expect(
+      () =>
+        new RelayHttpClient("http://127.0.0.1:4100", () => "token", {
+          project: PROJECT,
+          agentId: "arch",
+        }),
+    ).not.toThrow();
+    expect(
+      () =>
+        new RelayHttpClient("http://[::1]:4100/", () => "token", {
+          project: PROJECT,
+          agentId: "arch",
+        }),
+    ).not.toThrow();
   });
 
   it("uses the required timeouts only for long polls", async () => {
@@ -1035,8 +1065,7 @@ describe("RelayHttpServer long-poll concurrency cap (security M2)", () => {
 
   it("releases the slot when a long-poll connection aborts", async () => {
     const controller = new AbortController();
-    const aborted = fetch(`${fixture.baseUrl}/v1/inbox?waitMs=25000`, {
-      headers: authorized(fixture.archToken),
+    const aborted = authenticated(`${fixture.baseUrl}/v1/inbox?waitMs=25000`, fixture.archToken, {
       signal: controller.signal,
     });
     const pending = fixture.arch.inbox({ limit: 1, waitMs: 25_000 });

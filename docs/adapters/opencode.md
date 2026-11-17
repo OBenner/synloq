@@ -46,7 +46,7 @@ See [README.md](README.md) for shared adapter configuration rules and the proces
 `docs/research/2026-11-13-opencode-manual-stand.md`:
 
 - writes the manifest and per-role credentials (reused on re-run),
-- writes MCP configs (`{relayUrl, credentialPath, synloqHome, opencode}`) under
+- writes MCP configs (`{project, agentId, relayUrl, credentialPath, synloqHome, opencode}`) under
   the Synloq home — the `opencode` binding (`{projectRoot, agentId, sessionId}`)
   lets each role channel host the relay itself,
 - merges `mcp.servers["synloq-<role>"]` into the project `opencode.json`

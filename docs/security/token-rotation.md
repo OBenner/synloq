@@ -12,20 +12,24 @@ implementer; the audit-log steps use the M4-min audit scope (issue #3, landed
 
 ## Concepts
 
-- Each project role (and `operator`) authenticates to the relay with a bearer token.
+- Each project role (and `operator`) authenticates with auth-v2 MAC proofs derived
+  from its token; the token is not sent over relay HTTP.
 - Tokens are stored as plaintext files at
   `<synloqHome>/credentials/<project-key>/<agentId>.token` (mode `0600`); the relay
-  keeps only SHA-256 hashes in `<synloqHome>/credentials/<project-key>.json`.
+  keeps SHA-256 hashes in `<synloqHome>/credentials/<project-key>.json`. These are
+  **authentication-equivalent secrets**, not safe-to-disclose verifiers. A store
+  leak requires rotating every affected role, including `operator`. Treat copies
+  and backups as credential leaks too; never print or commit the hashes.
 - **Rotation replaces** all previously issued hashes of the role: every older token
   becomes invalid immediately. Re-issuing without rotation (lost state, fresh init)
   is _not_ revocation — old tokens keep working while their hashes remain in the
-  credential store.
-- Running MCP channel processes hold their token in memory. After rotation the
-  affected role's channels must be restarted (close/reopen the chat's MCP server or
-  the client conversation); the relay itself does not need a restart — it
-  authenticates against the credential store on every request, so a rotated token
-  works as soon as the channel reloads it. A `401` after rotation almost always
-  means the channel was not restarted.
+  credential store. Rotation changes V/kid, so outstanding challenges fail closed;
+  an already admitted operation may finish using its verified request context.
+- MCP channels re-read their token files for each request. A fresh request can
+  self-heal after rotation; an in-flight request may fail. Static-token CLI/adapter
+  clients require reloading/restarting. Restart the affected channel if failures
+  persist, and check its credential path. The relay re-reads the store at challenge
+  issuance and request verification; no relay restart is needed for rotation.
 - Both commands are idempotent in their own sense: repeating `revoke-token` succeeds
   with an "already absent" note; repeating `rotate-token` performs a new rotation.
 

@@ -1,4 +1,6 @@
 import { serveCommand, type ServeHandle } from "../cli/commands.js";
+import { CredentialStore } from "../config/credentials.js";
+import type { AuthContext } from "../transport/auth-proof.js";
 import { SynloqError } from "../domain/errors.js";
 import type { Participant } from "../domain/message.js";
 import { RelayHttpClient, type TokenProvider } from "../transport/http-client.js";
@@ -8,6 +10,7 @@ export type RelayProbe = (
   relayUrl: string,
   token: TokenProvider,
   timeoutMs: number,
+  context: AuthContext,
 ) => Promise<Participant[]>;
 
 export interface EnsureRelayOptions {
@@ -43,11 +46,9 @@ function unavailable(): SynloqError {
   return new SynloqError("STORAGE_FAILURE", "Synloq relay endpoint is unavailable or incompatible");
 }
 
-const defaultProbe: RelayProbe = async (relayUrl, token, timeoutMs) => {
-  const client = new RelayHttpClient(relayUrl, token);
-  // Verify the unauthenticated health marker before any credential is sent:
-  // a port-squatting listener must never receive the bearer token.
-  await client.health(timeoutMs);
+const defaultProbe: RelayProbe = async (relayUrl, token, timeoutMs, context) => {
+  const client = new RelayHttpClient(relayUrl, token, context);
+  // Every operation verifies the relay proof before sending its body.
   return (await client.listParticipants(timeoutMs)).participants;
 };
 
@@ -57,9 +58,13 @@ export async function ensureRelay(options: EnsureRelayOptions): Promise<RelaySup
   const timeoutMs = options.probeTimeoutMs ?? 750;
   const token: TokenProvider =
     typeof options.token === "function" ? options.token : () => options.token as string;
-  const client = new RelayHttpClient(target.baseUrl, token);
+  const context = await new CredentialStore(options.projectRoot, options.synloqHome).authenticate(
+    options.project,
+    await token(),
+  );
+  const client = new RelayHttpClient(target.baseUrl, token, context);
   const compatible = async (): Promise<RelaySupervisorHandle> => {
-    const participants = await probe(target.baseUrl, token, timeoutMs);
+    const participants = await probe(target.baseUrl, token, timeoutMs, context);
     if (
       participants.length === 0 ||
       participants.some((participant) => participant.project !== options.project)

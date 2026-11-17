@@ -17,7 +17,10 @@ async function writeConfig(home: string, config: Record<string, unknown>): Promi
   const credentialPath = join(home, "arch.token");
   const configPath = join(home, "mcp.json");
   await writeFile(credentialPath, "test-token\n", { mode: 0o600 });
-  await writeFile(configPath, JSON.stringify({ credentialPath, ...config }));
+  await writeFile(
+    configPath,
+    JSON.stringify({ project: "stand", agentId: "arch", credentialPath, ...config }),
+  );
   return configPath;
 }
 
@@ -37,7 +40,10 @@ describe("MCP automatic relay lifecycle for OpenCode bindings", () => {
     const events: string[] = [];
     let supervisorOptions: StartRelaySupervisorOptions | undefined;
     const supervisor: RelaySupervisorLoop = {
-      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token"),
+      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token", {
+        project: "stand",
+        agentId: "arch",
+      }),
       owned: true,
       close: vi.fn(async () => {
         events.push("relay-close");
@@ -95,7 +101,10 @@ describe("MCP automatic relay lifecycle for OpenCode bindings", () => {
     });
 
     const supervisor: RelaySupervisorLoop = {
-      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token"),
+      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token", {
+        project: "stand",
+        agentId: "arch",
+      }),
       owned: true,
       close: vi.fn(async () => undefined),
     };

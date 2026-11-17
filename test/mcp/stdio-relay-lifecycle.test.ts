@@ -22,6 +22,8 @@ describe("MCP automatic relay lifecycle", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "example",
+        agentId: "reviewer",
         relayUrl: "http://example.com:4100",
         credentialPath,
       }),
@@ -51,6 +53,8 @@ describe("MCP automatic relay lifecycle", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "example",
+        agentId: "reviewer",
         relayUrl: "http://127.0.0.1:4100",
         credentialPath,
         synloqHome: home,
@@ -66,7 +70,10 @@ describe("MCP automatic relay lifecycle", () => {
     const events: string[] = [];
     let lifecycleOptions: StartRelaySupervisorOptions | undefined;
     const supervisor: RelaySupervisorLoop = {
-      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token"),
+      client: new RelayHttpClient("http://127.0.0.1:4100", () => "test-token", {
+        project: "example",
+        agentId: "reviewer",
+      }),
       owned: true,
       close: vi.fn(async () => {
         events.push("relay-close");
@@ -134,6 +141,8 @@ describe("MCP automatic relay lifecycle", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "example",
+        agentId: "reviewer",
         relayUrl: "http://127.0.0.1:4100",
         credentialPath,
         synloqHome: home,
@@ -148,7 +157,10 @@ describe("MCP automatic relay lifecycle", () => {
 
     let lifecycleOptions: StartRelaySupervisorOptions | undefined;
     const supervisor: RelaySupervisorLoop = {
-      client: new RelayHttpClient("http://127.0.0.1:4100", () => "token-one"),
+      client: new RelayHttpClient("http://127.0.0.1:4100", () => "token-one", {
+        project: "example",
+        agentId: "reviewer",
+      }),
       owned: true,
       close: vi.fn(async () => undefined),
     };

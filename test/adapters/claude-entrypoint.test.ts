@@ -102,8 +102,11 @@ describe("Claude composition entry points", () => {
       messages,
     });
     const baseUrl = await server.listen("127.0.0.1", 0);
-    const cto = new RelayHttpClient(baseUrl, () => ctoToken);
-    const arch = new RelayHttpClient(baseUrl, () => archToken);
+    const cto = new RelayHttpClient(baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" });
+    const arch = new RelayHttpClient(baseUrl, () => archToken, {
+      project: PROJECT,
+      agentId: "arch",
+    });
 
     try {
       await arch.registerSession({

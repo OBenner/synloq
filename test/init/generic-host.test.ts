@@ -41,6 +41,8 @@ describe("initializeGenericTeam", () => {
       await readFile(join(paths.runtime, "mcp", "cto.json"), "utf8"),
     ) as Record<string, unknown>;
     expect(ctoConfig).toEqual({
+      project: "stand",
+      agentId: "cto",
       relayUrl: "http://127.0.0.1:4100",
       // Issue #7/#32: relative to the config file, like the other renderers.
       credentialPath: `../../../credentials/${paths.key}/cto.token`,

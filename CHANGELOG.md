@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Relay HTTP authentication v2 (#1): mutually authenticated challenge/request/response
+  MACs replace wire Bearer tokens. **Coordinated upgrade required:** update relay
+  and all clients, regenerate MCP configs with trusted `project`/`agentId`, and
+  restart channels. Old/new combinations fail closed without fallback. Manual
+  relay commands resolve identity from `--project-root` (cwd by default) and
+  `--synloq-home`. See [rollout](docs/security/transport-auth-v2.md).
+- Credential-store SHA-256 values are authentication-equivalent secrets. Rotate
+  every affected role/operator credential after a store leak. MACs do not encrypt
+  plaintext against an active forwarding proxy. Final R1 review is tracked in backlog.
+
 ## [0.1.0] - 2026-11-16
 
 Public alpha with active delivery, durable storage and hardened local security.

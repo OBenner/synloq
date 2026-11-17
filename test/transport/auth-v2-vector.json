@@ -1,0 +1,23 @@
+{
+  "verifier": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "challenge": {
+    "authVersion": 2,
+    "project": "vector-project",
+    "agentId": "arch",
+    "kid": "575c6273e59cb85877462701a1de3f6813f54840b26dee1fd345912ebad2ad22",
+    "instanceId": "11111111111111111111111111111111",
+    "bootId": "22222222222222222222222222222222",
+    "clientNonce": "33333333333333333333333333333333",
+    "serverNonce": "44444444444444444444444444444444",
+    "expiresAt": 1800000000000,
+    "proof": "0e62e4b51ff07cf723b73607e54b0571cbb2c5e7d00ce80f07155088e2a1ae30"
+  },
+  "method": "POST",
+  "target": "/v1/messages?b=2&a=%2F",
+  "body": "{\"text\":\"Привет\"}",
+  "requestDigest": "d15b18da9d81322d29bdea6218c3722f7dfc09b336281710828cc1c1756401d1",
+  "requestProof": "e6ff389cb7a0a30f3aa9f8c32721724e88a5532db2f309c40a43e7fd0f3f89be",
+  "status": 403,
+  "responseBody": "{\"error\":{\"code\":\"NOT_WRITER\",\"message\":\"denied\"}}",
+  "responseProof": "9cfc76f6bd3d05837d9bbef5370140054f42e4ae311ba67bafd6d7d67282d79a"
+}

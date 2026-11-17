@@ -113,6 +113,8 @@ export async function initializeGenericTeam(
     const credential = await credentials.ensureCredential(project, role.agentId);
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
     await writeJsonAtomic(configPath, {
+      project,
+      agentId: role.agentId,
       relayUrl,
       // Relative to the config file, like the Kimi/OpenCode renderers (#7/#32).
       credentialPath: relativeHomePaths(paths.key, role.agentId).credentialPath,

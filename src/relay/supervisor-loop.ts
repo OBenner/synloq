@@ -73,7 +73,8 @@ class Supervisor implements RelaySupervisorLoop {
       if (this.abort.signal.aborted || this.unavailable) return;
       try {
         const probeTimeoutMs = this.options.probeTimeoutMs ?? 750;
-        await this.client.health(probeTimeoutMs);
+        // Auth-v2 authenticates every operation; participants already proves
+        // relay identity and avoids spending two challenges on one monitor tick.
         await this.client.listParticipants(probeTimeoutMs);
       } catch {
         await this.recover();

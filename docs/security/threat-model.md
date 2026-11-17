@@ -1,17 +1,17 @@
 # Synloq Threat Model
 
 - Status: accepted
-- Date: 2026-11-12
+- Date: 2026-11-17 (auth-v2 implementation; final sign-off pending)
 - Author: Security
 - Supersedes: section 1 of `docs/security/review-2026-11-12.md`
 
 Synloq is a local-first message relay between visible coding-agent chats: a loopback
 HTTP relay (`127.0.0.1:4100` by default) with durable SQLite state, and per-role MCP
-stdio channels authenticated by bearer tokens.
+stdio channels authenticated by credential-derived auth-v2 MAC proofs.
 
 ## Assets
 
-1. **Role and operator bearer tokens** (`<synloqHome>/credentials/`). The operator
+1. **Role and operator credentials** (`<synloqHome>/credentials/`). The operator
    token controls pause gates, session replacement, and operator diagnostics — it is
    the single most sensitive secret of a project.
 2. **Message content** stored in the project SQLite database.
@@ -40,16 +40,22 @@ stdio channels authenticated by bearer tokens.
   non-loopback addresses; the relay supervisor validates the configured origin; the
   MCP/adapter configuration schemas and the HTTP client constructor reject any
   non-loopback relay URL.
-- **Health marker before credentials**: a role channel verifies the unauthenticated
-  `GET /v1/health` marker before ever sending its bearer token, so an unrelated
-  process that merely occupies the port does not receive credentials (added in
-  `56bfeae`; residual risk R1 below).
+- **Mutual auth-v2 proofs**: every HTTP client verifies a fresh challenge bound to
+  trusted local project/role, boot ID and nonce before sending a business body.
+  Request proofs cover method, raw path/query and exact body bytes; response proofs
+  cover the request digest, status and exact response bytes. Tokens are never sent.
+  Challenges are consumed atomically before dispatch and bounded by TTL, rate and
+  capacity. Rotation invalidates outstanding challenges; restart discards them.
+  `GET /v1/health` is public discovery, never authentication evidence. See the
+  [wire profile](transport-auth-v2.md) for coverage and limits.
 - **No sender spoofing**: `from` is derived from the authenticated identity, never
   from client input. Inbox reads, acknowledgements, and reply parents are authorized
   per recipient.
 - **Tokens**: 256-bit random, stored at rest as SHA-256 hashes, compared with
   `timingSafeEqual`; token files are written with mode `0600` and never copied into
-  plugin sources.
+  plugin sources. The SHA-256 store is authentication-equivalent key material,
+  not a safe-to-disclose password verifier. A store leak requires rotation of all
+  affected role/operator credentials.
 - **Delivery fail-closed**: claims are bound to `(sessionId, generation)`;
   `DELIVERY_UNCERTAIN` without client idempotency quarantines the message and pauses
   the participant instead of replaying blindly.
@@ -75,16 +81,19 @@ stdio channels authenticated by bearer tokens.
 
 ## Known limitations (accepted, tracked in `docs/backlog.md`)
 
-- **R1 — health marker is static and public.** A _targeted_ squatting process that
-  mimics the `/v1/health` response can still capture a role token during a probe or
-  reconnect cycle. On multi-user machines, treat the relay port as untrusted. Mutual
-  relay authentication (per-project challenge) is the planned hardening.
+- **R1 implementation awaiting final review**: auth-v2 addresses the static-marker
+  credential-capture path. Final security sign-off is required before closing R1.
+- **No confidentiality against an active forwarding proxy**, even under another
+  OS user: MACs prevent undetected alteration, not observation, delay or forwarding
+  of plaintext. This profile does not detect an unmodified forwarder.
+- **Unauthenticated local denial of service remains possible**: challenge issuance
+  has a global rate/cap but a local attacker can occupy those resources.
 - **Single relay writer is a discipline, not a mechanism.** Running two writers for
   one project database preserves storage integrity (SQLite serializes writes) but
   splits in-memory rate limiting and dispatching.
 - **No per-identity connection limits.** An authenticated participant can exhaust
   relay resources with parallel long polls (tracked as M2).
-- **Token files are plaintext at rest** (hashes protect the store, not the files);
+- **Token files and authentication-equivalent hashes are secrets at rest**;
   file permissions are the only barrier.
 
 ## Explicitly out of scope
