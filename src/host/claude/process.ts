@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import type { ClaudeBinding } from "../../config/claude-nudger.js";
+import { SYNLOQ_TOOLS } from "../../mcp/tool-names.js";
 
 export interface ClaudeProcessResult {
   exitCode: number | null;
@@ -61,7 +62,8 @@ export function runClaudeProcess(
 }
 
 export function claudeNudgeArgs(binding: ClaudeBinding, prompt: string): string[] {
-  const prefix = `mcp__synloq-${binding.agentId}__synloq_`;
+  const prefix = `mcp__synloq-${binding.agentId}__`;
+  const allowed: readonly string[] = [SYNLOQ_TOOLS.inbox, SYNLOQ_TOOLS.ack];
   return [
     "-p",
     "--resume",
@@ -79,9 +81,12 @@ export function claudeNudgeArgs(binding: ClaudeBinding, prompt: string): string[
     "--permission-mode",
     "default",
     "--disallowedTools",
-    ["send", "reply", "list", "wait"].map((name) => prefix + name).join(","),
+    Object.values(SYNLOQ_TOOLS)
+      .filter((name) => !allowed.includes(name))
+      .map((name) => prefix + name)
+      .join(","),
     "--allowedTools",
-    `${prefix}inbox,${prefix}ack`,
+    allowed.map((name) => prefix + name).join(","),
     "--",
     prompt,
   ];

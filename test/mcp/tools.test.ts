@@ -9,6 +9,7 @@ import { CredentialStore } from "../../src/config/credentials.js";
 import type { Participant } from "../../src/domain/message.js";
 import { PROTOCOL_VERSION } from "../../src/domain/session.js";
 import { registerSynloqTools } from "../../src/mcp/tools.js";
+import { claudeNudgeArgs } from "../../src/host/claude/process.js";
 import { Dispatcher } from "../../src/relay/dispatcher.js";
 import type { SecurityEvent } from "../../src/relay/audit-log.js";
 import { ProtectionPolicy } from "../../src/relay/protection.js";
@@ -110,6 +111,31 @@ afterEach(async () => {
 });
 
 describe("Synloq agent-facing MCP tools", () => {
+  it("denies every advertised MCP tool except inbox/ack in a Claude nudge (#137)", async () => {
+    const args = claudeNudgeArgs(
+      {
+        agentId: "arch",
+        sessionId: "00000000-0000-4000-8000-000000000001",
+        cwd: fixture.root,
+        transcript: join(fixture.root, "session.jsonl"),
+        mcpConfig: join(fixture.root, "mcp.json"),
+        settings: join(fixture.root, "settings.json"),
+        adapterConfig: join(fixture.root, "adapter.json"),
+      },
+      "probe",
+    );
+    const allowed = args[args.indexOf("--allowedTools") + 1]!.split(",");
+    const denied = args[args.indexOf("--disallowedTools") + 1]!.split(",");
+    const prefix = "mcp__synloq-arch__";
+    expect(allowed.sort()).toEqual([prefix + "synloq_ack", prefix + "synloq_inbox"]);
+    const advertised = (await fixture.mcpClient.listTools()).tools.map((t) => prefix + t.name);
+    // Compare against the real SDK surface, independently of the name catalog.
+    // A new registration omitted from the catalog fails this guard.
+    expect(denied.sort()).toEqual(advertised.filter((name) => !allowed.includes(name)).sort());
+    expect(denied).toEqual(
+      expect.arrayContaining([prefix + "synloq_note_read", prefix + "synloq_note_write"]),
+    );
+  });
   it("refuses a foreign recipient ack through SDK and audits once without state change (#96)", async () => {
     const { message } = await fixture.cto.send({
       to: "cto",

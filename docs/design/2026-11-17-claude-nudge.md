@@ -86,7 +86,10 @@ The prompt starts `Synloq nudge: N pending message(s), messageId ...` and contai
 only validated identifiers, a unique marker, and fixed instructions. No message
 body is copied into argv. Built-in tools are disabled; strict MCP configuration
 contains exactly the assigned role channel. Only that channel's inbox and ack
-are allowed; send/reply/list/wait are explicitly denied for this process. No
+are allowed; every other registered Synloq tool, including send/reply/list/wait
+and note_read/note_write, is explicitly denied for this process. The deny list
+is derived from the shared MCP name catalog minus inbox/ack; an SDK tools/list
+regression rejects surface drift outside that catalog. No
 permission bypass or persistent permission change is made. The variadic
 `--allowedTools` option is terminated with `--` before the prompt.
 
@@ -98,6 +101,10 @@ diagnostics. Timeout/overflow/shutdown kills only the owned child and waits for
 its exit before releasing ownership. If the OS does not confirm exit, ownership
 must remain held; there is no unsafe forced unlock. Inherited MCP descendants
 are not treated as proof of successful completion.
+The 60-second deadline includes shutdown after a final answer: a structured
+success followed by a process timeout remains `uncertain`, even when the marker
+and ACK already exist. The re-init negative-permission probe observed this
+boundary; a final answer alone does not override the process-exit requirement.
 
 ## Durable checks and retry
 
