@@ -160,13 +160,17 @@ export class RelayHttpClient {
     });
     // Status is only a failure hint, never authentication evidence or trusted text.
     // Preserve UNAUTHORIZED so token-file reload/recovery can run after rotation.
-    if (response.status === 401)
-      throw new SynloqError("UNAUTHORIZED", "relay authentication rejected");
-    if (!response.ok)
+    if (!response.ok) {
+      // Unauthenticated bodies are neither needed nor trusted. Cancel rather
+      // than leaving an unbounded stream/socket alive during repeated failures.
+      await response.body?.cancel();
+      if (response.status === 401)
+        throw new SynloqError("UNAUTHORIZED", "relay authentication rejected");
       throw new SynloqError(
         "INCOMPATIBLE_PROTOCOL",
         "relay authentication unavailable; auth v2 required",
       );
+    }
     let parsed: ReturnType<typeof challengeSchema.safeParse>;
     try {
       parsed = challengeSchema.safeParse(
