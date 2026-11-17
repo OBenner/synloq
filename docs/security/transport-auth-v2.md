@@ -1,7 +1,8 @@
 # Relay transport authentication v2
 
-Status: implementation candidate for issue #1. Design approved by arch and security;
-final implementation review is required before closing residual risk R1.
+Status: implementation for issue #1 approved by architecture and security.
+Final security sign-off on implementation `7e59e45` (2026-11-17) closes residual
+risk R1 in this implementation; deployment still requires the coordinated upgrade.
 This changes HTTP authentication only; the message envelope remains v1.
 
 ## Trust and key material

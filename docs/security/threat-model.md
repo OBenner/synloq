@@ -1,7 +1,7 @@
 # Synloq Threat Model
 
 - Status: accepted
-- Date: 2026-11-17 (auth-v2 implementation; final sign-off pending)
+- Date: 2026-11-17 (auth-v2 implementation; final security sign-off approved)
 - Author: Security
 - Supersedes: section 1 of `docs/security/review-2026-11-12.md`
 
@@ -79,10 +79,18 @@ stdio channels authenticated by credential-derived auth-v2 MAC proofs.
   protections, not protection against an owning OS user racing filesystem
   changes between validation and writing.
 
+## R1 remediation
+
+**R1 closed in this implementation**: auth-v2 addresses the static-marker
+credential-capture path. Security approved implementation `7e59e45` on
+2026-11-17 after reviewing the wire profile, key derivation, server/client changes
+and conformance evidence. Architecture accepted the contract; the full local
+verification passed 111 files / 979 tests. Deployment requires the coordinated
+relay/client/config upgrade documented in the [wire profile](transport-auth-v2.md).
+This verdict does not establish that an existing installation has been upgraded.
+
 ## Known limitations (accepted, tracked in `docs/backlog.md`)
 
-- **R1 implementation awaiting final review**: auth-v2 addresses the static-marker
-  credential-capture path. Final security sign-off is required before closing R1.
 - **No confidentiality against an active forwarding proxy**, even under another
   OS user: MACs prevent undetected alteration, not observation, delay or forwarding
   of plaintext. This profile does not detect an unmodified forwarder.
