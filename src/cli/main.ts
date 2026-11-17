@@ -36,6 +36,8 @@ import {
   statusCommand,
 } from "./commands.js";
 import { formatDoctorReport } from "./doctor.js";
+import { upgradeCheck } from "./upgrade-check.js";
+import { projectPaths } from "../config/paths.js";
 import { formatStatusReport } from "./status.js";
 import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
 
@@ -109,7 +111,7 @@ const helpText: Record<CommandName, string> = {
   "replace-session":
     "Usage: synloq replace-session [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
   doctor:
-    "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host]\n",
+    "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host] [--upgrade-check]\n  --upgrade-check: read-only preview of pending migrations and the upgrade path (issue #116)\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
@@ -246,9 +248,21 @@ async function execute(
       "synloq-home": { type: "string" },
       repair: { type: "boolean" },
       "check-host": { type: "boolean" },
+      "upgrade-check": { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
+      return;
+    }
+    // Issue #116: read-only upgrade preview — schema drift and the 3-command
+    // upgrade path without touching the database.
+    if (value(values, "upgrade-check") === true) {
+      const paths = await projectPaths(
+        requiredString(values, "project-root"),
+        synloqHomeOption(values).synloqHome,
+      );
+      const report = await upgradeCheck({ databasePath: paths.database });
+      io.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return;
     }
     // Issue #32 (W6): liveness probes need the OpenCode service; discovery
