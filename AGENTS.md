@@ -2,9 +2,10 @@
 
 Synloq is a local-first coordination layer between **visible** coding-agent
 chats. A supervised loopback HTTP relay owns durable SQLite state; each role
-(an ordinary chat in the host client) gets exactly six MCP tools
+(an ordinary chat in the host client) gets its MCP tools
 (`synloq_list`, `synloq_send`, `synloq_reply`, `synloq_inbox`, `synloq_wait`,
-`synloq_ack`) on its own authenticated channel.
+`synloq_ack`, plus the local-only memory pair `synloq_note_read` /
+`synloq_note_write`) on its own authenticated channel.
 
 Synloq is **not** an orchestrator: no hidden or replacement chats, no
 autonomous workflows, no auto-merge/push, no remote delivery. The human

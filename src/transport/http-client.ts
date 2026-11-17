@@ -11,6 +11,7 @@ import type {
 import type { InboxResult, ReplyRequest, SendRequest } from "../relay/relay-service.js";
 import { PROTOCOL_VERSION } from "../domain/session.js";
 import type { ClaimedDelivery, PauseScope } from "../storage/message-store.js";
+import type { Note } from "../storage/notes-store.js";
 import { parseLoopbackHttpUrl } from "./loopback.js";
 import {
   AUTH_VERSION,
@@ -297,8 +298,19 @@ export class RelayHttpClient {
     return this.request("POST", "/v1/operator/replace-session", input);
   }
 
-  doctor(): Promise<{ sessions: AdapterSession[] }> {
+  doctor(): Promise<{
+    sessions: AdapterSession[];
+    notes?: { roles: number; notes: number; oldest?: string; newest?: string };
+  }> {
     return this.request("GET", "/v1/operator/doctor");
+  }
+
+  noteRead(key: string): Promise<{ note: Note }> {
+    return this.request("GET", `/v1/notes?${new URLSearchParams({ key })}`);
+  }
+
+  noteWrite(key: string, body: string): Promise<{ note: Note }> {
+    return this.request("PUT", "/v1/notes", { key, body });
   }
 
   private longPollTimeout(waitMs: number | undefined): number {
@@ -306,7 +318,7 @@ export class RelayHttpClient {
   }
 
   private async request<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT",
     path: string,
     body?: unknown,
     timeoutMs = 5_000,

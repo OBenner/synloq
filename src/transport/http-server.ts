@@ -28,6 +28,7 @@ import type { Dispatcher } from "../relay/dispatcher.js";
 import type { ProtectionPolicy } from "../relay/protection.js";
 import type { RelayService } from "../relay/relay-service.js";
 import type { SQLiteMessageStore } from "../storage/message-store.js";
+import type { NotesStore } from "../storage/notes-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 
 const MAX_JSON_BYTES = 64 * 1024;
@@ -82,6 +83,10 @@ const bindingSchema = z.object(bindingFields).strict();
 const deliveryQuerySchema = bindingSchema.extend({
   waitMs: z.coerce.number().int().min(0).max(25_000).default(0),
 });
+const notesQuerySchema = z.object({ key: z.string().min(1).max(128) }).strict();
+const notesWriteSchema = z
+  .object({ key: z.string().min(1).max(128), body: z.string().max(65_536) })
+  .strict();
 const acknowledgeSchema = z
   .object({
     messageId: z.string().uuid(),
@@ -152,6 +157,9 @@ export interface RelayHttpServerOptions {
   dispatcher: Dispatcher;
   messages: SQLiteMessageStore;
   audit?: SecurityAuditLog;
+  // Per-role memory notes (#22). Absent = notes routes fail closed; ordinary
+  // messaging is unaffected.
+  notes?: NotesStore;
   // When present, long-poll routes (waitMs > 0) acquire a per-identity slot
   // from this policy and release it when the request ends (security M2).
   protection?: ProtectionPolicy;
@@ -700,11 +708,43 @@ export class RelayHttpServer {
       this.requireOperator(identity);
       this.sendJson(response, 200, {
         sessions: this.options.sessions.list(project),
+        // Doctor surface for notes (#22): aggregate stats only, never bodies.
+        ...(this.options.notes ? { notes: this.options.notes.stats(project) } : {}),
       });
       return;
     }
 
+    if (method === "GET" && path === "/v1/notes") {
+      const notes = this.requireNotes();
+      const query = notesQuerySchema.parse(Object.fromEntries(url.searchParams));
+      const note = notes.read(project, identity.agentId, query.key);
+      if (!note) throw new SynloqError("NOT_FOUND", "note not found");
+      this.sendJson(response, 200, { note });
+      return;
+    }
+
+    if (method === "PUT" && path === "/v1/notes") {
+      const notes = this.requireNotes();
+      const input = notesWriteSchema.parse(await this.readJson(request));
+      const note = notes.write(
+        project,
+        identity.agentId,
+        input.key,
+        input.body,
+        new Date().toISOString(),
+      );
+      this.sendJson(response, 200, { note });
+      return;
+    }
+
     throw new SynloqError("NOT_FOUND", "route not found");
+  }
+
+  private requireNotes(): NotesStore {
+    if (!this.options.notes) {
+      throw new SynloqError("STORAGE_FAILURE", "notes storage is not available");
+    }
+    return this.options.notes;
   }
 
   private nextDelivery(identity: Identity, binding: SessionBinding) {

@@ -161,4 +161,36 @@ export function registerSynloqTools(
     },
     async (input) => invoke(() => client.acknowledge(input.messageId, writerSessionId)),
   );
+
+  // Per-role memory notes (#22): local tooling surface, never routed between
+  // participants. The relay scopes every note to the authenticated role.
+  server.registerTool(
+    "synloq_note_read",
+    {
+      description:
+        "Read this role's memory note for a key (local only, never routed to other roles)",
+      inputSchema: z.object({ key: z.string().min(1).max(128) }).strict(),
+      annotations: readAnnotations,
+    },
+    async (input) => invoke(() => client.noteRead(input.key)),
+  );
+
+  server.registerTool(
+    "synloq_note_write",
+    {
+      description:
+        "Write this role's memory note for a key; overwrites the previous body (local only, never routed to other roles)",
+      inputSchema: z
+        .object({ key: z.string().min(1).max(128), body: z.string().max(65_536) })
+        .strict(),
+      annotations: {
+        readOnlyHint: false,
+        // Overwrites existing state for the key.
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input) => invoke(() => client.noteWrite(input.key, input.body)),
+  );
 }

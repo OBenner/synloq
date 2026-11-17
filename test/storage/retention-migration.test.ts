@@ -59,7 +59,7 @@ it.each([0, 1, 2, 3, 4])(
       });
       const inspector = openDatabase(file);
       try {
-        expect(inspector.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
+        expect(inspector.prepare("PRAGMA user_version").get()?.user_version).toBe(6);
         expect(inspector.prepare("PRAGMA foreign_key_list(messages)").all()).toEqual([]);
         expect(inspector.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
         expect(inspector.prepare("SELECT COUNT(*) AS n FROM delivery_quarantine").get()?.n).toBe(1);
