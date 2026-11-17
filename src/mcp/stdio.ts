@@ -11,6 +11,7 @@ import { loadManifest } from "../config/manifest.js";
 import { createTokenFileProvider } from "../config/credentials.js";
 import { projectPaths } from "../config/paths.js";
 import { formatDiagnostic } from "../diagnostics.js";
+import { mcpTitle, setProcessTitle } from "../cli/process-title.js";
 import { SynloqError } from "../domain/errors.js";
 import { languageSchema, type Language } from "../i18n/index.js";
 import {
@@ -388,6 +389,9 @@ export async function startMcpStdio(
 ): Promise<McpServer> {
   const configuration = await readConfiguration(configPath);
   const diagnostics = options.stderr ?? process.stderr;
+  // Recognizable in OS process monitors; writes nothing to the MCP channel.
+  const titleRole = configuration.kimiWork?.agentId ?? configuration.opencode?.agentId;
+  if (titleRole) setProcessTitle(mcpTitle(titleRole));
   // Self-heal after a token rotation/repair: the provider re-reads the
   // credential file per request (with a last-good fallback), so a live
   // channel recovers from a reissue without a host process restart.

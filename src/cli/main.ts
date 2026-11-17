@@ -35,6 +35,7 @@ import {
   serveCommand,
   statusCommand,
 } from "./commands.js";
+import { relayTitle, setProcessTitle } from "./process-title.js";
 import { formatDoctorReport } from "./doctor.js";
 import { upgradeCheck } from "./upgrade-check.js";
 import type { ClaudeHookIo } from "./claude-hook.js";
@@ -495,6 +496,8 @@ async function execute(
       ...(host ? { host } : {}),
       port: numberOption(values, "port", 0, 65_535),
     });
+    const port = Number(new URL(handle.baseUrl).port);
+    if (Number.isSafeInteger(port) && port > 0) setProcessTitle(relayTitle(port));
     writeJson(io, { relayUrl: handle.baseUrl });
     try {
       await (dependencies.waitForShutdown ?? waitForSignal)();
