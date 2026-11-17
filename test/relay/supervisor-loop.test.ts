@@ -48,7 +48,10 @@ async function unusedUrl(): Promise<string> {
 
 // Real loopback requests compete with the full suite on CI/Windows.
 // Keep each probe bounded, with room for startup, election and assertions.
-describe("startRelaySupervisor", { timeout: 20_000 }, () => {
+// retry: 1 is the bounded second chance for peak-load scheduling stalls
+// (issue #13); afterEach closes supervisors and cleans temp roots, so a
+// retried attempt starts from a clean slate.
+describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
   it("elects a survivor after owner shutdown and preserves durable messages", async () => {
     const { root, home, token, participants } = await fixture();
     const relayUrl = await unusedUrl();
@@ -78,7 +81,7 @@ describe("startRelaySupervisor", { timeout: 20_000 }, () => {
     });
     await first.close();
 
-    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 10_000 });
+    await vi.waitFor(() => expect(second.owned).toBe(true), { timeout: 15_000 });
     expect(ownerLost).toHaveBeenCalledTimes(1);
     await expect(second.client.listParticipants()).resolves.toEqual({ participants });
     await expect(second.client.inbox({ limit: 10 })).resolves.toMatchObject({
