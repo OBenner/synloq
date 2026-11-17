@@ -29,6 +29,7 @@ export interface StatusParticipant {
 export interface StatusReport {
   project: string;
   generatedAt: string;
+  versions?: import("../diagnostics/versions.js").VersionsBlock;
   storage: { ok: boolean; path: string; error?: string };
   home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
@@ -159,6 +160,7 @@ export function createStatusReport(options: StatusReportOptions): StatusReport {
   return {
     project: options.project,
     generatedAt: new Date(now).toISOString(),
+    ...(doctor.versions ? { versions: doctor.versions } : {}),
     storage: doctor.storage,
     ...(doctor.home ? { home: doctor.home } : {}),
     ...(doctor.audit ? { audit: doctor.audit } : {}),

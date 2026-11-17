@@ -8,6 +8,7 @@ import type { SQLiteMessageStore } from "../storage/message-store.js";
 import type { SessionStore } from "../storage/session-store.js";
 import type { ChannelConfigHealthReport } from "./repair.js";
 import type { HostName } from "../config/hosts.js";
+import type { VersionsBlock } from "../diagnostics/versions.js";
 
 export interface PlacementHealth {
   host: HostName;
@@ -41,6 +42,8 @@ export interface OpenCodeHostCheck {
 }
 
 export interface DoctorReport {
+  /** Issue #115: copy-pasteable version block for reproducible bug reports. */
+  versions?: VersionsBlock;
   storage: { ok: boolean; path: string; error?: string };
   home?: SynloqHomeProbe;
   watchdog: WatchdogFinding[];
@@ -73,6 +76,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorReportOptions {
+  versions?: VersionsBlock;
   placements?: Map<string, PlacementHealth>;
   project: string;
   participants: Participant[];
@@ -137,6 +141,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
   });
 
   return {
+    ...(options.versions ? { versions: options.versions } : {}),
     storage,
     watchdog,
     ...(options.home ? { home: options.home } : {}),
