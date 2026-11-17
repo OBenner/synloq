@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
 import { SQLiteMessageStore } from "../../src/storage/message-store.js";
-import { openDatabase } from "../../src/storage/sqlite.js";
+import { SynloqError } from "../../src/domain/errors.js";
+import { CURRENT_SCHEMA_VERSION, openDatabase } from "../../src/storage/sqlite.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -82,12 +83,11 @@ it.each([false, true])(
     const db = new DatabaseSync(file);
     db.exec("PRAGMA user_version = 999");
     db.close();
+    // #113: the refusal names both versions and the escape hatch.
     expect(() => openDatabase(file, { readOnly })).toThrow(
       expect.objectContaining({
         code: "STORAGE_FAILURE",
-        cause: expect.objectContaining({
-          message: expect.stringContaining("unsupported SQLite user_version"),
-        }),
+        message: expect.stringContaining("schema version 999"),
       }),
     );
     const inspector = new DatabaseSync(file);
@@ -117,4 +117,27 @@ it("rolls back the complete migration on foreign-key validation failure", () => 
   } finally {
     inspector.close();
   }
+});
+
+it("names both versions and the escape hatch when the DB is newer than the binary (#113)", () => {
+  const file = path();
+  const newer = new DatabaseSync(file);
+  newer.exec(`PRAGMA user_version = ${CURRENT_SCHEMA_VERSION + 1}`);
+  newer.close();
+
+  const error = (() => {
+    try {
+      openDatabase(file);
+      return undefined;
+    } catch (failure) {
+      return failure;
+    }
+  })();
+  expect(error).toBeInstanceOf(SynloqError);
+  const failure = error as SynloqError;
+  expect(failure.code).toBe("STORAGE_FAILURE");
+  expect(failure.message).toContain(`schema version ${CURRENT_SCHEMA_VERSION + 1}`);
+  expect(failure.message).toContain(`supports up to ${CURRENT_SCHEMA_VERSION}`);
+  expect(failure.message).toContain("npm i -g synloq@latest");
+  expect(failure.message).toContain("forward-only");
 });
