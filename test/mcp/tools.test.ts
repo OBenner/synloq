@@ -198,12 +198,19 @@ describe("Synloq agent-facing MCP tools", () => {
   });
 
   it("lists participants with JSON text and equivalent structured content", async () => {
+    // Issue #108: every participant carries a derived reachability tag. The
+    // fixture directory is static and hostless, so the derivation defaults to
+    // kimi-work — push.
+    const reach = {
+      reach: "push delivery — replies appear in the chat automatically",
+    };
+    const withReach = participants.map((participant) => ({ ...participant, ...reach }));
     const result = await fixture.mcpClient.callTool({ name: "synloq_list", arguments: {} });
 
     expect(result.isError).toBeFalsy();
-    expect(result.structuredContent).toEqual({ participants });
+    expect(result.structuredContent).toEqual({ participants: withReach });
     expect((result as { content: Array<{ type: string; text: string }> }).content).toEqual([
-      { type: "text", text: JSON.stringify({ participants }) },
+      { type: "text", text: JSON.stringify({ participants: withReach }) },
     ]);
   });
 

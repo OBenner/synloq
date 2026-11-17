@@ -43,6 +43,18 @@ export const en = {
     "This host has no automatic push delivery: check for messages with synloq_inbox when the session starts and after completing any task; use synloq_wait for idle waiting. Polling is your responsibility.",
   "opencode.approval":
     "The first MCP tool call in a new session may require a one-time approval in the OpenCode UI — ask the operator to approve it once.",
+  "contact.header":
+    "Reachability (derived from each role's host; full detail: docs/guide/operator.md):",
+  "contact.self.push": "Your delivery: push — incoming messages appear in this chat automatically.",
+  "contact.self.queue-nudge":
+    "Your delivery: inbox + queue nudge — a nudge wakes this chat at most once per {cooldownMin} minutes ({maxAttempts} attempts per message; an unloaded chat may not start a run). Sweep synloq_inbox when nudged.",
+  "contact.self.next-interaction":
+    "Your delivery: inbox-only, no automatic wake-up — react when the operator interacts with this chat or on an inbox sweep. Check synloq_inbox when activated.",
+  "contact.push": "{agentId} ({host}): push — expect a reaction within minutes.",
+  "contact.queue-nudge":
+    "{agentId} ({host}): inbox + queue nudge — a reaction may take up to {cooldownMin} minutes and is not guaranteed for unloaded chats.",
+  "contact.next-interaction":
+    "{agentId} ({host}): inbox-only — reacts on next interaction or an inbox sweep.",
   "storedPing.text":
     "Synloq: {count} incoming message(s) waiting (oldest {age} min) — run synloq_inbox",
 } as const;

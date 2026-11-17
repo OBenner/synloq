@@ -28,6 +28,12 @@ async function unusedUrl(): Promise<string> {
   return url;
 }
 
+// Issue #108: listParticipants derives a reachability tag; these fixtures
+// are hostless kimi-work roles, so the tag is push.
+const reachPush = {
+  reach: "push delivery — replies appear in the chat automatically",
+};
+
 describe("automatic relay lifecycle", { timeout: 20_000, retry: 1 }, () => {
   it("preserves the conversation and re-elects one owner without a standalone server", async () => {
     const root = await mkdtemp(join(tmpdir(), "synloq-e2e-project-"));
@@ -102,6 +108,8 @@ describe("automatic relay lifecycle", { timeout: 20_000, retry: 1 }, () => {
     await expect(first.client.inbox({ limit: 10 })).resolves.toMatchObject({
       messages: [{ id: reply.message.id, threadId: sent.message.threadId }],
     });
-    await expect(second.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(second.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
   });
 });

@@ -148,7 +148,7 @@ export async function initializeOpenCodeTeam(
         });
         sessionId = created.id;
         permissionsApplied = created.permissionsApplied;
-        await host.postPrompt(sessionId, rolePromptOpenCode(role, language));
+        await host.postPrompt(sessionId, rolePromptOpenCode(role, language, roles));
       }
       const conversation: OpenCodeTeamConversation = {
         kind: "opencode",

@@ -37,4 +37,11 @@ export interface Participant {
   agentId: string;
   title: string;
   role: string;
+  // Issue #108: enrichment fields. `notes` is an optional operator-authored
+  // manifest annotation; `reach` is a derived English reachability tag added
+  // by the relay for synloq_list. Host placement stays local configuration
+  // and is NOT part of this API — the relay derives `reach` from its own
+  // directory snapshot instead.
+  notes?: string;
+  reach?: string;
 }

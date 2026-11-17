@@ -120,7 +120,13 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);
     const files: Record<string, string> = {
       ".codex/config.toml": `[mcp_servers.synloq-${role.agentId}]\ncommand = "node"\nargs = ${JSON.stringify([resolve(options.runtimeEntrypoint), configPath])}\n`,
-      "AGENTS.md": `${coreRules(role, options.language).join("\n")}\n\nProject source: ${options.projectRoot}\nUse only synloq-${role.agentId}. This role is reactive: check synloq_inbox when activated; there is no automatic wake-up.\n`,
+      "AGENTS.md": `${coreRules(
+        role,
+        options.language,
+        options.roles.map((member) => ({ agentId: member.agentId, host: member.host })),
+      ).join(
+        "\n",
+      )}\n\nProject source: ${options.projectRoot}\nUse only synloq-${role.agentId}. This role is reactive: check synloq_inbox when activated; there is no automatic wake-up.\n`,
     };
     for (const path of [directory, join(directory, ".codex")]) {
       try {

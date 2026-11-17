@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { loadManifest } from "../config/manifest.js";
+import { loadManifestRoles, type ManifestRole } from "../config/manifest.js";
+import type { HostName } from "../config/hosts.js";
 import type { Participant } from "../domain/message.js";
 
 // Issue #36 (T2): the relay used to read synloq.yaml once at startup, so
@@ -15,10 +16,21 @@ export interface ParticipantDirectory {
   // Force a re-read regardless of the mtime cache. Returns the snapshot that
   // is in effect afterwards (the last good one when the re-read fails).
   refresh(): Promise<Participant[]>;
+  /**
+   * Issue #108: host placement for one participant, when the directory knows
+   * it (manifest-backed directories do). Host stays local configuration and
+   * never appears on the participant API itself; reachability tags are
+   * derived from it. Static directories may return undefined — the
+   * derivation then defaults to kimi-work (push).
+   */
+  hostOf?(project: string, agentId: string): Promise<HostName | undefined>;
 }
 
 export class StaticParticipantDirectory implements ParticipantDirectory {
-  constructor(private readonly participants: Participant[]) {}
+  constructor(
+    private readonly participants: Participant[],
+    private readonly hosts: Record<string, HostName> = {},
+  ) {}
 
   list(project: string): Promise<Participant[]> {
     return Promise.resolve(
@@ -30,9 +42,25 @@ export class StaticParticipantDirectory implements ParticipantDirectory {
     return (await this.list(project)).some((participant) => participant.agentId === agentId);
   }
 
+  hostOf(project: string, agentId: string): Promise<HostName | undefined> {
+    if (!this.participants.some((p) => p.project === project && p.agentId === agentId))
+      return Promise.resolve(undefined);
+    return Promise.resolve(this.hosts[agentId]);
+  }
+
   refresh(): Promise<Participant[]> {
     return Promise.resolve(this.participants);
   }
+}
+
+function stripHosts(roles: ManifestRole[]): Participant[] {
+  return roles.map(({ project, agentId, title, role, notes }) => ({
+    project,
+    agentId,
+    title,
+    role,
+    ...(notes ? { notes } : {}),
+  }));
 }
 
 export interface ManifestParticipantDirectoryOptions {
@@ -43,7 +71,11 @@ export interface ManifestParticipantDirectoryOptions {
 }
 
 export class ManifestParticipantDirectory implements ParticipantDirectory {
-  private snapshot: Participant[] = [];
+  private snapshot: ManifestRole[] = [];
+  // Stripped participant view of the snapshot, recomputed on every successful
+  // load. Cached so concurrent refresh() calls share one array identity (a
+  // directory test pins the sharing).
+  private view: Participant[] = [];
   private loadedMtimeMs: number | undefined;
   private reloading: Promise<boolean> | undefined;
   private degraded = false;
@@ -60,14 +92,24 @@ export class ManifestParticipantDirectory implements ParticipantDirectory {
     options: ManifestParticipantDirectoryOptions = {},
   ): Promise<ManifestParticipantDirectory> {
     const directory = new ManifestParticipantDirectory(projectRoot, options);
-    directory.snapshot = await loadManifest(projectRoot);
+    directory.snapshot = await loadManifestRoles(projectRoot);
+    directory.view = stripHosts(directory.snapshot);
     directory.loadedMtimeMs = await directory.mtimeMs();
     return directory;
   }
 
   async list(project: string): Promise<Participant[]> {
     await this.reloadIfChanged();
-    return this.snapshot.filter((participant) => participant.project === project);
+    // Host placement stays off the participant API (issue #36); the view is
+    // the stripped snapshot cached at load time.
+    return this.view.filter((participant) => participant.project === project);
+  }
+
+  async hostOf(project: string, agentId: string): Promise<HostName | undefined> {
+    await this.reloadIfChanged();
+    return this.snapshot.find(
+      (participant) => participant.project === project && participant.agentId === agentId,
+    )?.host;
   }
 
   async isParticipant(project: string, agentId: string): Promise<boolean> {
@@ -76,7 +118,7 @@ export class ManifestParticipantDirectory implements ParticipantDirectory {
 
   async refresh(): Promise<Participant[]> {
     await this.reload(true);
-    return this.snapshot;
+    return this.view;
   }
 
   private async mtimeMs(): Promise<number | undefined> {
@@ -105,8 +147,9 @@ export class ManifestParticipantDirectory implements ParticipantDirectory {
     const mtimeMs = await this.mtimeMs();
     if (!force && mtimeMs === this.loadedMtimeMs) return false;
     try {
-      const participants = await loadManifest(this.projectRoot);
+      const participants = await loadManifestRoles(this.projectRoot);
       this.snapshot = participants;
+      this.view = stripHosts(participants);
       this.loadedMtimeMs = mtimeMs ?? (await this.mtimeMs());
       if (this.degraded) this.options.onRecovered?.();
       this.degraded = false;

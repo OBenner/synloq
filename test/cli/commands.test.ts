@@ -129,9 +129,17 @@ afterEach(async () => {
   }
 });
 
+// Issue #108: listParticipants derives a reachability tag; these fixtures
+// are hostless kimi-work roles, so the tag is push.
+const reachPush = {
+  reach: "push delivery — replies appear in the chat automatically",
+};
+
 describe("relay command handlers", () => {
   it("lists manifest roles through the authenticated relay", async () => {
-    await expect(listCommand(fixture.operator)).resolves.toEqual({ participants });
+    await expect(listCommand(fixture.operator)).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
   });
 
   it("sends only with the operator token and reads the recipient inbox", async () => {
@@ -223,7 +231,9 @@ describe("relay command handlers", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ participants });
+    expect(JSON.parse(stdout)).toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
   });
 
   it("rejects an agent token for CLI send before changing storage", async () => {

@@ -15,6 +15,7 @@ import {
   type AuditedAction,
   type SecurityAuditLog,
 } from "./audit-log.js";
+import { reachTag } from "../config/contact-card.js";
 import { StaticParticipantDirectory, type ParticipantDirectory } from "./participant-directory.js";
 import type { ProtectionPolicy } from "./protection.js";
 
@@ -84,7 +85,19 @@ export class RelayService {
   }
 
   async listParticipants(identity: Identity): Promise<Participant[]> {
-    return this.directory.list(identity.project);
+    const participants = await this.directory.list(identity.project);
+    // Issue #108: derived reachability tag for synloq_list. English by
+    // convention (relay surfaces stay English); the numbers come from the
+    // nudger constants, never literals.
+    return Promise.all(
+      participants.map(async (participant) => ({
+        ...participant,
+        reach: reachTag({
+          agentId: participant.agentId,
+          host: await this.directory.hostOf?.(identity.project, participant.agentId),
+        }),
+      })),
+    );
   }
 
   async send(identity: Identity, raw: SendRequest): Promise<Message> {

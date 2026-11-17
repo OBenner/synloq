@@ -11,6 +11,7 @@ import { hostSchema, type HostName } from "./hosts.js";
 export interface ManifestRole extends Participant {
   host?: HostName;
   placement?: string;
+  notes?: string;
 }
 
 const retentionSchema = z.object({ days: z.number().int().min(1).max(36_500) });
@@ -29,6 +30,7 @@ const manifestSchema = z.object({
       role: z.string(),
       host: hostSchema.optional(),
       placement: z.string().min(1).optional(),
+      notes: z.string().max(500).optional(),
     }),
   ),
 });
@@ -47,6 +49,7 @@ const strictManifestSchema = z
           role: z.string(),
           host: hostSchema.optional(),
           placement: z.string().min(1).optional(),
+          notes: z.string().max(500).optional(),
         })
         .strict(),
     ),
@@ -54,11 +57,12 @@ const strictManifestSchema = z
   .strict();
 
 export async function loadManifest(projectRoot: string): Promise<Participant[]> {
-  return (await loadManifestRoles(projectRoot)).map(({ project, agentId, title, role }) => ({
+  return (await loadManifestRoles(projectRoot)).map(({ project, agentId, title, role, notes }) => ({
     project,
     agentId,
     title,
     role,
+    ...(notes ? { notes } : {}),
   }));
 }
 
@@ -72,6 +76,7 @@ export async function loadManifestRoles(projectRoot: string): Promise<ManifestRo
     role: agent.role,
     ...(agent.host ? { host: agent.host } : {}),
     ...(agent.placement ? { placement: agent.placement } : {}),
+    ...(agent.notes ? { notes: agent.notes } : {}),
   }));
 }
 
@@ -157,6 +162,7 @@ async function applyLocalOverlay(
         role: patch.role,
         ...(patch.host ? { host: patch.host } : {}),
         ...(patch.placement ? { placement: patch.placement } : {}),
+        ...(patch.notes ? { notes: patch.notes } : {}),
       };
     } else {
       agents[id] = {
@@ -164,6 +170,7 @@ async function applyLocalOverlay(
         role: patch.role ?? existing.role,
         host: patch.host ?? existing.host,
         placement: patch.placement ?? existing.placement,
+        notes: patch.notes ?? existing.notes,
       };
     }
   }
@@ -189,6 +196,7 @@ const overlaySchema = z
             role: z.string().optional(),
             host: hostSchema.optional(),
             placement: z.string().min(1).optional(),
+            notes: z.string().max(500).optional(),
           })
           .strict(),
       )
@@ -260,6 +268,7 @@ export async function writeManifest(
           role: participant.role,
           ...(participant.host ? { host: participant.host } : {}),
           ...(participant.placement ? { placement: participant.placement } : {}),
+          ...(participant.notes ? { notes: participant.notes } : {}),
         },
       ]),
     ),
