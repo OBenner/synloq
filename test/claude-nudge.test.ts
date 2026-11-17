@@ -216,7 +216,7 @@ describe("persistence and local configuration", () => {
 });
 
 async function serviceFixture(
-  mode: "success" | "denied" | "missing-db" | "external" | "unknown" = "success",
+  mode: "success" | "denied" | "missing-db" | "external" | "unknown" | "graph" = "success",
 ) {
   const dir = await temp(),
     path = join(dir, `${session}.jsonl`),
@@ -230,6 +230,17 @@ async function serviceFixture(
       message: { role: "assistant", content: [{ type: "text", text: "READY" }] },
     }) + "\n",
   );
+  if (mode === "graph")
+    await appendFile(
+      path,
+      JSON.stringify({
+        type: "system",
+        subtype: "stop_hook_summary",
+        sessionId: session,
+        uuid: "summary",
+        parentUuid: "prior",
+      }) + "\n",
+    );
   const ledger = new ClaudeNudgeLedger(ledgerPath),
     messages = new SQLiteMessageStore(join(dir, "relay.sqlite"));
   messages.create(
@@ -259,9 +270,11 @@ async function serviceFixture(
     if (args[0] === "--version")
       return { exitCode: 0, stdout: "2.1.326 (Claude Code)\n", interrupted: false };
     const actualMarker = /NUDGE-ACK-[a-f0-9-]+/.exec(args.at(-1)!)![0];
-    if (mode === "success" || mode === "missing-db") {
-      await appendFile(path, transcript().replaceAll(marker, actualMarker));
-      if (mode === "success") messages.acknowledge(target, "p", "arch");
+    if (mode === "success" || mode === "missing-db" || mode === "graph") {
+      let turn = transcript().replaceAll(marker, actualMarker);
+      if (mode === "graph") turn = turn.replace('"parentUuid":"prior"', '"parentUuid":"summary"');
+      await appendFile(path, turn);
+      if (mode !== "missing-db") messages.acknowledge(target, "p", "arch");
     }
     const result = {
       type: "result",
@@ -329,6 +342,16 @@ async function serviceFixture(
 }
 
 describe("event-driven Claude service", () => {
+  it("passes checkpoint service ancestry through to a durable success/proof1 ledger", async () => {
+    const f = await serviceFixture("graph");
+    try {
+      f.nudger.notify("arch");
+      await f.nudger.settled();
+      expect(f.outcomes()).toEqual([{ outcome: "success", proof: 1 }]);
+    } finally {
+      await f.close();
+    }
+  });
   it("keeps ownership until an aborted inference child actually exits", async () => {
     const f = await serviceFixture();
     let started!: () => void;

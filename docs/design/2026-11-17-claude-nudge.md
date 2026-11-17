@@ -110,6 +110,19 @@ Success requires all of:
    for each of those targets, before the marker.
 4. Independent authenticated relay SQLite state says all captured targets are acknowledged.
 
+The ancestry anchor is the last conversational (user/assistant) UUID, not the
+last arbitrary JSONL record. A checkpoint also retains same-session parent links
+for trailing `attachment` and `system/stop_hook_summary` graph nodes. Verification
+projects each conversational parent through those known service links to the
+preceding conversational anchor. Service nodes cannot supply tools, results or
+markers; side attachments do not advance the conversational chain. Unknown graph
+types/subtypes, unresolved or forward parents, cycles, UUID reuse, foreign
+sessions and conversational forks fail closed. A service path is capped at 64
+nodes, with at most 1024 service nodes across checkpoint ancestry and delta,
+inside the existing 4 MiB file/delta limits. Non-graph diagnostic records carry
+no parent links and no proof semantics. This whitelist follows the observed
+2.1.326 transcript schema and must be revalidated when the pinned CLI changes.
+
 Exit zero, idle, a marker in the user prompt, an old transcript entry, or an ACK
 claim in model prose is insufficient. SQLite stores message state, **not an
 inbox invocation audit**; the host transcript supplies the tool-result evidence.

@@ -10,6 +10,7 @@ export function claudeNudgePrompt(ids: string[], marker: string): string {
 
 type Row = {
   type?: string;
+  subtype?: string;
   sessionId?: string;
   uuid?: string;
   parentUuid?: string | null;
@@ -25,11 +26,78 @@ type Block = {
   content?: unknown;
   text?: string;
 };
+export interface TranscriptParentLink {
+  type: "system" | "attachment";
+  subtype?: string;
+  sessionId: string;
+  uuid: string;
+  parentUuid: string;
+}
+
+/** Project known service nodes onto their nearest conversational ancestor.
+ * A side attachment may branch off a tool call, but it cannot move the active
+ * conversational chain or contribute tool/marker evidence. Only backward,
+ * same-session links are admitted; unresolved parents and UUID reuse fail closed. */
+class ConversationChain {
+  private readonly ancestors: Map<string, { conversation: string; depth: number }>;
+  private current: string;
+  private serviceNodes = 0;
+  constructor(
+    private readonly sessionId: string,
+    previousUuid: string,
+  ) {
+    if (!previousUuid) throw new Error("missing transcript anchor");
+    this.current = previousUuid;
+    this.ancestors = new Map([[previousUuid, { conversation: previousUuid, depth: 0 }]]);
+  }
+  bridge(row: Row): TranscriptParentLink | undefined {
+    // Non-graph diagnostics need no ancestry, and can never supply evidence.
+    if (row.uuid === undefined && row.parentUuid === undefined) return undefined;
+    if (
+      row.type !== "attachment" &&
+      !(row.type === "system" && row.subtype === "stop_hook_summary")
+    )
+      throw new Error("unsupported service node");
+    const ancestor = this.parent(row);
+    if (++this.serviceNodes > 1024 || ancestor.depth >= 64) throw new Error("service graph limit");
+    this.ancestors.set(row.uuid!, {
+      conversation: ancestor.conversation,
+      depth: ancestor.depth + 1,
+    });
+    return {
+      type: row.type,
+      ...(row.subtype === undefined ? {} : { subtype: row.subtype }),
+      sessionId: this.sessionId,
+      uuid: row.uuid!,
+      parentUuid: row.parentUuid!,
+    };
+  }
+  conversation(row: Row): void {
+    if (this.parent(row).conversation !== this.current) throw new Error("forked conversation");
+    this.current = row.uuid!;
+    this.ancestors.set(this.current, { conversation: this.current, depth: 0 });
+  }
+  private parent(row: Row): { conversation: string; depth: number } {
+    if (
+      row.sessionId !== this.sessionId ||
+      typeof row.uuid !== "string" ||
+      !row.uuid ||
+      this.ancestors.has(row.uuid) ||
+      typeof row.parentUuid !== "string"
+    )
+      throw new Error("invalid transcript parent link");
+    const ancestor = this.ancestors.get(row.parentUuid);
+    if (ancestor === undefined) throw new Error("unresolved transcript parent");
+    return ancestor;
+  }
+}
 export interface TranscriptCheckpoint {
   size: number;
   ino: number;
   dev: number;
   previousUuid: string;
+  /** Service-node ancestry after the last conversation, not arbitrary last-row UUID. */
+  parentLinks?: readonly TranscriptParentLink[];
 }
 export async function checkpointTranscript(
   path: string,
@@ -57,7 +125,13 @@ export async function checkpointTranscript(
       !conversations.some((row) => row.type === "assistant" && row.sessionId === sessionId)
     )
       throw new Error("unpersisted conversation");
-    return { size: stat.size, ino: stat.ino, dev: stat.dev, previousUuid: last.uuid };
+    const chain = new ConversationChain(sessionId, last.uuid);
+    const parentLinks: TranscriptParentLink[] = [];
+    for (const row of rows.slice(rows.lastIndexOf(last) + 1)) {
+      const link = chain.bridge(row);
+      if (link) parentLinks.push(link);
+    }
+    return { size: stat.size, ino: stat.ino, dev: stat.dev, previousUuid: last.uuid, parentLinks };
   } finally {
     await file.close();
   }
@@ -95,6 +169,7 @@ export function verifyClaudeTurn(input: {
   targetIds?: string[];
   marker: string;
   previousUuid: string;
+  parentLinks?: readonly TranscriptParentLink[];
   acknowledged: () => boolean;
 }): boolean {
   try {
@@ -104,16 +179,19 @@ export function verifyClaudeTurn(input: {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Row);
-    let parent = input.previousUuid,
-      marker = false;
+    const chain = new ConversationChain(input.sessionId, input.previousUuid);
+    for (const link of input.parentLinks ?? []) chain.bridge(link);
+    let marker = false;
     const targets = input.targetIds ?? [input.targetId],
       inboxIds = new Set<string>(),
       ackIds = new Set<string>();
     const uses = new Map<string, Block>();
     for (const row of rows) {
-      if (row.type !== "user" && row.type !== "assistant") continue;
-      if (row.sessionId !== input.sessionId || !row.uuid || row.parentUuid !== parent) return false;
-      parent = row.uuid;
+      if (row.type !== "user" && row.type !== "assistant") {
+        chain.bridge(row);
+        continue;
+      }
+      chain.conversation(row);
       if (!Array.isArray(row.message?.content)) continue;
       for (const b of row.message.content as Block[]) {
         if (row.type === "assistant" && b.type === "tool_use" && b.id) {

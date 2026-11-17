@@ -133,6 +133,7 @@ export class ClaudeNudger {
           targetIds,
           marker: attempt.marker,
           previousUuid: checkpoint.previousUuid,
+          parentLinks: checkpoint.parentLinks ?? [],
           acknowledged: () => targetIds.every((id) => options.acknowledged(id)),
         });
       }
