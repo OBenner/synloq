@@ -163,22 +163,25 @@ describe("Synloq agent-facing MCP tools", () => {
       idempotentHint: true,
       openWorldHint: true,
     };
+    const overwrite = {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    };
     expect(annotations).toEqual({
       synloq_list: read,
       synloq_send: send,
       synloq_reply: send,
       synloq_inbox: read,
       synloq_wait: read,
-      synloq_ack: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      synloq_ack: overwrite,
+      synloq_note_read: read,
+      synloq_note_write: overwrite,
     });
   });
 
-  it("exposes only the six participant tools and no operator capabilities", async () => {
+  it("exposes only the participant tools and no operator capabilities", async () => {
     const { tools } = await fixture.mcpClient.listTools();
     const names = tools.map((tool) => tool.name).sort();
 
@@ -186,6 +189,8 @@ describe("Synloq agent-facing MCP tools", () => {
       "synloq_ack",
       "synloq_inbox",
       "synloq_list",
+      "synloq_note_read",
+      "synloq_note_write",
       "synloq_reply",
       "synloq_send",
       "synloq_wait",

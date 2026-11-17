@@ -22,6 +22,18 @@ CREATE TABLE IF NOT EXISTS messages (
   acceptance_consumed_generation INTEGER
 );`;
 
+const notesTable = `CREATE TABLE IF NOT EXISTS notes (
+  project TEXT NOT NULL,
+  role TEXT NOT NULL,
+  key TEXT NOT NULL,
+  body TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  PRIMARY KEY(project, role, key)
+);
+CREATE INDEX IF NOT EXISTS notes_role_updated ON notes(project, role, updated_at);
+`;
+
 const schema = `${messageTable}
 CREATE INDEX IF NOT EXISTS messages_inbox ON messages(project, recipient, created_at, id);
 CREATE UNIQUE INDEX IF NOT EXISTS messages_fifo ON messages(project, recipient, created_at, id);
@@ -74,7 +86,7 @@ CREATE TABLE IF NOT EXISTS delivery_quarantine (
 );
 CREATE INDEX IF NOT EXISTS delivery_quarantine_recipient
   ON delivery_quarantine(project, recipient);
-`;
+${notesTable}`;
 
 // Common node:sqlite errcodes (sqlite3.h) — surfaced in STORAGE_FAILURE so a
 // live incident shows BUSY vs LOCKED vs IOERR instead of an opaque "write
@@ -122,7 +134,7 @@ export function withTransaction<T>(database: DatabaseSync, operation: () => T): 
 }
 
 /** Current on-disk schema version. Bumped by additive forward-only migrations. */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 6;
 
 export function openDatabase(path: string, options?: { readOnly?: boolean }): DatabaseSync {
   const readOnly = options?.readOnly === true && path !== ":memory:";
@@ -232,6 +244,19 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
         throw new Error("foreign key validation failed during retention migration");
       }
       migrated.exec("PRAGMA user_version = 5");
+    });
+    // Issue #22: additive notes table for per-role memory. A second transaction
+    // keeps the 0→5 rebuild untouched; v5 databases enter here (the early skip
+    // above now targets v6) and only gain the notes table. Racing migrators
+    // wait on BEGIN IMMEDIATE and see 6.
+    withTransaction(migrated, () => {
+      const lockedVersion = migrated.prepare("PRAGMA user_version").get()?.user_version;
+      if (lockedVersion === 6) return;
+      if (typeof lockedVersion !== "number" || lockedVersion < 0 || lockedVersion > 6) {
+        throw new Error(`unsupported SQLite user_version: ${lockedVersion}`);
+      }
+      migrated.exec(notesTable);
+      migrated.exec("PRAGMA user_version = 6");
     });
     migrated.exec("PRAGMA foreign_keys = ON");
     return database;

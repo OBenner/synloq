@@ -204,7 +204,7 @@ function fakeOpenCode() {
 }
 
 describe("standalone real-client composition", () => {
-  it("registers a disabled Claude session and exposes exactly six ordinary tools", async () => {
+  it("registers a disabled Claude session and exposes the eight ordinary tools", async () => {
     const current = await fixture();
     const configPath = await writeConfig(current.home, {
       root: current.root,
@@ -221,6 +221,8 @@ describe("standalone real-client composition", () => {
       "synloq_ack",
       "synloq_inbox",
       "synloq_list",
+      "synloq_note_read",
+      "synloq_note_write",
       "synloq_reply",
       "synloq_send",
       "synloq_wait",

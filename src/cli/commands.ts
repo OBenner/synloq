@@ -48,6 +48,8 @@ import { RelayService, type InboxResult, type SendRequest } from "../relay/relay
 import { acquireServeLock, type ServeLock } from "../relay/serve-lock.js";
 import { SQLiteMessageStore, type PauseScope } from "../storage/message-store.js";
 import { SessionStore } from "../storage/session-store.js";
+import { NotesStore } from "../storage/notes-store.js";
+import { openDatabase } from "../storage/sqlite.js";
 import {
   RelayHttpClient,
   type InboxOptions,
@@ -195,6 +197,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   });
   let sessions: SessionStore | undefined;
   let server: RelayHttpServer | undefined;
+  let notes: NotesStore | undefined;
   let stopRetention: (() => void) | undefined;
   let stopCodexNudger: (() => Promise<void>) | undefined;
   let webhook: ReturnType<typeof startWebhook> | undefined;
@@ -202,6 +205,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   try {
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
+    notes = new NotesStore(openDatabase(paths.database));
     const dispatcher = new Dispatcher(messages, sessions, new Map(options.adapters), clock);
     // One policy instance feeds both the relay service (send-side limits) and
     // the HTTP layer (per-identity long-poll cap, security M2).
@@ -223,6 +227,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       dispatcher,
       messages,
       audit,
+      notes,
       protection,
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
@@ -277,9 +282,13 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
             openSessions.close();
           } finally {
             try {
-              messages.close();
+              notes?.close();
             } finally {
-              await serveLock.release();
+              try {
+                messages.close();
+              } finally {
+                await serveLock.release();
+              }
             }
           }
         }
@@ -292,6 +301,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     await claudeNudger?.stop();
     if (server) await server.close();
     sessions?.close();
+    notes?.close();
     messages.close();
     await serveLock.release();
     throw error;

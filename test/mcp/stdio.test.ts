@@ -138,6 +138,8 @@ describe("Synloq MCP stdio bridge", () => {
         "synloq_ack",
         "synloq_inbox",
         "synloq_list",
+        "synloq_note_read",
+        "synloq_note_write",
         "synloq_reply",
         "synloq_send",
         "synloq_wait",
@@ -275,7 +277,7 @@ describe("Synloq MCP stdio bridge", () => {
     try {
       await client.connect(new TestStdioClientTransport(serverToClient, clientToServer));
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(6);
+      expect(tools).toHaveLength(8);
       await vi.waitFor(() => expect(diagnostics).toContain("visible delivery unavailable"));
       expect(diagnostics).not.toContain(token);
       expect(diagnostics.match(/visible delivery unavailable/g)).toHaveLength(1);
