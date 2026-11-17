@@ -743,6 +743,18 @@ export class SQLiteMessageStore {
     });
   }
 
+  /** Webhook backlog includes delivered-but-unacknowledged messages too. */
+  countUnacknowledged(project: string, recipient: string): number {
+    return this.read(() => {
+      const row = this.database
+        .prepare(
+          "SELECT COUNT(*) AS count FROM messages WHERE project = ? AND recipient = ? AND delivery_state != 'acked'",
+        )
+        .get(project, recipient) as { count: number | bigint };
+      return Number(row.count);
+    });
+  }
+
   /** Stored deliveries queued for a recipient (for the "+N more pending" hint). */
   countStored(project: string, recipient: string): number {
     return this.read(() => {

@@ -40,6 +40,11 @@ export interface InboxResult {
   nextCursor: string | undefined;
 }
 
+export interface MessageObserver {
+  created(message: Message): void;
+  acknowledged(message: Message): void;
+}
+
 export class RelayService {
   private readonly directory: ParticipantDirectory;
 
@@ -51,6 +56,7 @@ export class RelayService {
     private readonly ids: () => string = () => crypto.randomUUID(),
     private readonly clock: Clock = { now: () => Date.now() },
     private readonly audit: SecurityAuditLog = new NullSecurityAuditLog(),
+    private readonly observer?: MessageObserver,
   ) {
     this.directory = Array.isArray(participants)
       ? new StaticParticipantDirectory(participants)
@@ -171,7 +177,14 @@ export class RelayService {
       new Date(this.clock.now()).toISOString(),
       parent?.threadId ?? this.ids(),
     );
-    if (result.created) this.protection.afterAccept(result.message);
+    if (result.created) {
+      this.protection.afterAccept(result.message);
+      try {
+        this.observer?.created(result.message);
+      } catch {
+        /* Best-effort observation only. */
+      }
+    }
     return result.message;
   }
 
@@ -246,7 +259,17 @@ export class RelayService {
   async acknowledge(identity: Identity, messageId: string, sessionId?: string): Promise<Message> {
     try {
       this.requireWriter(identity, sessionId);
-      return await this.messages.acknowledge(messageId, identity.project, identity.agentId);
+      const message = await this.messages.acknowledge(
+        messageId,
+        identity.project,
+        identity.agentId,
+      );
+      try {
+        this.observer?.acknowledged(message);
+      } catch {
+        /* ACK remains durable if observation fails. */
+      }
+      return message;
     } catch (error) {
       this.recordDeny(identity, "acknowledge", error);
       throw error;
