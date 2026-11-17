@@ -45,8 +45,11 @@ beforeEach(async () => {
   const archToken = tokens.get("arch");
   if (!ctoToken || !archToken) throw new Error("missing test credentials");
   relay = await serveCommand({ projectRoot: root });
-  cto = new RelayHttpClient(relay.baseUrl, () => ctoToken);
-  arch = new RelayHttpClient(relay.baseUrl, () => archToken);
+  cto = new RelayHttpClient(relay.baseUrl, () => ctoToken, { project: "synloq", agentId: "cto" });
+  arch = new RelayHttpClient(relay.baseUrl, () => archToken, {
+    project: "synloq",
+    agentId: "arch",
+  });
   config = {
     project: "synloq",
     agentId: "arch",

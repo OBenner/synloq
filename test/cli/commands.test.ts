@@ -109,9 +109,12 @@ beforeEach(async () => {
     operatorToken,
     ctoToken,
     archToken,
-    operator: new RelayHttpClient(baseUrl, () => operatorToken),
-    cto: new RelayHttpClient(baseUrl, () => ctoToken),
-    arch: new RelayHttpClient(baseUrl, () => archToken),
+    operator: new RelayHttpClient(baseUrl, () => operatorToken, {
+      project: PROJECT,
+      agentId: "operator",
+    }),
+    cto: new RelayHttpClient(baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" }),
+    arch: new RelayHttpClient(baseUrl, () => archToken, { project: PROJECT, agentId: "arch" }),
   };
 });
 
@@ -193,7 +196,15 @@ describe("relay command handlers", () => {
     let stdout = "";
     let stderr = "";
     const exitCode = await runMain(
-      ["list", "--relay-url", fixture.baseUrl, "--token", fixture.operatorToken],
+      [
+        "list",
+        "--project-root",
+        fixture.root,
+        "--relay-url",
+        fixture.baseUrl,
+        "--token",
+        fixture.operatorToken,
+      ],
       {
         stdout: {
           write: (chunk) => {

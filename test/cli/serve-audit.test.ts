@@ -1,3 +1,4 @@
+import { proofRequest } from "../transport/proof-helper.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +30,7 @@ describe("serveCommand audit wiring", () => {
       const response = await fetch(`${handle.baseUrl}/v1/participants`, {
         headers: { authorization: "Bearer wrong-token" },
       });
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(409);
       const paths = await projectPaths(root, home);
       const auditPath = join(paths.home, "data", `${paths.key}-audit.jsonl`);
       const lines = readFileSync(auditPath, "utf8").trim().split("\n");
@@ -37,7 +38,7 @@ describe("serveCommand audit wiring", () => {
       expect(JSON.parse(lines[0]!)).toMatchObject({
         action: "authenticate",
         decision: "deny",
-        reasonCode: "UNAUTHORIZED",
+        reasonCode: "INCOMPATIBLE_PROTOCOL",
       });
     } finally {
       await handle.close();
@@ -74,25 +75,34 @@ describe("serveCommand audit wiring", () => {
     const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
     try {
       const headers = {
-        authorization: `Bearer ${operatorToken}`,
         "content-type": "application/json",
       };
-      const pause = await fetch(`${handle.baseUrl}/v1/operator/pause`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ scope: "project", scopeId: "" }),
-      });
+      const pause = await proofRequest(
+        `${handle.baseUrl}/v1/operator/pause`,
+        operatorToken,
+        { project: "verdicta", agentId: "operator" },
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ scope: "project", scopeId: "" }),
+        },
+      );
       expect(pause.status).toBe(200);
-      const replace = await fetch(`${handle.baseUrl}/v1/operator/replace-session`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          agentId: "cto",
-          sessionId: "ses_replacement",
-          protocolVersion: 1,
-          capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
-        }),
-      });
+      const replace = await proofRequest(
+        `${handle.baseUrl}/v1/operator/replace-session`,
+        operatorToken,
+        { project: "verdicta", agentId: "operator" },
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            agentId: "cto",
+            sessionId: "ses_replacement",
+            protocolVersion: 1,
+            capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
+          }),
+        },
+      );
       expect(replace.status).toBe(200);
 
       const paths = await projectPaths(root, home);
@@ -130,16 +140,21 @@ describe("serveCommand audit wiring", () => {
     const roleToken = await new CredentialStore(root, home).issue("verdicta", "cto");
     const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
     try {
-      const response = await fetch(`${handle.baseUrl}/v1/operator/replace-session`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${roleToken}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          agentId: "cto",
-          sessionId: "ses_replacement",
-          protocolVersion: 1,
-          capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
-        }),
-      });
+      const response = await proofRequest(
+        `${handle.baseUrl}/v1/operator/replace-session`,
+        roleToken,
+        { project: "verdicta", agentId: "cto" },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            agentId: "cto",
+            sessionId: "ses_replacement",
+            protocolVersion: 1,
+            capabilities: { activeDelivery: true, stateReporting: true, clientIdempotency: true },
+          }),
+        },
+      );
       expect(response.status).toBe(403);
 
       const paths = await projectPaths(root, home);
@@ -171,6 +186,7 @@ describe("serveCommand audit wiring", () => {
     async function startRelayWithRole(): Promise<{
       handle: Awaited<ReturnType<typeof serveCommand>>;
       headers: Record<string, string>;
+      roleToken: string;
       auditPath: () => Promise<string>;
     }> {
       const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-reg-"));
@@ -181,7 +197,8 @@ describe("serveCommand audit wiring", () => {
       const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
       return {
         handle,
-        headers: { authorization: `Bearer ${roleToken}`, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
+        roleToken,
         auditPath: async () => {
           const paths = await projectPaths(root, home);
           return join(paths.home, "data", `${paths.key}-audit.jsonl`);
@@ -197,18 +214,23 @@ describe("serveCommand audit wiring", () => {
     }
 
     it("records an accepted registration with session, generation, and surface", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
-        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            sessionId: "ses_cto_1",
-            protocolVersion: 1,
-            capabilities,
-            surface: "kimi-work",
-          }),
-        });
+        const response = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              sessionId: "ses_cto_1",
+              protocolVersion: 1,
+              capabilities,
+              surface: "kimi-work",
+            }),
+          },
+        );
         expect(response.status).toBe(200);
 
         const events = readEvents(await auditPath());
@@ -230,24 +252,34 @@ describe("serveCommand audit wiring", () => {
     });
 
     it("records a denied duplicate registration without the unverified session id", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
-        const first = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
-        });
+        const first = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
+          },
+        );
         expect(first.status).toBe(200);
-        const duplicate = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            sessionId: "ses_cto_2",
-            protocolVersion: 1,
-            capabilities,
-            surface: "opencode",
-          }),
-        });
+        const duplicate = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              sessionId: "ses_cto_2",
+              protocolVersion: 1,
+              capabilities,
+              surface: "opencode",
+            }),
+          },
+        );
         expect(duplicate.status).toBe(409);
 
         const events = readEvents(await auditPath());
@@ -270,13 +302,18 @@ describe("serveCommand audit wiring", () => {
     });
 
     it("records a denied registration with an incompatible protocol version", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
-        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 999, capabilities }),
-        });
+        const response = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 999, capabilities }),
+          },
+        );
         expect(response.status).toBe(409);
 
         const events = readEvents(await auditPath());
@@ -294,19 +331,29 @@ describe("serveCommand audit wiring", () => {
     });
 
     it("does not audit heartbeat lease renewals", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
-        const register = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
-        });
+        const register = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1, capabilities }),
+          },
+        );
         expect(register.status).toBe(200);
-        const heartbeat = await fetch(`${handle.baseUrl}/v1/sessions/heartbeat`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ sessionId: "ses_cto_1", state: "idle" }),
-        });
+        const heartbeat = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/heartbeat`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId: "ses_cto_1", state: "idle" }),
+          },
+        );
         expect(heartbeat.status).toBe(200);
 
         const events = readEvents(await auditPath());
@@ -318,13 +365,18 @@ describe("serveCommand audit wiring", () => {
     });
 
     it("audits a malformed JSON body as a denied registration attempt", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
-        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: "{ not json",
-        });
+        const response = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: "{ not json",
+          },
+        );
         expect(response.status).toBe(400);
 
         const events = readEvents(await auditPath());
@@ -342,14 +394,19 @@ describe("serveCommand audit wiring", () => {
     });
 
     it("audits registration schema rejections without copying invalid input", async () => {
-      const { handle, headers, auditPath } = await startRelayWithRole();
+      const { handle, headers, auditPath, roleToken } = await startRelayWithRole();
       try {
         // Valid JSON, but no capabilities → zod rejection, not a SynloqError.
-        const response = await fetch(`${handle.baseUrl}/v1/sessions/register`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1 }),
-        });
+        const response = await proofRequest(
+          `${handle.baseUrl}/v1/sessions/register`,
+          roleToken,
+          { project: "verdicta", agentId: "cto" },
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ sessionId: "ses_cto_1", protocolVersion: 1 }),
+          },
+        );
         expect(response.status).toBe(400);
         const events = readEvents(await auditPath());
         expect(events).toHaveLength(1);

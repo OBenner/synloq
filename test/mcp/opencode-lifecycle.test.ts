@@ -7,7 +7,10 @@ import {
 } from "../../src/mcp/opencode-lifecycle.js";
 import { RelayHttpClient } from "../../src/transport/http-client.js";
 
-const relay = new RelayHttpClient("http://127.0.0.1:4100", () => "test-token");
+const relay = new RelayHttpClient("http://127.0.0.1:4100", () => "test-token", {
+  project: "example",
+  agentId: "arch",
+});
 const binding = { workspacePath: "/test", agentId: "arch", sessionId: "ses_arch" };
 const closers: Array<() => Promise<void>> = [];
 afterEach(async () => {

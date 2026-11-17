@@ -1,5 +1,8 @@
 # ADR 0003: One relay per project, with surviving-peer election
 
+> Auth-v2 update (#1): the static health/Bearer mechanism described here is historical.
+> Current clients use mutual challenge/request/response proofs; see the [wire profile](../security/transport-auth-v2.md).
+
 - Status: accepted
 - Date: 2026-11-14
 - Deciders: Architect (proposal), operator (approval)

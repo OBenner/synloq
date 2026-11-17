@@ -34,6 +34,8 @@ describe("default Kimi Work MCP bridge", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "synloq",
+        agentId: "arch",
         relayUrl: "http://127.0.0.1:49152",
         credentialPath: join(root, "agent.token"),
         kimiWork: {

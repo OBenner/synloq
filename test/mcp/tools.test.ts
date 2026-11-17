@@ -75,7 +75,7 @@ beforeEach(async () => {
     audit: auditLog,
   });
   const baseUrl = await relayServer.listen("127.0.0.1", 0);
-  const arch = new RelayHttpClient(baseUrl, () => archToken);
+  const arch = new RelayHttpClient(baseUrl, () => archToken, { project: PROJECT, agentId: "arch" });
   const mcpServer = new McpServer({ name: "synloq-test", version: "0.1.0" });
   registerSynloqTools(mcpServer, arch);
   const mcpClient = new Client({ name: "synloq-test-client", version: "0.1.0" });
@@ -88,7 +88,7 @@ beforeEach(async () => {
     relayServer,
     messages,
     sessions,
-    cto: new RelayHttpClient(baseUrl, () => ctoToken),
+    cto: new RelayHttpClient(baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" }),
     archToken,
     baseUrl,
     root,
@@ -462,7 +462,10 @@ describe("Synloq agent-facing MCP tools", () => {
     const writerClient = new Client({ name: "synloq-writer-client", version: "0.1.0" });
     registerSynloqTools(
       writerServer,
-      new RelayHttpClient(fixture.baseUrl, () => fixture.archToken),
+      new RelayHttpClient(fixture.baseUrl, () => fixture.archToken, {
+        project: PROJECT,
+        agentId: "arch",
+      }),
       "ses-arch-main",
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

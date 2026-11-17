@@ -88,7 +88,10 @@ async function fixture(): Promise<Fixture> {
     home,
     clock,
     relay,
-    arch: new RelayHttpClient(relay.baseUrl, () => archToken),
+    arch: new RelayHttpClient(relay.baseUrl, () => archToken, {
+      project: PROJECT,
+      agentId: "arch",
+    }),
     ctoToken,
   };
   fixtures.push(current);

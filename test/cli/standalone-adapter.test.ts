@@ -70,8 +70,11 @@ async function fixture() {
     relay,
     ctoCredentialPath,
     archCredentialPath,
-    cto: new RelayHttpClient(relay.baseUrl, () => ctoToken),
-    arch: new RelayHttpClient(relay.baseUrl, () => archToken),
+    cto: new RelayHttpClient(relay.baseUrl, () => ctoToken, { project: PROJECT, agentId: "cto" }),
+    arch: new RelayHttpClient(relay.baseUrl, () => archToken, {
+      project: PROJECT,
+      agentId: "arch",
+    }),
   };
 }
 

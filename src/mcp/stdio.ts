@@ -39,6 +39,8 @@ const configurationSchema = z
       .string()
       .url()
       .refine(isLoopbackHttpUrl, "relayUrl must be an explicit HTTP loopback origin"),
+    project: z.string().min(1).max(128),
+    agentId: z.string().min(1).max(64),
     credentialPath: z.string().min(1),
     synloqHome: z.string().min(1).optional(),
     language: languageSchema.optional(),
@@ -52,6 +54,10 @@ const configurationSchema = z
   })
   .strict()
   .superRefine((configuration, context) => {
+    const binding = configuration.kimiWork ?? configuration.opencode;
+    if (binding && binding.agentId !== configuration.agentId) {
+      context.addIssue({ code: "custom", message: "Auth role must match host binding" });
+    }
     if (configuration.kimiWork && configuration.opencode) {
       context.addIssue({
         code: "custom",
@@ -102,6 +108,8 @@ export interface McpStdioOptions extends OpenCodeLifecycleOptions {
 }
 
 interface McpConfiguration {
+  project: string;
+  agentId: string;
   relayUrl: string;
   token: string;
   /** Absolute path to the credential file — feeds the re-reading provider. */
@@ -142,6 +150,8 @@ async function readConfiguration(configPath: string): Promise<McpConfiguration> 
     ? await resolveOpenCodeBinding(configPath, configuration.data.opencode)
     : undefined;
   return {
+    project: configuration.data.project,
+    agentId: configuration.data.agentId,
     relayUrl: configuration.data.relayUrl,
     token,
     credentialPath,
@@ -421,6 +431,8 @@ export async function startMcpStdio(
     const participants = await loadManifest(hostWorkspace);
     const project = participants[0]?.project;
     if (!project) throw new SynloqError("INVALID_INPUT", "Synloq manifest has no project");
+    if (project !== configuration.project)
+      throw new SynloqError("INVALID_INPUT", "Auth project must match local manifest");
     const relayFactory = options.relayFactory ?? startRelaySupervisor;
     supervisor = await relayFactory({
       projectRoot: hostWorkspace,
@@ -451,7 +463,9 @@ export async function startMcpStdio(
     }
   }
 
-  const client = supervisor?.client ?? new RelayHttpClient(configuration.relayUrl, tokens.provider);
+  const client =
+    supervisor?.client ??
+    new RelayHttpClient(configuration.relayUrl, tokens.provider, configuration);
   const server = new McpServer({ name: "synloq", version: "0.1.0" });
   // Issue #46: writer-session proof for write tools — the visible chat's own
   // session id, so a second chat of the same role stays read-only.

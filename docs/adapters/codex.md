@@ -91,6 +91,8 @@ Create `/secure/codex-mcp.json` separately from the adapter/hook configuration:
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
+  "project": "verdicta",
+  "agentId": "cto",
   "credentialPath": "./cto.token"
 }
 ```

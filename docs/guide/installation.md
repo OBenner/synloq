@@ -161,6 +161,8 @@ required:
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
+  "project": "example",
+  "agentId": "reviewer",
   "credentialPath": "/secure/synloq-home/tokens/reviewer.token",
   "synloqHome": "/secure/synloq-home",
   "kimiWork": {
@@ -222,6 +224,8 @@ setup, create a strict JSON file outside Git, for example
 ```json
 {
   "relayUrl": "http://127.0.0.1:4100",
+  "project": "example",
+  "agentId": "reviewer",
   "credentialPath": "/secure/reviewer.token"
 }
 ```
@@ -239,3 +243,10 @@ synloq mcp --config /secure/reviewer-mcp.json
 
 Use the recipient role's own credential in each chat. Do not place a token in
 JSON or on a command line.
+
+## Auth-v2 coordinated upgrades
+
+Relay and every HTTP client must be upgraded together. Regenerate MCP configs
+with trusted local `project` and `agentId`, and restart channels. The public health
+marker is discovery only; old/new authentication combinations fail closed without
+Bearer fallback. See [the wire profile](../security/transport-auth-v2.md).

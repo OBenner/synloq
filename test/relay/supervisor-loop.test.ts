@@ -63,7 +63,8 @@ describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
       token,
       synloqHome: home,
       retryDelayMs: 5,
-      monitorIntervalMs: 10,
+      // Auth-v2 issuance is bounded; election speed must not be a rate-limit test.
+      monitorIntervalMs: 100,
       maxReconnectAttempts: 30,
       probeTimeoutMs: 1_000,
     };
@@ -100,7 +101,7 @@ describe("startRelaySupervisor", { timeout: 30_000, retry: 1 }, () => {
       token,
       synloqHome: home,
       retryDelayMs: 5,
-      monitorIntervalMs: 20,
+      monitorIntervalMs: 100,
       probeTimeoutMs: 1_000,
     };
 

@@ -115,12 +115,17 @@ it with an operator before changing any live support status.
 
 ## Security
 
-All relay traffic stays on explicit loopback HTTP origins; every authenticated
-endpoint requires a per-role credential. The full threat model, including the
-accepted residual risks (R1 health-marker squatting — mutual authentication
-tracked as follow-up hardening), operational notes, and the security audit
-trail: [docs/security/threat-model.md](docs/security/threat-model.md). Never
-commit credentials, `~/.synloq` state, or message bodies.
+All relay traffic stays on explicit loopback HTTP origins. Auth-v2 mutually
+verifies relay, request and response proofs without sending reusable role tokens.
+Update relay and clients together, regenerate MCP configs with trusted
+`project`/`agentId`, and restart channels; there is no Bearer fallback. See the
+[wire profile and rollout](docs/security/transport-auth-v2.md).
+
+MACs do not encrypt plaintext against an active forwarding proxy. Credential-store
+hashes are authentication-equivalent secrets; rotate every affected role/operator
+credential after a store leak. Final R1 security sign-off is pending. The full
+[threat model](docs/security/threat-model.md) describes the remaining boundaries.
+Never commit credentials, `~/.synloq` state, or message bodies.
 
 ## Development and verification
 

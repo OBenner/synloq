@@ -116,6 +116,7 @@ export async function repairTeamConfigs(options: {
     const configPath = join(paths.runtime, "mcp", `${agentId}.json`);
     const existing = await readExistingConfig(configPath);
     const expected = roleRuntimeConfig({
+      project: state.project,
       // Preserve operator-set values when the existing config is readable;
       // otherwise fall back to the same defaults init uses.
       relayUrl: typeof existing?.relayUrl === "string" ? existing.relayUrl : DEFAULT_RELAY_URL,

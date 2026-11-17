@@ -46,6 +46,8 @@ describe("MCP stdio bridge working directory", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "synloq",
+        agentId: "arch",
         relayUrl: "http://127.0.0.1:49152",
         credentialPath: join(root, "agent.token"),
         kimiWork: {
@@ -76,6 +78,8 @@ describe("MCP stdio bridge working directory", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "synloq",
+        agentId: "tester",
         relayUrl: "http://127.0.0.1:49152",
         credentialPath: join(root, "agent.token"),
         opencode: {
@@ -101,6 +105,8 @@ describe("MCP stdio bridge working directory", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "synloq",
+        agentId: "arch",
         relayUrl: "http://127.0.0.1:49152",
         credentialPath: join(root, "agent.token"),
       }),
@@ -122,6 +128,8 @@ describe("MCP stdio bridge working directory", () => {
     await writeFile(
       configPath,
       JSON.stringify({
+        project: "synloq",
+        agentId: "arch",
         relayUrl: "http://127.0.0.1:49152",
         credentialPath: join(root, "agent.token"),
         kimiWork: {

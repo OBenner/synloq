@@ -82,6 +82,8 @@ type CommandName = (typeof commandNames)[number];
 type Values = object;
 
 const relayOptions: NonNullable<ParseArgsConfig["options"]> = {
+  "project-root": { type: "string" },
+  "synloq-home": { type: "string" },
   "relay-url": { type: "string" },
   token: { type: "string" },
   credential: { type: "string" },
@@ -96,16 +98,16 @@ const helpText: Record<CommandName, string> = {
   adapter: "Usage: synloq adapter --config <path>\n",
   "claude-hook": "Usage: synloq claude-hook --config <path>\n",
   "codex-hook": "Usage: synloq codex-hook --config <path>\n",
-  list: "Usage: synloq list --relay-url <url> (--token <token> | --credential <path>)\n",
+  list: "Usage: synloq list [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
-    "Usage: synloq inbox --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
+    "Usage: synloq inbox [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
   send: "Usage: synloq send --project-root <path> --relay-url <url> (--token <token> | --credential <path>) --to <agent-id> --text <text> --idempotency-key <key> [--expects-reply] [--synloq-home <path>]\n",
   pause:
-    "Usage: synloq pause --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
+    "Usage: synloq pause [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   resume:
-    "Usage: synloq resume --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
+    "Usage: synloq resume [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   "replace-session":
-    "Usage: synloq replace-session --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
+    "Usage: synloq replace-session [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) --agent-id <id> --session-id <id> --protocol-version <number> --active-delivery <true|false> --state-reporting <true|false> --client-idempotency <true|false>\n",
   doctor:
     "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host]\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
@@ -184,8 +186,15 @@ async function tokenFrom(values: Values): Promise<string> {
 
 async function clientFrom(values: Values): Promise<{ client: RelayHttpClient; token: string }> {
   const token = await tokenFrom(values);
+  const projectRoot = resolve(optionalString(values, "project-root") ?? process.cwd());
+  const project = (await loadManifest(projectRoot))[0]?.project;
+  if (!project) invalid("Synloq manifest has no project");
+  const context = await new CredentialStore(
+    projectRoot,
+    synloqHomeOption(values).synloqHome,
+  ).authenticate(project, token);
   return {
-    client: new RelayHttpClient(requiredString(values, "relay-url"), () => token),
+    client: new RelayHttpClient(requiredString(values, "relay-url"), () => token, context),
     token,
   };
 }

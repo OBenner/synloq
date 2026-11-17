@@ -172,6 +172,8 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
     }
     const credential = await credentials.ensureCredential(options.project, role.agentId);
     await writeJsonAtomic(configPath, {
+      project: options.project,
+      agentId: role.agentId,
       relayUrl: options.relayUrl,
       credentialPath: relativeHomePaths(paths.key, role.agentId).credentialPath,
       language: options.language,

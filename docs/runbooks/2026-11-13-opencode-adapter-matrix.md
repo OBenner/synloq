@@ -1,5 +1,11 @@
 # Live runbook: OpenCode sidecar adapter evidence matrix (#31)
 
+> Auth-v2 update (#1): this dated acceptance record predates mutual relay authentication.
+> Its health marker is discovery only. For new runs, update relay and all callers
+> together and regenerate MCP configs with trusted `project`/`agentId`; manual CLI
+> commands need the local project root/home. Use the [current rollout](../security/transport-auth-v2.md).
+> Historical observations below do not certify auth-v2.
+
 **Executor:** an agent running inside OpenCode on this machine (Windows).
 **Stand:** the adopted project `open-code-synloq` (relay on
 `http://127.0.0.1:4101`, roles `cto` + `arch`, sessions already bound).

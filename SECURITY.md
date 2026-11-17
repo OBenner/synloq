@@ -2,7 +2,9 @@
 
 ## Scope and threat model summary
 
-Synloq is a **local-first** message relay. All relay traffic stays on explicit loopback HTTP origins (`127.0.0.1` / `::1`); there is no remote listener by design. Every authenticated endpoint requires a per-role bearer credential. The full threat model, including what is deliberately out of scope, lives in [docs/security/threat-model.md](docs/security/threat-model.md).
+Synloq is a **local-first** message relay. All relay traffic stays on explicit loopback HTTP origins (`127.0.0.1` / `::1`); there is no remote listener by design. Every authenticated endpoint requires a one-use auth-v2 proof derived from a per-role credential; tokens never travel over relay HTTP. The full threat model lives in [docs/security/threat-model.md](docs/security/threat-model.md).
+
+Credential-store SHA-256 values are **authentication-equivalent secrets**: disclosure requires rotating every affected role/operator credential. MAC authentication does not provide plaintext confidentiality against an active loopback forwarding proxy, including another OS user. See the [wire profile and coordinated rollout](docs/security/transport-auth-v2.md).
 
 In scope for vulnerability reports:
 
