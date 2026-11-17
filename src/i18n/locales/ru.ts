@@ -36,5 +36,18 @@ export const ru: Record<I18nKey, string> = {
     "На этом хосте нет автоматической push-доставки: проверяй сообщения через synloq_inbox при старте сессии и после каждой задачи; для ожидания используй synloq_wait. Поллинг — твоя ответственность.",
   "opencode.approval":
     "Первый вызов MCP-инструмента в новой сессии может потребовать одноразового одобрения в UI OpenCode — попроси оператора одобрить его один раз.",
+  "contact.header":
+    "Доступность (выводится из хоста каждой роли; подробности: docs/guide/operator.md):",
+  "contact.self.push":
+    "Твоя доставка: push — входящие сообщения появляются в этом чате автоматически.",
+  "contact.self.queue-nudge":
+    "Твоя доставка: inbox + nudge через очередь — nudge будит этот чат не чаще раза в {cooldownMin} минут ({maxAttempts} попыток на сообщение; unloaded-чат может не стартовать). При nudge выполни synloq_inbox.",
+  "contact.self.next-interaction":
+    "Твоя доставка: только inbox, автоматического пробуждения нет — реагируй, когда оператор взаимодействует с чатом, или при самостоятельной проверке. При активации проверяй synloq_inbox.",
+  "contact.push": "{agentId} ({host}): push — реакция ожидается в течение минут.",
+  "contact.queue-nudge":
+    "{agentId} ({host}): inbox + nudge через очередь — реакция может занять до {cooldownMin} минут и не гарантирована для unloaded-чатов.",
+  "contact.next-interaction":
+    "{agentId} ({host}): только inbox — реагирует при следующем взаимодействии или проверке inbox.",
   "storedPing.text": "Synloq: ждут {count} входящих (старейшее {age} мин) — выполни synloq_inbox",
 };

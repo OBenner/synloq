@@ -7,6 +7,7 @@ import { writeJsonAtomic, writeTextAtomic } from "../config/atomic-file.js";
 import { SynloqError } from "../domain/errors.js";
 import { DEFAULT_LANGUAGE, translate, type Language } from "../i18n/index.js";
 import { en } from "../i18n/locales/en.js";
+import type { ContactCardRole } from "../config/contact-card.js";
 import { roleInstructionsKimi } from "./role-prompt.js";
 import type { RoleInput, RenderPluginOptions } from "./types.js";
 
@@ -35,8 +36,12 @@ export const TEAM_CHARTER_SUMMARY: string = en["role.charter"];
 // Kimi Work role instructions — the shared core rules (src/init/role-prompt.ts,
 // issue #32 W4) with no host-specific additions: Kimi delivers them as
 // clientInstructions, so no delivery mechanics are needed in the text.
-export function roleInstructions(role: RoleInput, language: Language = DEFAULT_LANGUAGE): string {
-  return roleInstructionsKimi(role, language);
+export function roleInstructions(
+  role: RoleInput,
+  language: Language = DEFAULT_LANGUAGE,
+  team?: ContactCardRole[],
+): string {
+  return roleInstructionsKimi(role, language, team);
 }
 
 export async function assertPluginOwnership(
@@ -156,7 +161,11 @@ export async function renderKimiWorkPlugin(
       "",
       `# ${role.title}`,
       "",
-      roleInstructions(role, language),
+      roleInstructions(
+        role,
+        language,
+        options.roles.map(({ role: member }) => ({ agentId: member.agentId, host: member.host })),
+      ),
       "",
     ].join("\n");
     await writeTextAtomic(

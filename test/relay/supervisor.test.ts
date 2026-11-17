@@ -28,6 +28,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+// Issue #108: listParticipants derives a reachability tag; these fixtures
+// are hostless kimi-work roles, so the tag is push.
+const reachPush = {
+  reach: "push delivery — replies appear in the chat automatically",
+};
+
 async function fixture(project = "example"): Promise<{
   root: string;
   home: string;
@@ -73,10 +79,14 @@ describe("ensureRelay", () => {
 
     expect(reused.owned).toBe(false);
     expect(reused.baseUrl).toBe(existing.baseUrl);
-    await expect(reused.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(reused.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
     await reused.close();
     await expect(existing.server).toBe(existing.server);
-    await expect(reused.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(reused.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
   });
 
   it("owns exactly one new relay on a refused loopback endpoint", async () => {
@@ -92,7 +102,9 @@ describe("ensureRelay", () => {
     });
     expect(owned.owned).toBe(true);
     expect(owned.baseUrl).toBe(relayUrl);
-    await expect(owned.client.listParticipants()).resolves.toEqual({ participants });
+    await expect(owned.client.listParticipants()).resolves.toEqual({
+      participants: participants.map((p) => ({ ...p, ...reachPush })),
+    });
     await owned.close();
     await expect(owned.client.listParticipants()).rejects.toThrow();
   });

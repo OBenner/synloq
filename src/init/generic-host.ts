@@ -149,7 +149,11 @@ export async function initializeGenericTeam(
                 base.placements?.[role.agentId]?.state === "bound"
                   ? ("bound" as const)
                   : ("unclaimed" as const),
-              instructions: coreRules(role, language).join("\n"),
+              instructions: coreRules(
+                role,
+                language,
+                roles.map((member) => ({ agentId: member.agentId, host: member.host })),
+              ).join("\n"),
             },
           ]),
         ),
