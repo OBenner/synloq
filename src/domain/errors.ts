@@ -3,6 +3,7 @@ export class SynloqError extends Error {
     public readonly code:
       | "INVALID_INPUT"
       | "UNKNOWN_RECIPIENT"
+      | "UNKNOWN_SENDER"
       | "IDEMPOTENCY_CONFLICT"
       | "DUPLICATE_SESSION"
       | "INCOMPATIBLE_PROTOCOL"
