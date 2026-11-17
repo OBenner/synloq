@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { serveCommand, type ServeHandle } from "../../src/cli/commands.js";
 import { CredentialStore } from "../../src/config/credentials.js";
 import { projectPaths } from "../../src/config/paths.js";
@@ -24,6 +24,7 @@ describe("serve advisory lock (#110)", () => {
   const dirs: string[] = [];
   const handles: ServeHandle[] = [];
   afterEach(async () => {
+    vi.restoreAllMocks();
     while (handles.length) await handles.pop()!.close();
     while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
   });
@@ -59,7 +60,10 @@ describe("serve advisory lock (#110)", () => {
     expect(second.baseUrl).toContain("127.0.0.1");
   });
 
-  it("reports a stale lock with manual-removal guidance and never auto-steals", async () => {
+  it("does not steal when the OS cannot determine whether the owner is alive", async () => {
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("denied"), { code: "EPERM" });
+    });
     const { root, home } = projectDir();
     const paths = await projectPaths(root, home);
     const lockPath = `${paths.database}.serve.lock`;
@@ -76,7 +80,7 @@ describe("serve advisory lock (#110)", () => {
     );
     expect((error as SynloqError).code).toBe("ALREADY_RUNNING");
     expect((error as SynloqError).message).toContain("4000000000");
-    expect((error as SynloqError).message).toContain("delete the lock file");
+    expect((error as SynloqError).message).toContain("liveness unknown");
     // The stale file stays untouched — no auto-steal, no content rewrite.
     expect(readFileSync(lockPath, "utf8")).toContain("4000000000");
   });

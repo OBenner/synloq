@@ -1,5 +1,6 @@
 import { ensureRelay, type EnsureRelayOptions, type RelaySupervisorHandle } from "./supervisor.js";
 import type { RelayHttpClient } from "../transport/http-client.js";
+import { SynloqError } from "../domain/errors.js";
 
 export interface StartRelaySupervisorOptions extends EnsureRelayOptions {
   retryDelayMs?: number;
@@ -118,11 +119,11 @@ class Supervisor implements RelaySupervisorLoop {
           this.options.onDiagnostic?.("Synloq host restart failed after relay recovery");
         }
         return;
-      } catch {
+      } catch (error) {
         if (attempt === attempts) {
           this.unavailable = true;
           this.options.onDiagnostic?.(
-            "Synloq relay recovery exhausted; endpoint remains unavailable",
+            `Synloq relay recovery exhausted; endpoint remains unavailable (${error instanceof SynloqError ? error.code : "transport/startup failure"}). Check relay startup diagnostics and run synloq doctor for this project.`,
           );
           return;
         }

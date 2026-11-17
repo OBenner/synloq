@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { DeliveryReceipt } from "../adapters/types.js";
 import { SynloqError } from "../domain/errors.js";
+import { relayConnectionError } from "./connection-error.js";
 import type { Message, Participant } from "../domain/message.js";
 import type {
   AdapterSession,
@@ -103,6 +104,16 @@ function unavailable(): SynloqError {
 export class RelayHttpClient {
   private readonly baseUrl: string;
 
+  private async fetch(url: string, options: RequestInit): Promise<Response> {
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      if (options.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
+        throw error;
+      throw relayConnectionError(error);
+    }
+  }
+
   constructor(
     baseUrl: string,
     private readonly tokenProvider: TokenProvider,
@@ -149,7 +160,7 @@ export class RelayHttpClient {
     const verifier = hash(token);
     const kid = keyId(verifier, this.context);
     const clientNonce = newNonce();
-    const response = await fetch(`${this.baseUrl}/v1/auth/challenge`, {
+    const response = await this.fetch(`${this.baseUrl}/v1/auth/challenge`, {
       method: "POST",
       redirect: "error",
       signal,
@@ -338,7 +349,7 @@ export class RelayHttpClient {
       "x-synloq-proof": requestProof(verifier, challenge, requestHash),
     };
     if (body !== undefined) headers["content-type"] = "application/json";
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const response = await this.fetch(`${this.baseUrl}${path}`, {
       method,
       redirect: "error",
       headers,
