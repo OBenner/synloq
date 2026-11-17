@@ -22,6 +22,10 @@ import { SynloqError } from "../domain/errors.js";
 import type { Message, Participant } from "../domain/message.js";
 import { checkPluginFreshness, type PluginFreshness } from "../host/kimi-work/installed-plugin.js";
 import type { OpenCodeSessionHost } from "../host/opencode/client.js";
+import {
+  readOpenCodeMcpStates,
+  type OpenCodeMcpServerState,
+} from "../host/opencode/backend-log.js";
 import { opencodeMcpServerNames, removeOpencodeMcpServers } from "../host/opencode/config-file.js";
 import { ManifestParticipantDirectory } from "../relay/participant-directory.js";
 import {
@@ -95,6 +99,9 @@ export interface DoctorCommandOptions {
   // the flag doctor stays offline-safe; the host client is injectable for
   // tests, exactly like remove-role.
   checkHost?: boolean;
+  // Issue #92: last per-server MCP state from the OpenCode backend log.
+  // Injectable for tests; defaults to reading the real backend log tail.
+  openCodeMcpStates?: () => Promise<Map<string, OpenCodeMcpServerState>>;
   // Issue #115: injectable host-version probe so tests stay hermetic and
   // offline. Defaults to local --version invocations with bounded timeouts.
   hostVersionProbe?: HostVersionProbe;
@@ -716,6 +723,20 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   } catch {
     opencodeServers = "unreadable";
   }
+  // Issue #92: last per-server MCP state from the OpenCode backend log.
+  // A local file read, so it works without --check-host; failures degrade to
+  // "unknown", never throw — doctor is a diagnostics surface, not a gate.
+  const hasOpenCodeBindings = participants.some(
+    (participant) => teamState?.conversations[participant.agentId]?.kind === "opencode",
+  );
+  let mcpStates: Map<string, OpenCodeMcpServerState> | undefined;
+  if (hasOpenCodeBindings) {
+    try {
+      mcpStates = await (options.openCodeMcpStates ?? (() => readOpenCodeMcpStates()))();
+    } catch {
+      mcpStates = undefined;
+    }
+  }
   for (const participant of participants) {
     const binding = teamState?.conversations[participant.agentId];
     if (binding?.kind === "opencode") {
@@ -733,6 +754,13 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
               ? "present"
               : "missing",
       };
+      const mcp = mcpStates?.get(`synloq-${participant.agentId}`);
+      hostCheck.mcp = mcp?.state ?? "unknown";
+      if (mcp?.state === "failed") {
+        hostCheck.note =
+          `MCP server failed${mcp.exitCode === undefined ? "" : ` (exit code ${mcp.exitCode})`}; ` +
+          "restart the OpenCode backend (quit from tray or kill the opencode-cli serve process)";
+      }
       if (options.checkHost) {
         if (!options.openCodeHost) {
           hostCheck.note = "opencode-host-unreachable";
