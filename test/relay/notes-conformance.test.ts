@@ -35,10 +35,20 @@ describe("notes conformance (#22)", () => {
     const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
     vi.stubEnv("SYNLOQ_HOME", home);
     const tokens = await issueTestCredentials(root);
-    const cto = new RelayHttpClient(handle.baseUrl, () => tokens.get("cto")!);
-    const arch = new RelayHttpClient(handle.baseUrl, () => tokens.get("arch")!);
-    const operator = new RelayHttpClient(handle.baseUrl, () => tokens.get("operator")!);
-    return { handle, tokens, cto, arch, operator };
+    const options = { project: "verdicta" } as const;
+    const cto = new RelayHttpClient(handle.baseUrl, () => tokens.get("cto")!, {
+      ...options,
+      agentId: "cto",
+    });
+    const arch = new RelayHttpClient(handle.baseUrl, () => tokens.get("arch")!, {
+      ...options,
+      agentId: "arch",
+    });
+    const operator = new RelayHttpClient(handle.baseUrl, () => tokens.get("operator")!, {
+      ...options,
+      agentId: "operator",
+    });
+    return { handle, tokens, cto, arch, operator, root, home };
   }
 
   it("scopes notes to the authenticated role: foreign namespaces stay empty", async () => {
@@ -69,21 +79,30 @@ describe("notes conformance (#22)", () => {
     }
   });
 
-  it("rejects unauthenticated and malformed note requests fail-loud", async () => {
-    const { handle, tokens } = await fixture();
+  it("rejects bearer and malformed note requests fail-loud", async () => {
+    const { handle, tokens, cto } = await fixture();
     try {
-      const unauthenticated = await fetch(`${handle.baseUrl}/v1/notes?key=k`);
-      expect(unauthenticated.status).toBe(401);
-      const longKey = await fetch(`${handle.baseUrl}/v1/notes?key=${"k".repeat(129)}`, {
-        headers: authorized(tokens.get("cto")!),
+      // Auth v2: both a raw Bearer header and a headerless non-health request
+      // are protocol errors (409); 401 is reserved for proof-present-but-wrong,
+      // which the transport client's own tests cover.
+      const bearer = await fetch(`${handle.baseUrl}/v1/notes?key=k`, {
+        headers: authorized("stale-bearer"),
       });
-      expect(longKey.status).toBe(400);
-      const bigBody = await fetch(`${handle.baseUrl}/v1/notes`, {
-        method: "PUT",
-        headers: { ...authorized(tokens.get("cto")!), "content-type": "application/json" },
-        body: JSON.stringify({ key: "k", body: "x".repeat(65_537) }),
+      expect(bearer.status).toBe(409);
+      const headerless = await fetch(`${handle.baseUrl}/v1/notes?key=k`);
+      expect(headerless.status).toBe(409);
+      // Malformed shapes travel on an authenticated channel and fail 400
+      // (zod) at the route — surfaced by the client as INVALID_INPUT.
+      await expect(cto.noteRead("k".repeat(129))).rejects.toMatchObject({
+        code: "INVALID_INPUT",
       });
-      expect(bigBody.status).toBe(400);
+      // A body over the transport's 64 KiB JSON cap is rejected inside the
+      // auth layer, before the response proof exists — the client therefore
+      // surfaces UNAUTHORIZED (unproven responses are never trusted), not the
+      // zod INVALID_INPUT that a smaller-but-over-limit body would get.
+      await expect(cto.noteWrite("k", "x".repeat(65_537))).rejects.toMatchObject({
+        code: "UNAUTHORIZED",
+      });
     } finally {
       await handle.close();
     }
@@ -104,10 +123,24 @@ describe("notes conformance (#22)", () => {
   });
 
   it("caps keys per role without affecting other roles", async () => {
-    const { handle, cto, arch } = await fixture();
+    const { handle, cto, arch, root, home } = await fixture();
     try {
-      for (let index = 0; index < 256; index += 1) {
-        await cto.noteWrite(`key-${index}`, "body");
+      // Seed at store level: 257 challenge round trips would trip the auth-v2
+      // challenge rate limit (100/s). The cap behavior is HTTP-visible on the
+      // overflow write alone; a second connection waits out the relay writer
+      // (busy_timeout) exactly like doctor's offline probes do.
+      const { projectPaths } = await import("../../src/config/paths.js");
+      const { openDatabase } = await import("../../src/storage/sqlite.js");
+      const { NotesStore } = await import("../../src/storage/notes-store.js");
+      const paths = await projectPaths(root, home);
+      const database = openDatabase(paths.database);
+      try {
+        const seed = new NotesStore(database);
+        for (let index = 0; index < 256; index += 1) {
+          seed.write("verdicta", "cto", `key-${index}`, "body", new Date().toISOString());
+        }
+      } finally {
+        database.close();
       }
       await expect(cto.noteWrite("one-more", "body")).rejects.toMatchObject({
         code: "STORAGE_FAILURE",
