@@ -138,11 +138,19 @@ export function openDatabase(path: string, options?: { readOnly?: boolean }): Da
     database.exec("PRAGMA busy_timeout = 5000");
     const version = database.prepare("PRAGMA user_version").get() as
       { user_version: number } | undefined;
-    if (
-      version?.user_version === undefined ||
-      version.user_version < 0 ||
-      version.user_version > CURRENT_SCHEMA_VERSION
-    ) {
+    if (version?.user_version !== undefined && version.user_version > CURRENT_SCHEMA_VERSION) {
+      // Issue #113: a newer database on an older binary — the classic
+      // downgrade path. Name both versions and the escape hatch; migrations
+      // are forward-only, so an old binary must refuse instead of guessing.
+      throw new SynloqError(
+        "STORAGE_FAILURE",
+        `the project database uses schema version ${version.user_version}, but this synloq ` +
+          `supports up to ${CURRENT_SCHEMA_VERSION}. Upgrade synloq (npm i -g synloq@latest or ` +
+          "npx synloq@latest) to open it; downgrading requires exporting your data first — " +
+          'database migrations are forward-only (see README, "Database migrations").',
+      );
+    }
+    if (version?.user_version === undefined || version.user_version < 0) {
       throw new Error(`unsupported SQLite user_version: ${version?.user_version}`);
     }
 
