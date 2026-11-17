@@ -37,8 +37,14 @@ describe("v1.1 §2.5 sender registration (#10)", () => {
     // The incident 2026-11-12 shape: a VALID credential for a role that is
     // NOT in the team registry.
     const ghostToken = await store.issue("verdicta", "ghost");
-    const cto = new RelayHttpClient(handle.baseUrl, () => ctoToken);
-    const ghost = new RelayHttpClient(handle.baseUrl, () => ghostToken);
+    const cto = new RelayHttpClient(handle.baseUrl, () => ctoToken, {
+      project: "verdicta",
+      agentId: "cto",
+    });
+    const ghost = new RelayHttpClient(handle.baseUrl, () => ghostToken, {
+      project: "verdicta",
+      agentId: "ghost",
+    });
     const paths = await projectPaths(root, home);
     return { handle, home, cto, ghost, paths, store };
   }
@@ -99,7 +105,10 @@ describe("v1.1 §2.5 sender registration (#10)", () => {
   it("lets the operator send (reserved-id exemption)", async () => {
     const { handle, store } = await stand();
     const operatorToken = await store.issue("verdicta", "operator");
-    const operator = new RelayHttpClient(handle.baseUrl, () => operatorToken);
+    const operator = new RelayHttpClient(handle.baseUrl, () => operatorToken, {
+      project: "verdicta",
+      agentId: "operator",
+    });
     const sent = await operator.send({
       to: "cto",
       text: "operator notice",
