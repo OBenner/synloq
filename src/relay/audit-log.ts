@@ -25,7 +25,8 @@ export type AuditedAction =
   | "deliveryReceipt"
   | "deliveryFailure"
   | "doctor"
-  | "longPoll";
+  | "longPoll"
+  | "webhook";
 
 /** Denials must never copy request-controlled strings from an error message. */
 export function denialDetail(action: AuditedAction): string {

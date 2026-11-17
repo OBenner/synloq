@@ -8,6 +8,7 @@ import {
   loadManifest,
   loadManifestRoles,
   loadManifestRetention,
+  loadManifestWebhooks,
   manifestUnknownFields,
   removeManifestParticipant,
 } from "../config/manifest.js";
@@ -39,6 +40,8 @@ import {
 import { Dispatcher } from "../relay/dispatcher.js";
 import { startRetentionSweep } from "../relay/retention.js";
 import { startCodexNudger } from "../relay/codex-nudger-lifecycle.js";
+import { startWebhook } from "../relay/webhook-lifecycle.js";
+import { readWebhookStatus } from "../config/webhook-status.js";
 import { ProtectionPolicy } from "../relay/protection.js";
 import { RelayService, type InboxResult, type SendRequest } from "../relay/relay-service.js";
 import { acquireServeLock, type ServeLock } from "../relay/serve-lock.js";
@@ -154,6 +157,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   assertSupportedNode(options.nodeVersion);
   const participants = await loadManifest(options.projectRoot);
   const retention = await loadManifestRetention(options.projectRoot);
+  const webhookConfig = await loadManifestWebhooks(options.projectRoot);
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
   const clock = options.clock ?? { now: () => Date.now() };
@@ -192,6 +196,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
   let server: RelayHttpServer | undefined;
   let stopRetention: (() => void) | undefined;
   let stopCodexNudger: (() => Promise<void>) | undefined;
+  let webhook: ReturnType<typeof startWebhook> | undefined;
   try {
     sessions = new SessionStore(paths.database, clock);
     sessions.reapExpired(messages);
@@ -201,7 +206,10 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     const protection = new ProtectionPolicy(messages, undefined, undefined, clock);
     server = new RelayHttpServer({
       project,
-      relay: new RelayService(directory, messages, sessions, protection, undefined, clock, audit),
+      relay: new RelayService(directory, messages, sessions, protection, undefined, clock, audit, {
+        created: (message) => webhook?.observer.created(message),
+        acknowledged: (message) => webhook?.observer.acknowledged(message),
+      }),
       credentials: new CredentialStore(options.projectRoot, options.synloqHome),
       sessions,
       dispatcher,
@@ -210,6 +218,16 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       protection,
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
+    if (webhookConfig?.enabled) {
+      webhook = startWebhook({
+        config: webhookConfig,
+        project,
+        relayPort: Number(new URL(baseUrl).port || "80"),
+        messages,
+        paths,
+        audit,
+      });
+    }
     stopRetention = startRetentionSweep(messages, project, retention.days);
     stopCodexNudger = await startCodexNudger({
       project,
@@ -232,6 +250,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
         closed = true;
         stopRetention?.();
         try {
+          await webhook?.close();
           await stopCodexNudger?.();
           await openServer.close();
         } finally {
@@ -249,6 +268,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
     };
   } catch (error) {
     stopRetention?.();
+    await webhook?.close();
     await stopCodexNudger?.();
     if (server) await server.close();
     sessions?.close();
@@ -658,6 +678,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const manifestRoles = await loadManifestRoles(options.projectRoot);
   const project = manifestProject(participants);
   const paths = await projectPaths(options.projectRoot, options.synloqHome);
+  const webhookStatus = await readWebhookStatus(paths);
   const home = await probeSynloqHome(paths.home);
   const clock = options.clock ?? { now: () => Date.now() };
   // Issue #3 (M4-min): doctor surfaces the audit tail so the rotation runbook
@@ -826,6 +847,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
             ...(options.nodeVersion ? { nodeVersion: options.nodeVersion } : {}),
           });
     return createDoctorReport({
+      ...(webhookStatus ? { webhook: webhookStatus } : {}),
       project,
       participants,
       databasePath: paths.database,
@@ -856,6 +878,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
             ...(options.nodeVersion ? { nodeVersion: options.nodeVersion } : {}),
           });
     return createDoctorReport({
+      ...(webhookStatus ? { webhook: webhookStatus } : {}),
       project,
       participants,
       databasePath: paths.database,

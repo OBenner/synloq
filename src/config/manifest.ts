@@ -7,6 +7,7 @@ import { agentId, type Participant } from "../domain/message.js";
 import { DEFAULT_LANGUAGE, languageSchema, type Language } from "../i18n/index.js";
 import { writeTextAtomic } from "./atomic-file.js";
 import { hostSchema, type HostName } from "./hosts.js";
+import { webhookConfigSchema, type WebhookConfig } from "./webhooks.js";
 
 export interface ManifestRole extends Participant {
   host?: HostName;
@@ -19,6 +20,8 @@ const retentionSchema = z.object({ days: z.number().int().min(1).max(36_500) });
 // Readers strip unknown fields so an older live relay can accept a newer,
 // additive manifest. Doctor still reports these fields to catch typos.
 const manifestSchema = z.object({
+  // External effects must never be enabled by a committed/shared manifest.
+  webhooks: z.never().optional(),
   version: z.literal(1).default(1),
   project: z.string().min(1).max(128),
   language: languageSchema.default(DEFAULT_LANGUAGE),
@@ -37,6 +40,7 @@ const manifestSchema = z.object({
 
 const strictManifestSchema = z
   .object({
+    webhooks: z.never().optional(),
     version: z.literal(1).default(1),
     project: z.string().min(1).max(128),
     language: languageSchema.default(DEFAULT_LANGUAGE),
@@ -88,6 +92,12 @@ export async function loadManifestRetention(projectRoot: string): Promise<{ days
   return (await readManifest(projectRoot)).retention ?? { days: 7 };
 }
 
+export async function loadManifestWebhooks(
+  projectRoot: string,
+): Promise<WebhookConfig | undefined> {
+  return (await readManifest(projectRoot)).webhooks;
+}
+
 async function readManifest(projectRoot: string) {
   const source = await readFile(join(projectRoot, "synloq.yaml"), "utf8");
   let input: unknown;
@@ -116,7 +126,9 @@ export const LOCAL_OVERLAY_FILENAME = "synloq.local.yaml";
 async function applyLocalOverlay(
   projectRoot: string,
   base: z.infer<typeof manifestSchema>,
-): Promise<z.infer<typeof manifestSchema>> {
+): Promise<
+  Omit<z.infer<typeof manifestSchema>, "webhooks"> & { webhooks?: WebhookConfig | undefined }
+> {
   let source: string;
   try {
     source = await readFile(join(projectRoot, LOCAL_OVERLAY_FILENAME), "utf8");
@@ -176,6 +188,7 @@ async function applyLocalOverlay(
   }
   return {
     ...base,
+    ...(overlay.data.webhooks === undefined ? {} : { webhooks: overlay.data.webhooks }),
     agents,
     language: overlay.data.language ?? base.language,
     retention: overlay.data.retention ?? base.retention,
@@ -184,6 +197,7 @@ async function applyLocalOverlay(
 
 const overlaySchema = z
   .object({
+    webhooks: webhookConfigSchema.optional(),
     version: z.literal(1).default(1),
     language: languageSchema.optional(),
     retention: retentionSchema.optional(),

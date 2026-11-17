@@ -9,6 +9,7 @@ import type { SessionStore } from "../storage/session-store.js";
 import type { ChannelConfigHealthReport } from "./repair.js";
 import type { HostName } from "../config/hosts.js";
 import type { VersionsBlock } from "../diagnostics/versions.js";
+import type { WebhookSnapshot } from "../relay/webhook-nudger.js";
 
 export interface PlacementHealth {
   host: HostName;
@@ -45,6 +46,7 @@ export interface OpenCodeHostCheck {
 }
 
 export interface DoctorReport {
+  webhook?: WebhookSnapshot;
   /** Issue #115: copy-pasteable version block for reproducible bug reports. */
   versions?: VersionsBlock;
   storage: { ok: boolean; path: string; error?: string };
@@ -79,6 +81,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorReportOptions {
+  webhook?: WebhookSnapshot;
   versions?: VersionsBlock;
   placements?: Map<string, PlacementHealth>;
   project: string;
@@ -144,6 +147,7 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
   });
 
   return {
+    ...(options.webhook ? { webhook: options.webhook } : {}),
     ...(options.versions ? { versions: options.versions } : {}),
     storage,
     watchdog,
