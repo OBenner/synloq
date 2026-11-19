@@ -5,6 +5,58 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-19
+
+Alpha follow-up with the formal Claude live proof, an operator dashboard, and
+recovery/diagnostics hardening.
+
+### Added
+
+- **Read-only operator dashboard** (#79, #157): the relay serves a self-contained
+  loopback HTML dashboard with auth-v2 operator proofs, role/session state,
+  pending and aging summaries, recent delivery metadata, and an audit tail. No
+  write routes; message bodies are excluded by default and require the explicit
+  operator-only `includeText=1` option. A human-friendly login form followed in
+  #160.
+- **Role memory convention** (#21, #156): generated Kimi Work and OpenCode
+  instructions now include per-role read/write discipline; a versioned template
+  covers dated decisions, incidents, handoffs, and open loops. Agent definitions
+  participate in the Kimi plugin digest so changed instructions trigger
+  Install/Update.
+- **Privacy policy and package homepage** (#155): factual local-first data and
+  network policy, credential/storage locations, deletion boundaries, and links
+  to the threat model.
+
+### Fixed
+
+- **Claude nudge-ledger recovery** (#146, #150): unresolved reservations are
+  scoped to the target session instead of deadlocking the whole role. Historical
+  uncertain attempts can be re-verified with append-only corrections; the
+  original outcome remains intact.
+- **Claude Code 2.1.326+ transcripts** (#158, #159): UUID-linked
+  `system/turn_duration` service nodes are accepted without relaxing ancestry,
+  same-session, fork, cycle, foreign-node, or marker-evidence guards.
+- **Audit-denial flood control** (#114, #148): repeated denials are aggregated by
+  action and role with bounded counts and intact reason/detail evidence.
+- **Network filesystem diagnostics** (#112, #149): doctor warns when SQLite state
+  is on NFS/CIFS/SSHFS/UNC storage, where WAL durability is not assured.
+
+### Security and protocol
+
+- **Hermetic-test guard** (#35, #153): CONTRIBUTING now treats test output as a
+  secret-disclosure channel; a zero-dependency `pnpm verify` guard rejects
+  high-signal real-home/credential access patterns in tests.
+- **Protocol v1.1 documentation** (#152): reserved sender ids `relay`/`operator`
+  and the `sender_reserved` reason code are specified; the Kimi Work
+  per-conversation scoping request is drafted for upstream submission.
+
+### Validation
+
+- **Formal Claude live proof1 PASS** (#126, clean-room R2): independent evidence
+  replay reports success/proof=1, latency 16.937 s, integrity OK; final SQLite
+  has one successful attempt, zero corrections, an acknowledged seed, and no
+  open sessions; all 41 SHA256-indexed evidence files match.
+
 ## [0.2.0] - 2026-11-17
 
 Second alpha wave: mutual relay authentication, per-role memory, and resilient
