@@ -6,6 +6,7 @@
     "type": "git",
     "url": "git+https://github.com/OBenner/synloq.git"
   },
+  "homepage": "https://github.com/OBenner/synloq",
   "files": [
     "dist",
     "plugins"
