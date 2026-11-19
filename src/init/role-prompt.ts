@@ -34,6 +34,7 @@ export function coreRules(
     translate(language, "role.hopLimit"),
     translate(language, "role.sweepRule"),
     translate(language, "role.reactive"),
+    translate(language, "role.memory", { agentId: role.agentId }),
   ].filter((line): line is string => line !== undefined);
   if (team && team.length > 0) rules.push(...contactCardLines(team, role.agentId, language));
   // The charter stays the final line — tests pin instructions.endsWith(charter).

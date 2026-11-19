@@ -314,6 +314,7 @@ export async function initializeTeam(
     roles: renderedRoles,
     language,
   });
+  // The existing result field also signals an agent-definition update.
   const channelsChanged =
     rendered.previousVersion !== undefined && rendered.previousVersion !== rendered.version;
   // Fail-loud operator guidance (issue #36 a): say exactly what changed and
@@ -323,8 +324,8 @@ export async function initializeTeam(
     rendered.previousVersion === undefined
       ? "Press Install/Update in Kimi Work to install the generated plugin, then restart the client so the role channels start."
       : channelsChanged
-        ? `Channels changed (plugin digest ${digestOf(rendered.previousVersion)} -> ${digestOf(rendered.version)}). Press Install/Update in Kimi Work; the updated channels start automatically. The relay and role tokens need no restart.`
-        : "Channel set unchanged — the installed plugin already matches; no Install/Update is needed.";
+        ? `Plugin content changed (digest ${digestOf(rendered.previousVersion)} -> ${digestOf(rendered.version)}). Press Install/Update in Kimi Work. The relay and role tokens need no restart.`
+        : "Plugin content unchanged. No Install/Update is needed.";
   return {
     project,
     manifestPath: join(projectRoot, "synloq.yaml"),

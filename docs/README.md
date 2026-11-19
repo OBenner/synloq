@@ -33,6 +33,7 @@ how to start, the host matrix, and links.
 - [Architecture decision records](adr/).
 - [Research notes](research/).
 - [Team and project conventions](conventions/).
+- [Role memory convention and template](conventions/role-memory.md).
 
 ## Operations
 
