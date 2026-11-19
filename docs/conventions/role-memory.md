@@ -30,32 +30,42 @@ Each role keeps its memory under `docs/local/<role>/`:
 
 ## Files
 
-Two files per role, distinct write disciplines:
+Copy the [versioned template](../memory/role-template.md) into the role's local
+directory. Verify the destination is ignored by Git before writing entries.
+Each role maintains two files:
 
-1. `decisions-log.md` — **append-only**. One entry per decision:
-   `D-<date>-<NN>`, context with links (thread IDs, commits, issues), the
-   decision, constraints, executor. Never rewrite history; correct by a new
-   entry.
+1. `decisions-log.md` — **append-only**. Use `D-<YYYY-MM-DD>-<NN>` for a
+   decision, `I-<YYYY-MM-DD>-<NN>` for an incident, and
+   `S-<YYYY-MM-DD>-<NN>` for a session handoff that adds useful context. Assign
+   the next sequence number for that date and entry type. Record the outcome,
+   next action or owner where applicable, and a source reference. Correct an
+   entry by adding a new one that references its ID.
 2. `open-loops.md` — **mutable snapshot**. Current tasks, pending threads
-   waiting on others, blockers, "where was I". Rewrite freely; keep it short
-   enough to read in one screen. This is the first file to read after a
-   compaction or restart.
+   waiting on others, and blockers. Date each item and include the next action,
+   owner or dependency, and a source reference. Keep it short enough to read
+   in one screen.
 
 ## Discipline
 
 - **Read** `open-loops.md` (and skim `decisions-log.md`) at session start and
-  after any compaction.
-- **Write** after any decision, incident, or completed task, and before
-  expected idle periods.
-- Memory is per-role: write only your own directory. Read access to other
-  roles' files is allowed but their content is their perspective, not fact.
+  after any compaction. If the files are absent, start with the template when
+  there is something to record.
+- **Write** after a decision or incident and at session end. Append the dated
+  entry and update open loops. At session end, append a handoff when the next
+  session needs context beyond what is already recorded.
+- Write only your own role's directory. Send a Synloq message to the owner
+  when another role's file needs an update. This is a team convention on a
+  shared filesystem.
 
 ## Hygiene (hard rules)
 
 - No tokens, credentials, or secrets — ever.
-- No full message bodies; reference by message ID, thread ID, commit hash, or
+- Keep message bodies out. Reference by message ID, thread ID, commit hash, or
   issue number.
 - No personal data about the operator beyond what tasks require.
+- For incident checks and tests, use synthetic fixtures and injected paths.
+  Keep actual credentials and user state out of fixtures, logs, and test
+  output. See [#35](https://github.com/OBenner/synloq/issues/35).
 
 ## Promotion
 
@@ -63,50 +73,12 @@ Two files per role, distinct write disciplines:
   in the log: promote it to `docs/adr/` (architecture) or the protocol spec /
   TEAM.md (process) through the normal review flow. The log entry then links
   to the promoted artifact.
-- Periodic compression: when a loop closes, fold its scratch entries into the
-  closing ADR/issue comment and trim `open-loops.md`.
+- When a loop closes, the owning role folds the durable outcome into the
+  closing ADR or issue and trims `open-loops.md`. CTO spot-checks promotions
+  during review.
 
 ## Role-instruction hook (for renderers)
 
-Renderers (`plugin-renderer.ts` for Kimi Work, the OpenCode role-prompt
-template from #32 W4) append this block to every role's instructions, in the
-project `language`:
-
-> You have a local memory directory `docs/local/<your-role>/` (gitignored).
-> At session start and after any context loss, read `open-loops.md` and skim
-> `decisions-log.md`. Append decisions as `D-<date>-<NN>` entries and keep
-> `open-loops.md` current. Never store tokens or message bodies; reference by
-> IDs.
-
-## Templates
-
-`decisions-log.md`:
-
-```markdown
-# <Role> — decisions log
-
-## D-<YYYY-MM-DD>-01 — <title>
-
-- **Context:** <links: threads/commits/issues>
-- **Decision:** <what was decided>
-- **Constraints:** <limits, non-goals>
-- **Executor:** <who implements>
-```
-
-`open-loops.md`:
-
-```markdown
-# <Role> — open loops (updated <YYYY-MM-DD>)
-
-## Now
-
-- <current task, thread/issue link, state>
-
-## Waiting on
-
-- <what, from whom, since when>
-
-## Blocked
-
-- <what, by what, what unblocks>
-```
+Generated Kimi Work instructions and OpenCode prompts include the memory rule
+for the named role in the project's language. The rule tells the role when to
+read and update its files. It requires no relay or protocol changes.

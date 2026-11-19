@@ -133,8 +133,23 @@ export async function renderKimiWorkPlugin(
       },
     ]),
   );
+  const team = options.roles.map(({ role }) => ({ agentId: role.agentId, host: role.host }));
+  const agents = options.roles.map(({ role }) => ({
+    agentId: role.agentId,
+    content: [
+      "---",
+      `name: synloq-${role.agentId}`,
+      `description: ${role.title} — ${role.role}`,
+      "---",
+      "",
+      `# ${role.title}`,
+      "",
+      roleInstructions(role, language, team),
+      "",
+    ].join("\n"),
+  }));
   const digest = createHash("sha256")
-    .update(JSON.stringify({ projectRoot, servers, overrides }))
+    .update(JSON.stringify({ projectRoot, servers, overrides, agents }))
     .digest("hex")
     .slice(0, 12);
   manifest.version = `0.1.0+local.${options.projectKey}.${digest}`;
@@ -152,25 +167,10 @@ export async function renderKimiWorkPlugin(
     project: options.project,
     projectRoot,
   });
-  for (const { role } of options.roles) {
-    const agent = [
-      "---",
-      `name: synloq-${role.agentId}`,
-      `description: ${role.title} — ${role.role}`,
-      "---",
-      "",
-      `# ${role.title}`,
-      "",
-      roleInstructions(
-        role,
-        language,
-        options.roles.map(({ role: member }) => ({ agentId: member.agentId, host: member.host })),
-      ),
-      "",
-    ].join("\n");
+  for (const { agentId, content } of agents) {
     await writeTextAtomic(
-      join(options.pluginSourcePath, "agents", `synloq-${role.agentId}.md`),
-      agent,
+      join(options.pluginSourcePath, "agents", `synloq-${agentId}.md`),
+      content,
       0o644,
     );
   }

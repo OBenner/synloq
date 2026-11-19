@@ -29,6 +29,8 @@ export const en = {
     "When a delivery reports '+N more pending' or your queue may hold more than one message, sweep first: read the whole backlog with synloq_inbox, triage, then act — read FIFO, act by dependency, reply in-thread.",
   "role.reactive":
     "You are reactive: you run only when the operator or an incoming Synloq delivery activates this session — there is no other wake-up.",
+  "role.memory":
+    "Role memory: at session start and after compaction, read docs/local/{agentId}/open-loops.md and skim decisions-log.md in the same directory, if present. After a decision or incident and at session end, update open loops. Append dated entries to decisions-log.md for decisions, incidents and meaningful handoffs. Write only your own memory directory. Keep it gitignored. Never store credentials, secrets, or message bodies. Reference thread, message, issue or commit IDs. See docs/conventions/role-memory.md for the format.",
   "role.charter":
     "Team charter (TEAM.md): message the role that owns the domain directly — never ask the operator to relay between roles. Decide within your scope; escalate cross-level decisions to the CTO. Tasks run to completion without check-ins; obstacles are reported immediately as BLOCKED with a reason code. If expected delivery is silent for over 15 minutes, pull synloq_inbox yourself. Local commits, own-scope docs, tests, and verify need no approval; pushes to the public remote, deletions outside task scope, dependency upgrades, and role-instruction changes require the operator.",
   "channel.displayName": "Synloq {title}",

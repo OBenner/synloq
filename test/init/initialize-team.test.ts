@@ -131,6 +131,17 @@ describe("initializeTeam", () => {
     expect(JSON.stringify(plugin)).not.toContain(firstToken.trim());
     expect(JSON.stringify(plugin)).not.toContain("CTO");
     expect(JSON.stringify(plugin)).not.toContain("Architect");
+    for (const agentId of ["product", "reviewer"]) {
+      const memoryPath = `docs/local/${agentId}/open-loops.md`;
+      const agent = await readFile(
+        join(pluginSourcePath, "agents", `synloq-${agentId}.md`),
+        "utf8",
+      );
+      expect(agent).toContain(memoryPath);
+      expect(host.created.some((input) => input.clientInstructions?.includes(memoryPath))).toBe(
+        true,
+      );
+    }
   });
 
   it("flags a channel-set change with an explicit Install/Update next step", async () => {
@@ -145,10 +156,28 @@ describe("initializeTeam", () => {
     expect(second.channelsChanged).toBe(true);
     expect(second.previousPluginVersion).toBe(first.pluginVersion);
     expect(second.pluginVersion).not.toBe(first.pluginVersion);
-    expect(second.nextStep).toContain("Channels changed");
+    expect(second.nextStep).toContain("Plugin content changed");
     expect(second.nextStep).toContain("Install/Update");
     // The operator must learn that relay and tokens survive the update.
     expect(second.nextStep).toContain("relay");
+  });
+
+  it("prompts Install/Update when the generated agent instructions change", async () => {
+    const { root, home, pluginSourcePath } = await fixture();
+    const host = new FakeHost();
+    const input = options(root, home, pluginSourcePath, host);
+    const before = await initializeTeam(input);
+    const changed = {
+      ...input,
+      roles: input.roles.map((role) => ({
+        ...role,
+        instructions: "Review the acceptance criteria.",
+      })),
+    };
+    const after = await initializeTeam(changed);
+    expect(after.pluginVersion).not.toBe(before.pluginVersion);
+    expect(after.nextStep).toContain("Install/Update");
+    expect(host.created).toHaveLength(2);
   });
 
   it("persists each chat immediately and resumes without duplicating the first", async () => {
