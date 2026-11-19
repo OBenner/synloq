@@ -238,6 +238,8 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
       audit,
       notes,
       protection,
+      // Issue #79: the dashboard's audit tail reads the same file the sink writes.
+      auditLogPath: auditLogPath(paths.home, paths.key),
     });
     const baseUrl = await server.listen(options.host ?? "127.0.0.1", options.port ?? 0);
     if (webhookConfig?.enabled) {

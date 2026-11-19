@@ -1017,6 +1017,45 @@ export class SQLiteMessageStore {
     });
   }
 
+  /**
+   * Project-wide recent deliveries for the read-only operator dashboard
+   * (issue #79): newest first, metadata only unless includeText is set.
+   * Project scope stays part of the query itself (issue #51).
+   */
+  listRecentDeliveries(
+    project: string,
+    limit: number,
+    options?: { includeText?: boolean },
+  ): Array<{
+    id: string;
+    threadId: string;
+    from: string;
+    to: string;
+    deliveryState: Message["deliveryState"];
+    createdAt: string;
+    expectsReply: boolean;
+    text?: string;
+  }> {
+    return this.read(() => {
+      const rows = this.database
+        .prepare(
+          `SELECT ${messageColumns} FROM messages
+           WHERE project = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
+        )
+        .all(project, limit) as unknown as MessageRow[];
+      return rows.map((row) => ({
+        id: row.id,
+        threadId: row.thread_id,
+        from: row.sender,
+        to: row.recipient,
+        deliveryState: row.delivery_state,
+        createdAt: row.created_at,
+        expectsReply: row.expects_reply === 1,
+        ...(options?.includeText ? { text: row.text } : {}),
+      }));
+    });
+  }
+
   pause(project: string, scope: PauseScope, scopeId: string, createdAt: string): void {
     this.write(() => {
       this.database

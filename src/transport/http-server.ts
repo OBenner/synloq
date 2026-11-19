@@ -21,9 +21,11 @@ import { PROTOCOL_VERSION, type SessionBinding } from "../domain/session.js";
 import {
   denialDetail,
   NullSecurityAuditLog,
+  readAuditTail,
   type AuditedAction,
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
+import { DASHBOARD_PAGE } from "./dashboard-page.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { ProtectionPolicy } from "../relay/protection.js";
 import type { RelayService } from "../relay/relay-service.js";
@@ -163,6 +165,8 @@ export interface RelayHttpServerOptions {
   // When present, long-poll routes (waitMs > 0) acquire a per-identity slot
   // from this policy and release it when the request ends (security M2).
   protection?: ProtectionPolicy;
+  // Issue #79: the dashboard's audit tail reads this file; absent = empty tail.
+  auditLogPath?: string;
 }
 
 interface ErrorResponse {
@@ -279,6 +283,36 @@ export class RelayHttpServer {
         throw new SynloqError("INCOMPATIBLE_PROTOCOL", "auth_v2_required; bearer_rejected");
       if (request.method === "POST" && url.pathname === "/v1/auth/challenge") {
         await this.issueChallenge(request, response);
+        return;
+      }
+      // Issue #79: the dashboard page itself is operator-gated but cannot run
+      // the challenge flow on first navigation (no JS yet). It accepts the
+      // operator token once via ?token=, which the page moves to localStorage
+      // and strips from the URL; data endpoints always require auth-v2 proofs.
+      if (request.method === "GET" && url.pathname === "/dashboard") {
+        const token = url.searchParams.get("token");
+        const identityForPage =
+          token === null || token === ""
+            ? undefined
+            : await this.options.credentials
+                .authenticate(this.options.project, token)
+                .catch(() => undefined);
+        if (!identityForPage?.operator) {
+          this.sendJson(response, 403, {
+            error: {
+              code: "UNAUTHORIZED",
+              message: "the dashboard requires the operator token (?token=…)",
+            },
+          });
+          return;
+        }
+        const page = DASHBOARD_PAGE.replaceAll("__PROJECT__", this.options.project);
+        const body = Buffer.from(page, "utf8");
+        response.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+          "content-length": body.length,
+        });
+        response.end(body);
         return;
       }
       identity = await this.authenticate(request, response);
@@ -734,6 +768,38 @@ export class RelayHttpServer {
         new Date().toISOString(),
       );
       this.sendJson(response, 200, { note });
+      return;
+    }
+
+    // Issue #79: read-only operator dashboard data. No writes anywhere on this
+    // path; message bodies only behind the explicit includeText=1 opt-in.
+    if (method === "GET" && path === "/v1/operator/dashboard") {
+      this.requireOperator(identity);
+      const includeText = url.searchParams.get("includeText") === "1";
+      const participants = await this.options.relay.listParticipants(identity);
+      const agingThreshold = new Date(Date.now() - 30 * 60_000).toISOString();
+      const roles = participants.map((participant) => ({
+        agentId: participant.agentId,
+        pending: this.options.messages.countStored(project, participant.agentId),
+        oldestStoredAt: this.options.messages.oldestStoredAt(project, participant.agentId),
+        unanswered: this.options.messages.unansweredAcked(
+          project,
+          participant.agentId,
+          agingThreshold,
+        ),
+      }));
+      const audit = this.options.auditLogPath
+        ? await readAuditTail(this.options.auditLogPath, 20)
+        : [];
+      this.sendJson(response, 200, {
+        project,
+        generatedAt: new Date().toISOString(),
+        participants,
+        sessions: this.options.sessions.list(project),
+        roles,
+        deliveries: this.options.messages.listRecentDeliveries(project, 50, { includeText }),
+        audit,
+      });
       return;
     }
 
