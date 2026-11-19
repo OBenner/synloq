@@ -42,6 +42,7 @@ import type { ClaudeHookIo } from "./claude-hook.js";
 import { projectPaths } from "../config/paths.js";
 import { formatStatusReport } from "./status.js";
 import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
+import { reverifyClaudeNudgeCommand } from "./claude-reverify.js";
 
 interface Output {
   write(chunk: string): boolean;
@@ -66,6 +67,7 @@ const commandNames = [
   "mcp",
   "adapter",
   "claude-hook",
+  "claude-reverify",
   "codex-hook",
   "list",
   "inbox",
@@ -101,6 +103,8 @@ const helpText: Record<CommandName, string> = {
   mcp: "Usage: synloq mcp --config <path>\n",
   adapter: "Usage: synloq adapter --config <path>\n",
   "claude-hook": "Usage: synloq claude-hook --config <path> [--host-timeout-ms <milliseconds>]\n",
+  "claude-reverify":
+    "Usage: synloq claude-reverify --project-root <path> --attempt-id <uuid> [--synloq-home <path>]\n",
   "codex-hook": "Usage: synloq codex-hook --config <path>\n",
   list: "Usage: synloq list [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
@@ -458,6 +462,27 @@ async function execute(
       return;
     }
     await (dependencies.runCodexHook ?? runStandaloneCodexHook)(requiredString(values, "config"));
+    return;
+  }
+
+  if (command === "claude-reverify") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      "attempt-id": { type: "string" },
+      "synloq-home": { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    writeJson(
+      io,
+      await reverifyClaudeNudgeCommand({
+        projectRoot: requiredString(values, "project-root"),
+        attemptId: requiredString(values, "attempt-id"),
+        ...synloqHomeOption(values),
+      }),
+    );
     return;
   }
 

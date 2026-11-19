@@ -4,6 +4,7 @@ import { z } from "zod";
 import { agentId } from "../domain/message.js";
 import { NUDGE_UUID } from "../relay/nudge-identifiers.js";
 import type { ProjectPaths } from "./paths.js";
+import { loopbackHttp } from "./adapter.js";
 
 const path = z.string().min(1).max(4096).refine(isAbsolute);
 export const claudeNudgerSchema = z
@@ -58,10 +59,11 @@ export async function readBoundedJson(path: string): Promise<unknown> {
 }
 export async function loadClaudeNudgerConfig(
   path: string,
+  { includeDisabled = false }: { includeDisabled?: boolean } = {},
 ): Promise<ClaudeNudgerConfig | undefined> {
   try {
     const config = claudeNudgerSchema.parse(await readBoundedJson(path));
-    return config.enabled ? config : undefined;
+    return config.enabled || includeDisabled ? config : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw new Error("invalid Claude nudger config");
@@ -73,7 +75,7 @@ export async function validateClaudeBinding(
   binding: ClaudeBinding,
   project: string,
   projectRoot: string,
-  relayUrl: string,
+  relayUrl?: string,
 ): Promise<void> {
   const adapter = z
     .object({
@@ -82,7 +84,7 @@ export async function validateClaudeBinding(
       agentId: z.literal(binding.agentId),
       sessionId: z.literal(binding.sessionId),
       projectRoot: path,
-      relayUrl: z.literal(relayUrl),
+      relayUrl: relayUrl === undefined ? loopbackHttp : z.literal(relayUrl),
       credentialPath: path,
     })
     .passthrough()

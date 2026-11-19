@@ -372,12 +372,15 @@ export class SQLiteMessageStore {
     });
   }
 
-  isMessageAcknowledged(id: string, project: string): boolean {
+  isMessageAcknowledged(id: string, project: string, recipient?: string): boolean {
     return this.read(
       () =>
         this.database
-          .prepare("SELECT 1 FROM messages WHERE id=? AND project=? AND delivery_state='acked'")
-          .get(id, project) !== undefined,
+          .prepare(
+            `SELECT 1 FROM messages WHERE id=? AND project=? AND delivery_state='acked'
+             AND (? IS NULL OR recipient=?)`,
+          )
+          .get(id, project, recipient ?? null, recipient ?? null) !== undefined,
     );
   }
 

@@ -3,9 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireClaudeOwnership } from "../src/host/claude/ownership.js";
+import { runMain } from "../src/cli/main.js";
+import { acquireServeLock } from "../src/relay/serve-lock.js";
 import { ClaudeNudgeLedger } from "../src/storage/claude-nudge-ledger.js";
 import { NUDGE_COOLDOWN_MS } from "../src/storage/nudge-ledger.js";
-import { claudeNudgePrompt, verifyClaudeTurn } from "../src/host/claude/proof.js";
+import {
+  claudeNudgePrompt,
+  reverifyClaudeTranscript,
+  verifyClaudeTurn,
+} from "../src/host/claude/proof.js";
 import { ClaudeNudger } from "../src/relay/claude-nudger.js";
 import {
   classifyClaudeResult,
@@ -14,6 +20,7 @@ import {
   noClaudeProcesses,
   type ClaudeRunner,
 } from "../src/host/claude/process.js";
+import * as claudeProcess from "../src/host/claude/process.js";
 import { SQLiteMessageStore } from "../src/storage/message-store.js";
 import { SessionStore } from "../src/storage/session-store.js";
 import { RelayService } from "../src/relay/relay-service.js";
@@ -41,9 +48,9 @@ afterEach(async () => {
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-function transcript() {
+function transcript(targets = [target]) {
   const rows = [
-    { type: "user", message: { role: "user", content: claudeNudgePrompt([target], marker) } },
+    { type: "user", message: { role: "user", content: claudeNudgePrompt(targets, marker) } },
     {
       type: "assistant",
       message: {
@@ -59,38 +66,45 @@ function transcript() {
           {
             type: "tool_result",
             tool_use_id: "i",
-            content: JSON.stringify({ messages: [{ id: target, deliveryState: "stored" }] }),
+            content: JSON.stringify({
+              messages: targets.map((id) => ({ id, deliveryState: "stored" })),
+            }),
           },
         ],
       },
     },
-    {
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "tool_use",
-            id: "a",
-            name: "mcp__synloq-arch__synloq_ack",
-            input: { messageId: target },
+    ...targets.flatMap((id, index) => {
+      const toolId = index === 0 ? "a" : `a${index}`;
+      return [
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolId,
+                name: "mcp__synloq-arch__synloq_ack",
+                input: { messageId: id },
+              },
+            ],
           },
-        ],
-      },
-    },
-    {
-      type: "user",
-      message: {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: "a",
-            content: JSON.stringify({ message: { id: target, deliveryState: "acked" } }),
+        },
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: toolId,
+                content: JSON.stringify({ message: { id, deliveryState: "acked" } }),
+              },
+            ],
           },
-        ],
-      },
-    },
+        },
+      ];
+    }),
     {
       type: "assistant",
       message: { role: "assistant", content: [{ type: "text", text: marker }] },
@@ -217,15 +231,17 @@ describe("persistence and local configuration", () => {
 
 async function serviceFixture(
   mode: "success" | "denied" | "missing-db" | "external" | "unknown" | "graph" = "success",
+  reopened?: { dir: string; sessionId: string; now: number },
 ) {
-  const dir = await temp(),
-    path = join(dir, `${session}.jsonl`),
+  const dir = reopened?.dir ?? (await temp()),
+    sessionId = reopened?.sessionId ?? session,
+    path = join(dir, `${sessionId}.jsonl`),
     ledgerPath = join(dir, "ledger.sqlite");
   await writeFile(
     path,
     JSON.stringify({
       type: "assistant",
-      sessionId: session,
+      sessionId,
       uuid: "prior",
       message: { role: "assistant", content: [{ type: "text", text: "READY" }] },
     }) + "\n",
@@ -236,42 +252,43 @@ async function serviceFixture(
       JSON.stringify({
         type: "system",
         subtype: "stop_hook_summary",
-        sessionId: session,
+        sessionId,
         uuid: "summary",
         parentUuid: "prior",
       }) + "\n",
     );
   const ledger = new ClaudeNudgeLedger(ledgerPath),
     messages = new SQLiteMessageStore(join(dir, "relay.sqlite"));
-  messages.create(
-    {
-      project: "p",
-      from: "cto",
-      to: "arch",
-      text: "PRIVATE BODY MUST NOT REACH ARGV",
-      expectsReply: true,
-      idempotencyKey: "seed",
-    },
-    target,
-    new Date().toISOString(),
-    session,
-  );
+  if (!reopened)
+    messages.create(
+      {
+        project: "p",
+        from: "cto",
+        to: "arch",
+        text: "PRIVATE BODY MUST NOT REACH ARGV",
+        expectsReply: true,
+        idempotencyKey: "seed",
+      },
+      target,
+      new Date().toISOString(),
+      sessionId,
+    );
   const binding = {
     agentId: "arch",
-    sessionId: session,
+    sessionId,
     cwd: dir,
     transcript: path,
     mcpConfig: join(dir, "mcp.json"),
     settings: join(dir, "settings.json"),
     adapterConfig: join(dir, "adapter.json"),
   };
-  let now = 0;
+  let now = reopened?.now ?? 0;
   const run = vi.fn<ClaudeRunner>(async (_exe: string, args: string[]) => {
     if (args[0] === "--version")
       return { exitCode: 0, stdout: "2.1.326 (Claude Code)\n", interrupted: false };
     const actualMarker = /NUDGE-ACK-[a-f0-9-]+/.exec(args.at(-1)!)![0];
     if (mode === "success" || mode === "missing-db" || mode === "graph") {
-      let turn = transcript().replaceAll(marker, actualMarker);
+      let turn = transcript().replaceAll(marker, actualMarker).replaceAll(session, sessionId);
       if (mode === "graph") turn = turn.replace('"parentUuid":"prior"', '"parentUuid":"summary"');
       await appendFile(path, turn);
       if (mode !== "missing-db") messages.acknowledge(target, "p", "arch");
@@ -279,7 +296,7 @@ async function serviceFixture(
     const result = {
       type: "result",
       subtype: mode === "external" ? "error_during_execution" : "success",
-      session_id: session,
+      session_id: sessionId,
       is_error: mode === "external",
       permission_denials: mode === "denied" ? [{ tool_name: "inbox" }] : [],
     };
@@ -342,6 +359,36 @@ async function serviceFixture(
 }
 
 describe("event-driven Claude service", () => {
+  it("delivers through a new session after an unresolved attempt quarantines the old session", async () => {
+    const first = await serviceFixture("unknown");
+    try {
+      first.nudger.notify("arch");
+      await first.nudger.settled();
+      first.advance();
+      first.nudger.notify("arch");
+      await first.nudger.settled();
+      expect(first.outcomes()).toEqual([{ outcome: "uncertain", proof: 0 }]);
+    } finally {
+      await first.close();
+    }
+    const next = await serviceFixture("success", {
+      dir: first.binding.cwd,
+      sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      now: NUDGE_COOLDOWN_MS,
+    });
+    try {
+      next.nudger.notify("arch");
+      await next.nudger.settled();
+      expect(next.outcomes()).toEqual([
+        { outcome: "uncertain", proof: 0 },
+        { outcome: "success", proof: 1 },
+      ]);
+      expect(next.messages.isMessageAcknowledged(target, "p", "arch")).toBe(true);
+    } finally {
+      await next.close();
+    }
+  });
+
   it("passes checkpoint service ancestry through to a durable success/proof1 ledger", async () => {
     const f = await serviceFixture("graph");
     try {
@@ -682,6 +729,42 @@ it("relay hints fire after durable create, once for replay, without breaking sen
 });
 
 describe("Claude attempt ledger", () => {
+  it.each(["reserved", "uncertain", "denied", "invalid"] as const)(
+    "scopes %s quarantine to the same session but keeps the role cooldown",
+    async (outcome) => {
+      const path = join(await temp(), "ledger.sqlite");
+      const first = new ClaudeNudgeLedger(path);
+      const second = new ClaudeNudgeLedger(path);
+      const oldSession = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const newSession = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const nextTarget = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+      const request = {
+        project: "p",
+        agentId: "arch",
+        sessionId: oldSession,
+        targetId: target,
+        now: 0,
+      };
+      try {
+        const attempt = first.reserve(request)!;
+        expect(attempt).toBeDefined();
+        if (outcome !== "reserved") first.finish(attempt.id, outcome, false);
+        const next = { ...request, targetId: nextTarget, now: NUDGE_COOLDOWN_MS };
+        expect(second.reserve({ ...next, sessionId: oldSession.toUpperCase() })).toBeUndefined();
+        expect(
+          second.reserve({ ...next, sessionId: newSession, now: next.now - 1 }),
+        ).toBeUndefined();
+        expect(second.reserve({ ...next, sessionId: newSession })).toBeDefined();
+        expect(
+          first.reserve({ ...next, sessionId: newSession, now: 2 * next.now }),
+        ).toBeUndefined();
+      } finally {
+        first.close();
+        second.close();
+      }
+    },
+  );
+
   it("reserves before execution, blocks crashes across reopen, and caps external retry", async () => {
     const path = join(await temp(), "ledger.sqlite");
     let ledger = new ClaudeNudgeLedger(path);
@@ -740,5 +823,235 @@ describe("Claude durable proof", () => {
     expect(claudeNudgePrompt([target], marker)).toMatch(
       /^Synloq nudge: 1 pending message\(s\), messageId /,
     );
+  });
+});
+
+function replayTranscript(turn: string): string {
+  const prefix = [
+    { type: "assistant", sessionId: session, uuid: "prior" },
+    {
+      type: "system",
+      subtype: "stop_hook_summary",
+      sessionId: session,
+      uuid: "summary",
+      parentUuid: "prior",
+    },
+    { type: "attachment", sessionId: session, uuid: "attachment", parentUuid: "summary" },
+  ];
+  return (
+    prefix.map((row) => JSON.stringify(row)).join("\n") +
+    "\n" +
+    turn.replace('"parentUuid":"prior"', '"parentUuid":"attachment"')
+  );
+}
+
+describe("offline Claude re-verification", () => {
+  it.each([
+    ["matching evidence", (turn: string) => turn, true],
+    [
+      "missing prompt",
+      (turn: string) => turn.replace(claudeNudgePrompt([target], marker), "Hello"),
+      false,
+    ],
+    ["duplicate prompt", (turn: string) => turn + turn.split("\n")[0] + "\n", false],
+    ["foreign session", (turn: string) => turn.replaceAll(session, "other-session"), false],
+    [
+      "foreign role",
+      (turn: string) => turn.replaceAll("mcp__synloq-arch__", "mcp__synloq-cto__"),
+      false,
+    ],
+    [
+      "errored ACK",
+      (turn: string) => turn.replace('"tool_use_id":"a"', '"tool_use_id":"a","is_error":true'),
+      false,
+    ],
+    [
+      "missing marker",
+      (turn: string) => turn.replace(`"text":"${marker}"`, '"text":"not-a-marker"'),
+      false,
+    ],
+    [
+      "late marker",
+      (turn: string) => {
+        const lines = turn.trimEnd().split("\n");
+        const last = lines.pop()!;
+        return (
+          lines.join("\n") +
+          "\n" +
+          JSON.stringify({
+            type: "user",
+            sessionId: session,
+            uuid: "late",
+            parentUuid: "4",
+            message: { role: "user", content: "Continue" },
+          }) +
+          "\n" +
+          last.replace('"parentUuid":"4"', '"parentUuid":"late"') +
+          "\n"
+        );
+      },
+      false,
+    ],
+    ["partial JSONL", (turn: string) => turn.trimEnd(), false],
+  ] as const)("checks %s within the original turn", async (_name, change, expected) => {
+    const path = join(await temp(), `${session}.jsonl`);
+    await writeFile(path, replayTranscript(change(transcript())));
+    await expect(
+      reverifyClaudeTranscript(path, {
+        sessionId: session,
+        agentId: "arch",
+        targetId: target,
+        marker,
+        acknowledged: () => true,
+      }),
+    ).resolves.toBe(expected);
+  });
+
+  it("holds the serve lock, requires every recipient ACK and appends one CLI correction", async () => {
+    const root = await temp();
+    const synloqHome = join(root, "home");
+    const paths = await projectPaths(root, synloqHome);
+    const nudgerPaths = claudeNudgerPaths(paths);
+    const second = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const relayUrl = "http://127.0.0.1:62000";
+    const binding = {
+      agentId: "arch",
+      sessionId: session,
+      cwd: root,
+      transcript: join(root, `${session}.jsonl`),
+      mcpConfig: join(root, "mcp.json"),
+      settings: join(root, "settings.json"),
+      adapterConfig: join(root, "adapter.json"),
+    };
+    await writeFile(
+      join(root, "synloq.yaml"),
+      "project: p\nagents:\n  cto:\n    title: CTO\n    role: Lead\n  arch:\n    title: Arch\n    role: Design\n",
+    );
+    await mkdir(dirname(nudgerPaths.config), { recursive: true });
+    await writeFile(
+      nudgerPaths.config,
+      JSON.stringify({
+        version: 1,
+        enabled: false,
+        executable: process.execPath,
+        cliVersion: "2.1.326",
+        bindings: [binding],
+      }),
+    );
+    await writeFile(
+      binding.adapterConfig,
+      JSON.stringify({
+        kind: "claude",
+        project: "p",
+        projectRoot: root,
+        agentId: "arch",
+        sessionId: session,
+        relayUrl,
+        credentialPath: join(root, "unused-token"),
+      }),
+    );
+    await writeFile(
+      binding.mcpConfig,
+      JSON.stringify({
+        mcpServers: {
+          "synloq-arch": {
+            command: process.execPath,
+            args: ["main.js", "adapter", "--config", binding.adapterConfig],
+          },
+        },
+      }),
+    );
+    await writeFile(binding.settings, "{}");
+    const messages = new SQLiteMessageStore(paths.database);
+    const ledger = new ClaudeNudgeLedger(nudgerPaths.ledger);
+    const processClear = vi.spyOn(claudeProcess, "noClaudeProcesses").mockResolvedValue(true);
+    try {
+      for (const id of [target, second]) {
+        messages.create(
+          {
+            project: "p",
+            from: "cto",
+            to: "arch",
+            text: "private fixture",
+            expectsReply: false,
+            idempotencyKey: id,
+          },
+          id,
+          new Date().toISOString(),
+          session,
+        );
+      }
+      messages.acknowledge(target, "p", "arch");
+      const attempt = ledger.reserve({
+        project: "p",
+        agentId: "arch",
+        sessionId: session,
+        targetId: target,
+        targetIds: [target, second],
+        now: 0,
+      })!;
+      ledger.finish(attempt.id, "uncertain", false);
+      await writeFile(
+        binding.transcript,
+        replayTranscript(transcript([target, second]).replaceAll(marker, attempt.marker)),
+      );
+      const invoke = async () => {
+        let output = "",
+          error = "";
+        const exit = await runMain(
+          [
+            "claude-reverify",
+            "--project-root",
+            root,
+            "--synloq-home",
+            synloqHome,
+            "--attempt-id",
+            attempt.id,
+          ],
+          {
+            stdout: { write: (chunk) => !!(output += chunk) },
+            stderr: { write: (chunk) => !!(error += chunk) },
+          },
+        );
+        return { exit, output, error };
+      };
+      const busy = await acquireServeLock(paths.database);
+      try {
+        await expect(invoke()).resolves.toMatchObject({
+          exit: 1,
+          error: expect.stringContaining("owns this project database"),
+        });
+        expect(processClear).not.toHaveBeenCalled();
+      } finally {
+        await busy.release();
+      }
+      const unproven = await invoke();
+      expect(unproven.exit).toBe(0);
+      expect(JSON.parse(unproven.output)).toEqual({ attemptId: attempt.id, status: "unproven" });
+      expect(ledger.findAttempt("p", attempt.id)).toMatchObject({
+        outcome: "uncertain",
+        corrected: 0,
+      });
+      messages.acknowledge(second, "p", "arch");
+      const complete = await invoke();
+      expect(complete.exit).toBe(0);
+      expect(JSON.parse(complete.output)).toEqual({ attemptId: attempt.id, status: "verified" });
+      expect(JSON.parse((await invoke()).output)).toEqual({
+        attemptId: attempt.id,
+        status: "already-verified",
+      });
+      expect(ledger.findAttempt("p", attempt.id)).toMatchObject({
+        outcome: "uncertain",
+        corrected: 1,
+      });
+      const lock = await acquireServeLock(paths.database);
+      await lock.release();
+      const owner = await acquireClaudeOwnership(binding.transcript, session, "manual");
+      await owner.release();
+    } finally {
+      processClear.mockRestore();
+      ledger.close();
+      messages.close();
+    }
   });
 });

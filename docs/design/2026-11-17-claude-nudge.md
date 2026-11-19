@@ -142,22 +142,44 @@ There is at most one retry of a structured external 402/connection failure for a
 target, counted within the total attempt budget, after cooldown on a **new event**.
 Free-form error text is not classified as safely retryable. A partial/ambiguous
 outcome, timeout, tool denial, or interrupted/reserved attempt blocks further
-automatic attempts for the role. There is no retry on a timer.
+automatic attempts in that Claude session. A new session for the role can
+process a later eligible event after the role cooldown. A target that stayed
+pending after an ambiguous attempt in the old session may be nudged again in
+the new one, within the same per-target total and external error limits.
+Successful targets retain their terminal status across sessions. There is no
+retry on a timer.
 
 ## Inspection and recovery
 
 With a read-only SQLite viewer inspect `ownership` (project, agent, session,
-active) and `attempts` (id, target, marker, started, outcome, proof). These tables
-contain identifiers and bounded classifications only, never message bodies,
-transcripts, stderr, credentials or provider output. `proof=1` records all checks
-passing; it is not a claim that a visible UI refreshed live.
+active), `attempts` (id, target, marker, started, outcome, proof, transcript path)
+and `corrections` (attempt ID, verification time, proof version). These tables
+contain identifiers, classifications and local paths. Keep the ledger private.
+An original `proof=1` or a correction represents durable proof.
 
-For a stale lock or blocked attempt: disable the opt-in, stop the relay, verify
-there is no Claude child left, and inspect the actual persisted conversation and
-relay ACK state. Only after resolving any uncertain work should the operator
-archive the local ledger and remove the stale ownership lock. That is an explicit
-recovery, not an automatic retry or permission bypass. Do not delete a live lock
-or publish the private evidence. Restarting alone does not clear attempts.
+To re-verify an `uncertain` attempt, stop the relay and close Claude processes.
+You can leave the nudger disabled while retaining its binding. Run:
+
+```sh
+synloq claude-reverify --project-root <path> --attempt-id <uuid>
+```
+
+Use `--synloq-home` if the relay used a custom home. The command takes the relay
+and transcript ownership locks for verification. It checks the unique original
+nudge turn in the bound transcript against durable relay ACKs for all captured
+messages. The same transcript and ancestry limits as live verification apply.
+A new correction returns `verified` and counts as effective success.
+`already-verified` returns the existing result. `unproven` leaves the attempt
+quarantined, and `not-uncertain` means there is no eligible attempt in this
+project. Output contains only the attempt ID and status on a completed check.
+
+Re-verify before changing the role binding. Recovery of a session requires
+its original trusted binding and transcript. If the binding is lost, that
+attempt stays uncertain even though the role can use a new session. Replay
+confirms persisted tool and ACK evidence. Live verification checks the
+full delivery path in a separate run. For a stale transcript ownership lock,
+stop the relay and verify there is no Claude owner before inspecting it.
+Restarting alone does not clear attempts.
 
 ## Validation and rollout
 
@@ -165,6 +187,10 @@ Hermetic tests cover a second process contending for the lock, crash reservation
 external cooldown/retry cap, denied-at-exit-zero, missing SQLite ACK, wrong
 session/fork/tool-result correlation, unpersisted/truncated transcript, bounded
 process timeout/output, wrong role configuration and post-commit dedup events.
+Recovery coverage includes a session change after an ambiguous attempt, racing
+ledger migration, repeated correction, active relay exclusion and a historical
+turn whose transcript contains all ACK results but whose relay database does
+not yet confirm them all.
 No paid inference is used by those tests.
 
 Live acceptance must verify seed → inbox/ACK tool results → marker → independent
