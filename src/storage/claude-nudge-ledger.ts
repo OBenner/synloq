@@ -48,15 +48,15 @@ export class ClaudeNudgeLedger {
         .get(project, agentId) as { started: number } | undefined;
       const blocked = this.db
         .prepare(
-          "SELECT 1 FROM attempts WHERE project=? AND agent=? AND outcome IN ('reserved','uncertain','denied','invalid') LIMIT 1",
+          "SELECT 1 FROM attempts WHERE project=? AND agent=? AND lower(session)=? AND outcome IN ('reserved','uncertain','denied','invalid') LIMIT 1",
         )
-        .get(project, agentId);
+        .get(project, agentId, sessionId.toLowerCase());
       const counts = this.db
         .prepare(
           "SELECT COUNT(*) AS total, COALESCE(SUM(outcome='external'),0) AS external, COALESCE(SUM(outcome='success'),0) AS success FROM attempts WHERE project=? AND agent=? AND target=?",
         )
         .get(project, agentId, targetId) as { total: number; external: number; success: number };
-      // Reserved after crash and any ambiguous outcome require explicit operator investigation.
+      // A crash or ambiguous outcome quarantines this session across message targets.
       if (
         blocked ||
         (latest && now - latest.started < NUDGE_COOLDOWN_MS) ||

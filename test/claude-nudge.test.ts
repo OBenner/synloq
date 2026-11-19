@@ -682,6 +682,42 @@ it("relay hints fire after durable create, once for replay, without breaking sen
 });
 
 describe("Claude attempt ledger", () => {
+  it.each(["reserved", "uncertain", "denied", "invalid"] as const)(
+    "scopes %s quarantine to the same session but keeps the role cooldown",
+    async (outcome) => {
+      const path = join(await temp(), "ledger.sqlite");
+      const first = new ClaudeNudgeLedger(path);
+      const second = new ClaudeNudgeLedger(path);
+      const oldSession = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const newSession = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      const nextTarget = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+      const request = {
+        project: "p",
+        agentId: "arch",
+        sessionId: oldSession,
+        targetId: target,
+        now: 0,
+      };
+      try {
+        const attempt = first.reserve(request)!;
+        expect(attempt).toBeDefined();
+        if (outcome !== "reserved") first.finish(attempt.id, outcome, false);
+        const next = { ...request, targetId: nextTarget, now: NUDGE_COOLDOWN_MS };
+        expect(second.reserve({ ...next, sessionId: oldSession.toUpperCase() })).toBeUndefined();
+        expect(
+          second.reserve({ ...next, sessionId: newSession, now: next.now - 1 }),
+        ).toBeUndefined();
+        expect(second.reserve({ ...next, sessionId: newSession })).toBeDefined();
+        expect(
+          first.reserve({ ...next, sessionId: newSession, now: 2 * next.now }),
+        ).toBeUndefined();
+      } finally {
+        first.close();
+        second.close();
+      }
+    },
+  );
+
   it("reserves before execution, blocks crashes across reopen, and caps external retry", async () => {
     const path = join(await temp(), "ledger.sqlite");
     let ledger = new ClaudeNudgeLedger(path);
