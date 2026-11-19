@@ -112,6 +112,7 @@ export class ClaudeNudger {
       sessionId: binding.sessionId,
       targetId: candidate.id,
       targetIds,
+      transcript: owner.transcript,
       now: options.now(),
     });
     if (!attempt) return;

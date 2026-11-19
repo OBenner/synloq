@@ -20,7 +20,7 @@ function isLoopbackHttp(value: string): boolean {
   }
 }
 
-const loopbackHttp = z
+export const loopbackHttp = z
   .string()
   .url()
   .refine(isLoopbackHttp, "only an HTTP loopback URL is allowed");

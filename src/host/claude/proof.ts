@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { requireNudgeIds } from "../../relay/nudge-identifiers.js";
 
 export const TRANSCRIPT_LIMIT = 4 * 1024 * 1024;
@@ -99,42 +99,67 @@ export interface TranscriptCheckpoint {
   /** Service-node ancestry after the last conversation, not arbitrary last-row UUID. */
   parentLinks?: readonly TranscriptParentLink[];
 }
+function parseTranscript(text: string): Row[] {
+  if (!text.endsWith("\n")) throw new Error("partial transcript");
+  return text
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Row);
+}
+
+function conversationCheckpoint(rows: Row[], sessionId: string) {
+  const conversations = rows.filter((row) => row.type === "user" || row.type === "assistant");
+  const last = conversations.at(-1);
+  if (
+    !last?.uuid ||
+    last.sessionId !== sessionId ||
+    !conversations.some((row) => row.type === "assistant" && row.sessionId === sessionId)
+  )
+    throw new Error("unpersisted conversation");
+  const chain = new ConversationChain(sessionId, last.uuid);
+  const parentLinks: TranscriptParentLink[] = [];
+  for (const row of rows.slice(rows.lastIndexOf(last) + 1)) {
+    const link = chain.bridge(row);
+    if (link) parentLinks.push(link);
+  }
+  return { previousUuid: last.uuid, parentLinks };
+}
+
+async function readTranscriptSnapshot(path: string) {
+  const file = await open(path, "r");
+  try {
+    const initial = await file.stat();
+    if (!initial.isFile() || !initial.size || initial.size > TRANSCRIPT_LIMIT)
+      throw new Error("unverified transcript");
+    const bytes = Buffer.alloc(initial.size + 1);
+    const read = await file.read(bytes, 0, bytes.length, 0);
+    if (read.bytesRead !== initial.size) throw new Error("changed transcript");
+    const current = await stat(path);
+    if (
+      current.ino !== initial.ino ||
+      current.dev !== initial.dev ||
+      current.size !== initial.size ||
+      current.mtimeMs !== initial.mtimeMs ||
+      current.ctimeMs !== initial.ctimeMs
+    )
+      throw new Error("changed transcript");
+    return {
+      rows: parseTranscript(bytes.subarray(0, read.bytesRead).toString("utf8")),
+      size: initial.size,
+      ino: initial.ino,
+      dev: initial.dev,
+    };
+  } finally {
+    await file.close();
+  }
+}
+
 export async function checkpointTranscript(
   path: string,
   sessionId: string,
 ): Promise<TranscriptCheckpoint> {
-  const file = await open(path, "r");
-  try {
-    const stat = await file.stat();
-    if (!stat.isFile() || !stat.size || stat.size > TRANSCRIPT_LIMIT)
-      throw new Error("unverified transcript");
-    const bytes = Buffer.alloc(stat.size + 1);
-    const read = await file.read(bytes, 0, bytes.length, 0);
-    if (read.bytesRead !== stat.size) throw new Error("changed transcript");
-    const text = bytes.subarray(0, read.bytesRead).toString("utf8");
-    if (!text.endsWith("\n")) throw new Error("partial transcript");
-    const rows = text
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Row);
-    const conversations = rows.filter((row) => row.type === "user" || row.type === "assistant");
-    const last = conversations.at(-1);
-    if (
-      !last?.uuid ||
-      last.sessionId !== sessionId ||
-      !conversations.some((row) => row.type === "assistant" && row.sessionId === sessionId)
-    )
-      throw new Error("unpersisted conversation");
-    const chain = new ConversationChain(sessionId, last.uuid);
-    const parentLinks: TranscriptParentLink[] = [];
-    for (const row of rows.slice(rows.lastIndexOf(last) + 1)) {
-      const link = chain.bridge(row);
-      if (link) parentLinks.push(link);
-    }
-    return { size: stat.size, ino: stat.ino, dev: stat.dev, previousUuid: last.uuid, parentLinks };
-  } finally {
-    await file.close();
-  }
+  const { rows, ...identity } = await readTranscriptSnapshot(path);
+  return { ...identity, ...conversationCheckpoint(rows, sessionId) };
 }
 export async function transcriptDelta(
   path: string,
@@ -160,25 +185,88 @@ export async function transcriptDelta(
   }
 }
 
-/** Host evidence is correlated to this fresh branch; authenticated SQLite is the arbiter. */
-export function verifyClaudeTurn(input: {
-  delta: string;
+interface ClaudeTurnEvidence {
   sessionId: string;
   agentId: string;
   targetId: string;
   targetIds?: string[];
   marker: string;
-  previousUuid: string;
-  parentLinks?: readonly TranscriptParentLink[];
   acknowledged: () => boolean;
-}): boolean {
+}
+
+function hasExactUserPrompt(row: Row, prompt: string): boolean {
+  const content = row.message?.content;
+  return (
+    row.type === "user" &&
+    row.message?.role === "user" &&
+    (content === prompt ||
+      (Array.isArray(content) &&
+        content.length === 1 &&
+        content[0]?.type === "text" &&
+        content[0]?.text === prompt))
+  );
+}
+
+function isToolResultRow(row: Row): boolean {
+  const content = row.message?.content;
+  return (
+    row.message?.role === "user" &&
+    Array.isArray(content) &&
+    content.length > 0 &&
+    content.every((block) => block?.type === "tool_result")
+  );
+}
+
+/** Recover exactly one historical nudge turn from its unique generated prompt. */
+export async function reverifyClaudeTranscript(
+  path: string,
+  input: ClaudeTurnEvidence,
+): Promise<boolean> {
+  try {
+    const prompt = claudeNudgePrompt(input.targetIds ?? [input.targetId], input.marker);
+    const { rows } = await readTranscriptSnapshot(path);
+    const findPrompt = (row: Row) => hasExactUserPrompt(row, prompt);
+    const start = rows.findIndex(findPrompt);
+    if (start === -1 || rows.findLastIndex(findPrompt) !== start) return false;
+    const sessionId = rows[start]?.sessionId;
+    if (sessionId === undefined || sessionId.toLowerCase() !== input.sessionId.toLowerCase())
+      return false;
+    const anchor = conversationCheckpoint(rows.slice(0, start), sessionId);
+    for (let end = start + 1; end < rows.length; end++) {
+      const row = rows[end]!;
+      if (row.type === "user" && !isToolResultRow(row)) return false;
+      if (
+        row.type === "assistant" &&
+        row.message?.role === "assistant" &&
+        Array.isArray(row.message.content) &&
+        row.message.content.some((block) => block?.type === "text" && block.text === input.marker)
+      ) {
+        const delta =
+          rows
+            .slice(start, end + 1)
+            .map((record) => JSON.stringify(record))
+            .join("\n") + "\n";
+        return verifyClaudeTurn({ ...input, sessionId, ...anchor, delta });
+      }
+    }
+  } catch {
+    // Missing, changing or malformed transcripts cannot provide proof.
+  }
+  return false;
+}
+
+/** Host evidence is correlated to this fresh branch; authenticated SQLite is the arbiter. */
+export function verifyClaudeTurn(
+  input: ClaudeTurnEvidence & {
+    delta: string;
+    previousUuid: string;
+    parentLinks?: readonly TranscriptParentLink[];
+  },
+): boolean {
   try {
     if (Buffer.byteLength(input.delta) > TRANSCRIPT_LIMIT || !input.delta.endsWith("\n"))
       return false;
-    const rows = input.delta
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Row);
+    const rows = parseTranscript(input.delta);
     const chain = new ConversationChain(input.sessionId, input.previousUuid);
     for (const link of input.parentLinks ?? []) chain.bridge(link);
     let marker = false;
