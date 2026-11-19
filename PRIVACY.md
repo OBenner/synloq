@@ -27,7 +27,9 @@ chats on your own machine, not a hosted service.
 
 ## Your control
 
-- All state is plain local files; deleting `~/.synloq` removes everything.
+- Deleting `~/.synloq` removes the relay state, credentials, audit logs, and
+  runtime configs. The project manifest (`synloq.yaml`) and any generated
+  project files stay in `<project>` and are removed separately.
 - `synloq doctor` and `synloq status` show exactly what is stored and running.
 - Security properties and known limitations:
   [`docs/security/threat-model.md`](docs/security/threat-model.md).
