@@ -288,6 +288,7 @@ export async function serveCommand(options: ServeOptions): Promise<ServeHandle> 
           await stopCodexNudger?.();
           await claudeNudger?.stop();
           await openServer.close();
+          audit.flush();
         } finally {
           try {
             openSessions.close();

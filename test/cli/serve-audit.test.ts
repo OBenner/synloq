@@ -45,6 +45,37 @@ describe("serveCommand audit wiring", () => {
     }
   });
 
+  it("flushes an outstanding audit aggregation window on graceful close", async () => {
+    const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-flush-"));
+    dirs.push(root);
+    writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
+    const home = join(root, ".synloq");
+    const paths = await projectPaths(root, home);
+    const auditPath = join(paths.home, "data", `${paths.key}-audit.jsonl`);
+    const events = () =>
+      readFileSync(auditPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
+    try {
+      for (let i = 0; i < 3; i++) {
+        const response = await fetch(`${handle.baseUrl}/v1/participants`);
+        expect(response.status).toBe(409);
+        await response.arrayBuffer();
+      }
+      expect(events()).toHaveLength(1);
+    } finally {
+      await handle.close();
+    }
+    expect(events()).toHaveLength(2);
+    expect(events()[1]).toMatchObject({
+      kind: "aggregate",
+      reasonCode: "INCOMPATIBLE_PROTOCOL",
+      count: 3,
+    });
+  });
+
   it("records a relay denial for a foreign inbox with the authenticated identity", async () => {
     const root = mkdtempSync(join(tmpdir(), "synloq-serve-audit-inbox-"));
     dirs.push(root);

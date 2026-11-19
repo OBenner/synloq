@@ -78,7 +78,7 @@ describe("FileSecurityAuditLog growth control (#114)", () => {
     expect(JSON.parse(lines[2]!).kind).toBeUndefined();
   });
 
-  it("aggregates per (action, agentId): other keys and accept events stay individual", () => {
+  it("aggregates per (action, agentId, reasonCode) without mixing reasons", () => {
     const dir = mkdtempSync(join(tmpdir(), "synloq-audit-keys-"));
     dirs.push(dir);
     const path = join(dir, "audit.jsonl");
@@ -89,11 +89,24 @@ describe("FileSecurityAuditLog growth control (#114)", () => {
     log.record(floodEvent({ agentId: "cto" })); // different key
     log.record(floodEvent({ action: "send" })); // different action
     log.record(floodEvent({ decision: "accept", reasonCode: "CLAIMED", action: "claim" }));
+    for (let i = 0; i < 3; i++) log.record(floodEvent({ reasonCode: "UNAUTHORIZED" }));
 
     const lines = readFileSync(path, "utf8").trim().split("\n");
-    // arch/longPoll first is individual; cto, send and the accept are individual.
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5);
     for (const line of lines) expect(JSON.parse(line).kind).toBeUndefined();
+    log.flush();
+    const aggregates = readFileSync(path, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as SecurityEvent)
+      .filter(
+        (entry) =>
+          entry.kind === "aggregate" && entry.agentId === "arch" && entry.action === "longPoll",
+      );
+    expect(aggregates.map(({ reasonCode, count }) => [reasonCode, count])).toEqual([
+      ["RATE_LIMITED", 2],
+      ["UNAUTHORIZED", 3],
+    ]);
   });
 
   it("readAuditTail reads aggregate rows like ordinary events", async () => {
