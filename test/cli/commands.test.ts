@@ -210,8 +210,8 @@ describe("relay command handlers", () => {
         fixture.root,
         "--relay-url",
         fixture.baseUrl,
-        "--token",
-        fixture.operatorToken,
+        // Base64url tokens can start with a dash. Keep the value in the same argv entry.
+        `--token=${fixture.operatorToken}`,
       ],
       {
         stdout: {
@@ -246,8 +246,7 @@ describe("relay command handlers", () => {
         fixture.root,
         "--relay-url",
         fixture.baseUrl,
-        "--token",
-        fixture.ctoToken,
+        `--token=${fixture.ctoToken}`,
         "--to",
         "arch",
         "--text",
