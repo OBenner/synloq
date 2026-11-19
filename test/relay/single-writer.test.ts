@@ -147,12 +147,12 @@ describe("RelayService single-writer enforcement (#46)", () => {
     await expect(relay.send(cto, sendDraft())).resolves.toMatchObject({ from: "cto" });
   });
 
-  it("never gates the operator", async () => {
+  it("rejects operator messages as reserved before the writer-session check", async () => {
     const { relay, sessions } = makeRelay();
     registerWriter(sessions, "ses-cto-main");
 
-    await expect(relay.send(operator, sendDraft())).resolves.toMatchObject({
-      from: "operator",
+    await expect(relay.send(operator, sendDraft())).rejects.toMatchObject({
+      code: "SENDER_RESERVED",
     });
   });
 

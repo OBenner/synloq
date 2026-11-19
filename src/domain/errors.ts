@@ -4,6 +4,7 @@ export class SynloqError extends Error {
       | "INVALID_INPUT"
       | "UNKNOWN_RECIPIENT"
       | "UNKNOWN_SENDER"
+      | "SENDER_RESERVED"
       | "IDEMPOTENCY_CONFLICT"
       | "DUPLICATE_SESSION"
       | "INCOMPATIBLE_PROTOCOL"

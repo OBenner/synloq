@@ -97,7 +97,7 @@ export async function initializeOpenCodeTeam(
     paths.home,
     new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
   );
-  await credentials.ensureCredential(project, "operator");
+  await credentials.ensureOperatorCredential(project);
 
   const host = options.host;
   const initializedRoles: InitializedOpenCodeRole[] = [];

@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Clock } from "../adapters/types.js";
 import { SynloqError } from "../domain/errors.js";
+import { requireParticipantAgentId } from "../domain/message.js";
 import {
   PROTOCOL_VERSION,
   type AdapterSession,
@@ -104,6 +105,7 @@ export class SessionStore {
     replace: boolean,
     ownership?: "exclusive",
   ): AdapterSession {
+    requireParticipantAgentId(registration.agentId);
     return this.write(() => {
       if (registration.protocolVersion !== PROTOCOL_VERSION) {
         throw new SynloqError(

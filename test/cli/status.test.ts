@@ -367,7 +367,8 @@ describe("synloq status CLI wiring", () => {
   });
 
   it("never prints issued credentials", async () => {
-    const issuedToken = await new CredentialStore(fixture.root).issue(PROJECT, "operator");
+    const issuedToken = (await new CredentialStore(fixture.root).ensureOperatorCredential(PROJECT))
+      .token;
     register("arch", "idle");
 
     const json = await capture(["status", "--project-root", fixture.root, "--json"]);

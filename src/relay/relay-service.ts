@@ -3,6 +3,7 @@ import type { Identity } from "../config/credentials.js";
 import { SynloqError } from "../domain/errors.js";
 import {
   parseSendMessageInput,
+  requireParticipantAgentId,
   type Message,
   type Participant,
   type SendMessageInput,
@@ -136,27 +137,21 @@ export class RelayService {
   }
 
   private async performSend(identity: Identity, raw: SendRequest): Promise<Message> {
+    const from = identity.operator ? "operator" : identity.agentId;
+    requireParticipantAgentId(from);
     this.requireWriter(identity, raw.sessionId);
     const wire = { ...raw };
     delete wire.sessionId; // writer proof is a transport concern, not message content
     const input = parseSendMessageInput({
       ...wire,
       project: identity.project,
-      from: identity.operator ? "operator" : identity.agentId,
+      from,
     });
     // Protocol v1.1 §2.5 (issue #10): the sender must be a registered
     // participant BEFORE any dedup/replay effect and before any write — an
     // unregistered sender must never receive a replay of someone else's
     // ledger entry. Rejection is synchronous at the acceptance boundary.
-    if (!identity.operator) {
-      if (identity.agentId === "relay" || identity.agentId === "operator") {
-        throw new SynloqError(
-          "UNKNOWN_SENDER",
-          `reserved id '${identity.agentId}' cannot originate participant messages`,
-        );
-      }
-      await this.requireParticipant(input.project, identity.agentId, "UNKNOWN_SENDER");
-    }
+    await this.requireParticipant(input.project, from, "UNKNOWN_SENDER");
     const replay = this.messages.replay(input);
     if (replay) return replay;
     await this.requireParticipant(input.project, input.to);
@@ -212,10 +207,11 @@ export class RelayService {
 
   async reply(identity: Identity, raw: ReplyRequest): Promise<Message> {
     try {
+      requireParticipantAgentId(identity.operator ? "operator" : identity.agentId);
       this.requireWriter(identity, raw.sessionId);
       const retryRecipient = this.messages.getRetryRecipient(
         identity.project,
-        identity.operator ? "operator" : identity.agentId,
+        identity.agentId,
         raw.idempotencyKey,
       );
       if (retryRecipient !== undefined) {

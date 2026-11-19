@@ -102,7 +102,9 @@ describe("serveCommand audit wiring", () => {
     dirs.push(root);
     writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
     const home = join(root, ".synloq");
-    const operatorToken = await new CredentialStore(root, home).issue("verdicta", "operator");
+    const operatorToken = (
+      await new CredentialStore(root, home).ensureOperatorCredential("verdicta")
+    ).token;
     const handle = await serveCommand({ projectRoot: root, port: 0, synloqHome: home });
     try {
       const headers = {

@@ -33,7 +33,7 @@ beforeEach(async () => {
 
   const paths = await projectPaths(root, home);
   const credentials = new CredentialStore(root, home);
-  await credentials.ensureCredential(PROJECT, "operator");
+  await credentials.ensureOperatorCredential(PROJECT);
   await credentials.ensureCredential(PROJECT, "arch");
   await mergeManifestParticipants(
     root,

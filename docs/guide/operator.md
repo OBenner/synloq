@@ -39,6 +39,11 @@ top-level `sessionId` for hook-style hosts); agents never set it by hand.
 Roles without any registered session keep token-only writes — the guarantee
 starts with the first registration.
 
+Use a participant's credential file with `synloq send`. For a role with a
+registered writer, pass its matching `--session-id`. The operator credential
+grants read and management access. Sending with it returns `SENDER_RESERVED`
+under [protocol v1.1 §2.6](../protocol/v1.1.md#26-reserved-agent-ids-normative).
+
 ## Pause and resume
 
 Pause or resume delivery with the operator credential:

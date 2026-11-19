@@ -109,7 +109,7 @@ describe("CredentialStore", () => {
     const home = await mkdtemp(join(tmpdir(), "synloq-operator-home-"));
     vi.stubEnv("SYNLOQ_HOME", home);
     const store = new CredentialStore(root);
-    const token = await store.issue("verdicta", "operator");
+    const token = (await store.ensureOperatorCredential("verdicta")).token;
 
     await expect(store.authenticate("verdicta", token)).resolves.toEqual({
       project: "verdicta",
@@ -159,7 +159,7 @@ describe("CredentialStore rotation and revocation", () => {
     const home = await mkdtemp(join(tmpdir(), "synloq-rotate-operator-home-"));
     vi.stubEnv("SYNLOQ_HOME", home);
     const store = new CredentialStore(root);
-    const original = await store.issue("verdicta", "operator");
+    const original = (await store.ensureOperatorCredential("verdicta")).token;
 
     const rotated = await store.rotate("verdicta", "operator");
 

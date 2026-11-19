@@ -12,7 +12,7 @@ export async function issueTestCredentials(projectRoot: string): Promise<Map<str
   if (!project) throw new Error("manifest must declare at least one agent");
   const store = new CredentialStore(projectRoot);
   const tokens = new Map<string, string>();
-  tokens.set("operator", await store.issue(project, "operator"));
+  tokens.set("operator", (await store.ensureOperatorCredential(project)).token);
   for (const participant of participants) {
     tokens.set(participant.agentId, await store.issue(project, participant.agentId));
   }

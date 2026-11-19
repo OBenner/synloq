@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
-import { CredentialStore, type Identity } from "../config/credentials.js";
+import { CredentialStore } from "../config/credentials.js";
 import {
   loadManifest,
   loadManifestRoles,
@@ -331,14 +331,10 @@ export function inboxCommand(
   return client.inbox(options);
 }
 
-export async function sendCommand(
+export function sendCommand(
   client: RelayHttpClient,
   input: SendRequest,
-  identity: Identity,
 ): Promise<{ message: Message }> {
-  if (!identity.operator) {
-    throw new SynloqError("UNAUTHORIZED", "operator credential required for CLI send");
-  }
   return client.send(input);
 }
 

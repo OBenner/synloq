@@ -1,7 +1,21 @@
 import { z } from "zod";
+import { SynloqError } from "./errors.js";
 
 export const MAX_TEXT_BYTES = 32 * 1024;
 export const agentId = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
+
+export function isReservedAgentId(id: string): boolean {
+  return id === "relay" || id === "operator";
+}
+
+export function requireParticipantAgentId(id: string): void {
+  if (isReservedAgentId(id)) {
+    throw new SynloqError(
+      "SENDER_RESERVED",
+      `reserved agent id '${id}' cannot act as a participant`,
+    );
+  }
+}
 
 export const sendMessageInputSchema = z
   .object({
