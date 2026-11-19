@@ -88,9 +88,13 @@ describe("operator dashboard (#79)", () => {
   it("serves the HTML page only to the operator token", async () => {
     const anonymous = await fetch(`${fixture.baseUrl}/dashboard`);
     expect(anonymous.status).toBe(403);
+    // The gate is a human-friendly login form, not a JSON blob.
+    expect(anonymous.headers.get("content-type")).toContain("text/html");
+    expect(await anonymous.text()).toContain("operator");
 
     const roleToken = await fetch(`${fixture.baseUrl}/dashboard?token=${fixture.ctoToken}`);
     expect(roleToken.status).toBe(403);
+    expect(roleToken.headers.get("content-type")).toContain("text/html");
 
     const page = await fetch(`${fixture.baseUrl}/dashboard?token=${fixture.operatorToken}`);
     expect(page.status).toBe(200);
