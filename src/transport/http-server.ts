@@ -25,7 +25,7 @@ import {
   type AuditedAction,
   type SecurityAuditLog,
 } from "../relay/audit-log.js";
-import { DASHBOARD_PAGE } from "./dashboard-page.js";
+import { DASHBOARD_LOGIN_PAGE, DASHBOARD_PAGE } from "./dashboard-page.js";
 import type { Dispatcher } from "../relay/dispatcher.js";
 import type { ProtectionPolicy } from "../relay/protection.js";
 import type { RelayService } from "../relay/relay-service.js";
@@ -298,12 +298,14 @@ export class RelayHttpServer {
                 .authenticate(this.options.project, token)
                 .catch(() => undefined);
         if (!identityForPage?.operator) {
-          this.sendJson(response, 403, {
-            error: {
-              code: "UNAUTHORIZED",
-              message: "the dashboard requires the operator token (?token=…)",
-            },
+          // A human-friendly gate: the login form, not a JSON blob. The form
+          // carries no project data and no operational surface.
+          const login = Buffer.from(DASHBOARD_LOGIN_PAGE, "utf8");
+          response.writeHead(403, {
+            "content-type": "text/html; charset=utf-8",
+            "content-length": login.length,
           });
+          response.end(login);
           return;
         }
         const page = DASHBOARD_PAGE.replaceAll("__PROJECT__", this.options.project);

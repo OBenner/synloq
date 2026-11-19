@@ -9,6 +9,41 @@
  * proofs. The dashboard is a loopback read-only view that never writes, so a
  * forged response can only paint wrong pixels — never change state.
  */
+export const DASHBOARD_LOGIN_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synloq dashboard — sign in</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; background: #0f1115; color: #e6e8ee; }
+  input { background: #1b2130; color: #e6e8ee; border: 1px solid #262c3a; padding: 4px 8px; width: 26rem; }
+  button { background: #2a3448; color: #e6e8ee; border: 0; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .muted { color: #6b7488; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1>Synloq dashboard</h1>
+<p>This page requires the <strong>operator</strong> token.</p>
+<form id="f">
+  <input id="t" type="password" placeholder="operator token" autocomplete="off">
+  <button type="submit">Open dashboard</button>
+</form>
+<p class="muted">The token lives in &lt;synloq home&gt;/credentials/&lt;project key&gt;/operator.token. It is stored in this browser's localStorage and sent only to the loopback relay.</p>
+<script>
+const t = document.getElementById('t');
+const saved = localStorage.getItem('synloq-operator-token');
+if (saved) location.replace('/dashboard?token=' + encodeURIComponent(saved));
+document.getElementById('f').onsubmit = (event) => {
+  event.preventDefault();
+  localStorage.setItem('synloq-operator-token', t.value);
+  location.assign('/dashboard?token=' + encodeURIComponent(t.value));
+};
+</script>
+</body>
+</html>
+`;
+
 export const DASHBOARD_PAGE = `<!doctype html>
 <html lang="en">
 <head>
