@@ -119,7 +119,8 @@ Success requires all of:
 
 The ancestry anchor is the last conversational (user/assistant) UUID, not the
 last arbitrary JSONL record. A checkpoint also retains same-session parent links
-for trailing `attachment` and `system/stop_hook_summary` graph nodes. Verification
+for trailing `attachment`, `system/stop_hook_summary`, and `system/turn_duration`
+graph nodes. Verification
 projects each conversational parent through those known service links to the
 preceding conversational anchor. Service nodes cannot supply tools, results or
 markers; side attachments do not advance the conversational chain. Unknown graph

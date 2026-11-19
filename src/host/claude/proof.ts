@@ -55,7 +55,10 @@ class ConversationChain {
     if (row.uuid === undefined && row.parentUuid === undefined) return undefined;
     if (
       row.type !== "attachment" &&
-      !(row.type === "system" && row.subtype === "stop_hook_summary")
+      !(
+        row.type === "system" &&
+        (row.subtype === "stop_hook_summary" || row.subtype === "turn_duration")
+      )
     )
       throw new Error("unsupported service node");
     const ancestor = this.parent(row);
