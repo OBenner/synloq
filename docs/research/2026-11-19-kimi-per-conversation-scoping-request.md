@@ -32,8 +32,8 @@ Consequences we observe in production:
 - **No host-layer isolation.** Channel separation is enforced at the
   application layer (adapter binding checks, per-role tokens, role
   instructions) — not by the host. A compromised or confused model session can
-  *attempt* any channel; only our own code stands in the way. We would like the
-  host to make the wrong channel *unreachable*, not just *unusable*.
+  _attempt_ any channel; only our own code stands in the way. We would like the
+  host to make the wrong channel _unreachable_, not just _unusable_.
 
 ## 2. Requested capability
 
@@ -46,7 +46,7 @@ least to the most invasive:
    per-session `--mcp-config`. The role chat then attaches exactly one server.
 2. **Plugin manifest templating.** Allow the plugin manifest to reference a
    per-conversation variable (e.g. a conversation/role binding), so the client
-   resolves *which* servers of a plugin are visible in *this* conversation.
+   resolves _which_ servers of a plugin are visible in _this_ conversation.
 3. **A client API to scope plugin enablement per conversation** ("plugin X is
    active in conversation Y only"), either in the UI or programmatically.
 
