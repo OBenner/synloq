@@ -106,6 +106,61 @@ async function check(change?: (data: ReturnType<typeof fixture>) => void, acknow
 it("accepts a resumed turn after stop_hook_summary with seven attachment nodes (#138)", async () => {
   expect(await check()).toBe(true);
 });
+
+const duration = (uuid: string, parentUuid: string): Row => ({
+  ...node("system", uuid, parentUuid),
+  subtype: "turn_duration",
+});
+
+function withTurnDuration({ before, rows }: ReturnType<typeof fixture>) {
+  // #158, structural reproduction of the pinned Claude Code 2.1.326
+  // transcript: a duration node links the stop summary to the next prompt.
+  before.splice(3, 0, duration("previous-duration", "73b2c72c"));
+  rows[0]!.parentUuid = "previous-duration";
+  rows.push(duration("current-duration", "end"));
+}
+
+it("accepts turn_duration at the checkpoint and after the resumed turn", async () => {
+  expect(await check(withTurnDuration)).toBe(true);
+});
+
+it.each([
+  [{ parentUuid: "missing" }, "unresolved transcript parent"],
+  [{ sessionId: "other-session" }, "invalid transcript parent link"],
+] as const)("rejects checkpoint turn_duration with invalid ancestry %j", async (change, error) => {
+  await expect(
+    check((data) => {
+      withTurnDuration(data);
+      Object.assign(
+        data.before.find((row) => row.uuid === "previous-duration")!,
+        change,
+      );
+    }),
+  ).rejects.toThrow(error);
+});
+
+it("rejects a conversational fork through a turn_duration node", async () => {
+  expect(
+    await check((data) => {
+      withTurnDuration(data);
+      const ack = data.rows.find((row) => row.uuid === "ack")!;
+      data.rows.splice(data.rows.indexOf(ack), 0, duration("fork-duration", "u0"));
+      ack.parentUuid = "fork-duration";
+    }),
+  ).toBe(false);
+});
+
+it("does not use turn_duration content as marker evidence", async () => {
+  expect(
+    await check((data) => {
+      withTurnDuration(data);
+      const markerRow = data.rows.find((row) => row.uuid === "marker")!;
+      markerRow.type = "system";
+      markerRow.subtype = "turn_duration";
+    }),
+  ).toBe(false);
+});
+
 it("still requires the independent SQLite acknowledgement", async () => {
   expect(await check(undefined, false)).toBe(false);
 });
