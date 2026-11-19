@@ -80,6 +80,16 @@ paths (`~/.synloq`), or documented variables/placeholders (`$Stand`,
 `<projectKey>`). The full pre-publication audit rationale is in
 `docs/security/audit-2026-11-12-publication.md`.
 
+**Tests must be hermetic.** A test must never read real user configs,
+credentials, or state: no `os.homedir()`, no tilde home paths
+(`~/.synloq`, `~/.config`, …), no Windows account variables (`%USERPROFILE%`,
+…), and no direct reads of home-related environment variables. Inject paths via
+fixtures, `vi.stubEnv`, or `mkdtemp` instead. This is secret hygiene, not just
+determinism: a failing test prints its values into logs, and logs travel —
+issues, support bundles, backups. The 2026-11-13 incident (a real service
+password in failing-test output) is the reference case. `pnpm verify` enforces
+the high-signal patterns via `scripts/check-test-hermeticity.mjs`.
+
 ## Tests
 
 - TDD is the default: failing test first, then the minimal implementation.
