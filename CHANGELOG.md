@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-19
+
+Backlog-completion release covering audit retention, reserved-identity
+boundaries, and CLI reliability.
+
+### Changed
+
+- **CLI participant sends** (#5, #164): `synloq send` now uses a participant
+  credential and accepts `--session-id` for a registered writer. Operator
+  credentials retain read and management access but cannot originate participant
+  messages; reserved senders return `SENDER_RESERVED`.
+
+### Fixed
+
+- **Audit aggregation completeness** (#151, #164): distinct denial reason codes
+  no longer share one counter, and pending aggregate windows are flushed during
+  graceful relay shutdown.
+- **Reserved participant IDs** (#5, #164): `relay` and `operator` are rejected at
+  manifest loading, channel issuance, session registration, and send boundaries.
+  The implementation matches protocol v1.1 §2.6 without weakening operator read
+  and management access.
+- **CLI token parsing in tests** (#164): base64url tokens that begin with `-` are
+  passed as a single `--token=<value>` argument, eliminating the intermittent
+  Commander ambiguity in both affected test paths.
+
+### Docs
+
+- The prepared Kimi Work per-conversation scoping request now records operator
+  ownership of upstream filing; issue #9 remains open until the upstream ticket
+  is linked (#164).
+
 ## [0.2.1] - 2026-11-19
 
 Alpha follow-up with the formal Claude live proof, an operator dashboard, and
