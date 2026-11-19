@@ -1,5 +1,5 @@
 import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { Clock, DeliveryAdapter } from "../adapters/types.js";
 import { writeTextAtomic } from "../config/atomic-file.js";
 import { ClaimCodeStore, claimCodeAgentId, type IssuedClaimCode } from "../config/claim-codes.js";
@@ -71,6 +71,7 @@ import {
   collectVersions,
   type HostVersionProbe,
 } from "../diagnostics/versions.js";
+import { checkFilesystemLocality, type FilesystemLocality } from "../diagnostics/fs-locality.js";
 import {
   inspectChannelConfig,
   repairTeamConfigs,
@@ -125,6 +126,8 @@ export interface DoctorCommandOptions {
   skipVersions?: boolean;
   /** Issue #111 test hook: evaluate a runtime other than the running one. */
   nodeVersion?: string;
+  /** Issue #112 test hook: injectable filesystem locality probe. */
+  filesystemLocality?: (path: string) => Promise<FilesystemLocality>;
   openCodeHost?: OpenCodeSessionHost;
 }
 
@@ -724,6 +727,25 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
   const directoryHealth = await readDirectoryHealth(auditPath, project);
   const manifestWarnings = await manifestUnknownFields(options.projectRoot);
   const openCodeRegistrations = await readOpenCodeRegistrations(auditPath, project);
+  // Issue #112: SQLite WAL is unsafe on network filesystems — warn loudly
+  // when the home or the project root sits on one. Fail-soft, never throws.
+  const checkFs = options.filesystemLocality ?? checkFilesystemLocality;
+  const filesystemWarnings = (
+    await Promise.all([
+      checkFs(paths.home).catch(() => undefined),
+      checkFs(resolve(options.projectRoot)).catch(() => undefined),
+    ])
+  ).flatMap((locality) =>
+    locality && !locality.local && locality.warning
+      ? [
+          {
+            path: locality.path,
+            ...(locality.fsType ? { fsType: locality.fsType } : {}),
+            warning: locality.warning,
+          },
+        ]
+      : [],
+  );
 
   // Issue #6: repair first so the report reflects the post-repair state.
   let repair: DoctorReport["repair"];
@@ -900,6 +922,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       audit,
       directory: directoryHealth,
       ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
+      ...(filesystemWarnings.length > 0 ? { filesystemWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });
@@ -930,6 +953,7 @@ export async function doctorCommand(options: DoctorCommandOptions): Promise<Doct
       audit,
       directory: directoryHealth,
       ...(manifestWarnings.length > 0 ? { manifestWarnings } : {}),
+      ...(filesystemWarnings.length > 0 ? { filesystemWarnings } : {}),
       ...(plugin ? { plugin } : {}),
       ...(repair ? { repair } : {}),
     });

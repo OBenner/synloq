@@ -55,6 +55,8 @@ export interface DoctorReport {
   plugin?: PluginFreshness;
   /** Issue #3 (M4-min): tail of the security audit log (path + last events). */
   audit?: { path: string; entries: SecurityEvent[] };
+  /** Issue #112: loud entries for paths on network filesystems (WAL risk). */
+  filesystemWarnings?: Array<{ path: string; fsType?: string; warning: string }>;
   directory?: { state: "ok" | "degraded"; since?: string; reason?: string };
   manifestWarnings?: string[];
   repair?: {
@@ -102,6 +104,7 @@ export interface DoctorReportOptions {
   audit?: DoctorReport["audit"];
   directory?: DoctorReport["directory"];
   manifestWarnings?: string[];
+  filesystemWarnings?: DoctorReport["filesystemWarnings"];
 }
 
 function hasUnexpiredLease(session: AdapterSession | undefined, now: number): boolean {
@@ -156,6 +159,9 @@ export function createDoctorReport(options: DoctorReportOptions): DoctorReport {
     ...(options.audit ? { audit: options.audit } : {}),
     ...(options.directory ? { directory: options.directory } : {}),
     ...(options.manifestWarnings?.length ? { manifestWarnings: options.manifestWarnings } : {}),
+    ...(options.filesystemWarnings?.length
+      ? { filesystemWarnings: options.filesystemWarnings }
+      : {}),
     ...(options.repair ? { repair: options.repair } : {}),
     participants: options.participants.map((participant) => {
       const session = registered.find((candidate) => candidate.agentId === participant.agentId);
