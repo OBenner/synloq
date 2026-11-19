@@ -106,7 +106,7 @@ export async function initializeGenericTeam(
     paths.home,
     new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
   );
-  await credentials.ensureCredential(project, "operator");
+  await credentials.ensureOperatorCredential(project);
 
   const initializedRoles: InitializedGenericRole[] = [];
   for (const role of roles) {

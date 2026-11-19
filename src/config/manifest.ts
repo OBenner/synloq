@@ -3,7 +3,7 @@ import { join } from "node:path";
 import YAML from "yaml";
 import { z } from "zod";
 import { SynloqError } from "../domain/errors.js";
-import { agentId, type Participant } from "../domain/message.js";
+import { agentId, isReservedAgentId, type Participant } from "../domain/message.js";
 import { DEFAULT_LANGUAGE, languageSchema, type Language } from "../i18n/index.js";
 import { writeTextAtomic } from "./atomic-file.js";
 import { hostSchema, type HostName } from "./hosts.js";
@@ -111,10 +111,19 @@ async function readManifest(projectRoot: string) {
   if (!manifest.success) {
     throw new SynloqError("INVALID_INPUT", "manifest does not match the version 1 schema");
   }
+  requireAssignableManifestIds(Object.keys(manifest.data.agents), "synloq.yaml");
   return applyLocalOverlay(projectRoot, manifest.data);
 }
 
 export const LOCAL_OVERLAY_FILENAME = "synloq.local.yaml";
+
+function requireAssignableManifestIds(ids: Iterable<string>, filename: string): void {
+  for (const id of ids) {
+    if (isReservedAgentId(id)) {
+      throw new SynloqError("INVALID_INPUT", `${filename} contains reserved agent id '${id}'`);
+    }
+  }
+}
 
 /**
  * A gitignored personal overlay merged over the committed manifest (issue #37).
@@ -159,6 +168,7 @@ async function applyLocalOverlay(
       `${LOCAL_OVERLAY_FILENAME} does not match the overlay schema`,
     );
   }
+  requireAssignableManifestIds(Object.keys(overlay.data.agents), LOCAL_OVERLAY_FILENAME);
   const agents = { ...base.agents };
   for (const [id, patch] of Object.entries(overlay.data.agents)) {
     const existing = agents[id];
@@ -247,6 +257,7 @@ export async function writeManifest(
     throw new SynloqError("INVALID_INPUT", "manifest participants must share one project");
   }
   const ids = new Set(participants.map((participant) => participant.agentId));
+  requireAssignableManifestIds(ids, "synloq.yaml");
   if (ids.size !== participants.length) {
     throw new SynloqError("INVALID_INPUT", "manifest contains duplicate role IDs");
   }

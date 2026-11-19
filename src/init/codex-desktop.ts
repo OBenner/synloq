@@ -114,7 +114,7 @@ export async function provisionDesktopRoles(options: ReconcileOptions) {
       options.roles.map((role) => ({ ...role, project: options.project })),
     options.language,
   );
-  await credentials.ensureCredential(options.project, "operator");
+  await credentials.ensureOperatorCredential(options.project);
   for (const role of options.roles) {
     const directory = directories.get(role.agentId)!;
     const configPath = join(paths.runtime, "mcp", `${role.agentId}.json`);

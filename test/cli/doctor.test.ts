@@ -527,7 +527,8 @@ describe("DoctorReport", () => {
   });
 
   it("never prints credentials or message bodies", async () => {
-    const issuedToken = await new CredentialStore(fixture.root).issue(PROJECT, "operator");
+    const issuedToken = (await new CredentialStore(fixture.root).ensureOperatorCredential(PROJECT))
+      .token;
     const capabilities = {
       activeDelivery: false,
       stateReporting: true,

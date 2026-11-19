@@ -74,7 +74,7 @@ export interface FileSecurityAuditLogOptions {
 
 /**
  * Issue #114: a denial flood (~150 B per row) must not grow the log without
- * bound. Deny events aggregate per (action, agentId): the first denial is
+ * bound. Deny events aggregate per (action, agentId, reasonCode): the first denial is
  * written in full (forensic evidence), repeats within the window are counted,
  * and the window closes with one aggregate row carrying the count. Accept and
  * degraded decisions are never aggregated — they are rare and forensically
@@ -100,7 +100,7 @@ export class FileSecurityAuditLog implements SecurityAuditLog {
       this.append(event);
       return;
     }
-    const key = `${event.action}:${event.agentId}`;
+    const key = `${event.action}:${event.agentId}:${event.reasonCode}`;
     const now = this.now();
     const window = this.windows.get(key);
     if (window && now - window.windowStartMs < this.windowMs) {

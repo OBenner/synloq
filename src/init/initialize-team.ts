@@ -13,7 +13,7 @@ import {
   type TeamState,
 } from "../config/team-state.js";
 import { SynloqError } from "../domain/errors.js";
-import { agentId, type Participant } from "../domain/message.js";
+import { agentId, requireParticipantAgentId, type Participant } from "../domain/message.js";
 import { DEFAULT_LANGUAGE, type Language } from "../i18n/index.js";
 import type {
   KimiWorkConversationSummary,
@@ -53,6 +53,7 @@ export function parseRoleInputs(
 ): { project: string; roles: RoleInput[] } {
   const parsedProject = z.string().min(1).max(128).parse(project);
   const parsedRoles = z.array(roleSchema).min(1).parse(roles) as RoleInput[];
+  for (const role of parsedRoles) requireParticipantAgentId(role.agentId);
   if (
     parsedRoles.some(
       (role) =>
@@ -192,7 +193,7 @@ export async function initializeTeam(
     paths.home,
     new FileSecurityAuditLog(auditLogPath(paths.home, paths.key)),
   );
-  await credentials.ensureCredential(project, "operator");
+  await credentials.ensureOperatorCredential(project);
 
   const used = new Map<string, string>();
   for (const [id, conversation] of Object.entries(state?.conversations ?? {})) {

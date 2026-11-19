@@ -973,7 +973,7 @@ export class RelayHttpServer {
       case "UNAUTHORIZED":
         return { status: authentication ? 401 : 403, error };
       case "NOT_WRITER":
-        // Authenticated as the role, but not as its active writer session.
+      case "SENDER_RESERVED":
         return { status: 403, error };
       case "UNKNOWN_RECIPIENT":
       case "UNKNOWN_SENDER":

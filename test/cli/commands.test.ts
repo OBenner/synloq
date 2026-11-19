@@ -16,7 +16,7 @@ import {
   sendCommand,
   serveCommand,
 } from "../../src/cli/commands.js";
-import { runMain } from "../../src/cli/main.js";
+import { runMain, type CliIo } from "../../src/cli/main.js";
 import { ClaimCodeStore } from "../../src/config/claim-codes.js";
 import { CredentialStore } from "../../src/config/credentials.js";
 import { issueTestCredentials } from "../helpers/credentials.js";
@@ -142,7 +142,7 @@ describe("relay command handlers", () => {
     });
   });
 
-  it("sends only with the operator token and reads the recipient inbox", async () => {
+  it("sends with a participant token and rejects operator sends", async () => {
     const input = {
       to: "arch",
       text: "Please review the CLI boundary",
@@ -150,16 +150,12 @@ describe("relay command handlers", () => {
       idempotencyKey: "cli-send-1",
     };
 
-    await expect(
-      sendCommand(fixture.cto, input, { project: PROJECT, agentId: "cto", operator: false }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(fixture.messages.listInbox(PROJECT, "arch", undefined, 50).messages).toEqual([]);
-    const sent = await sendCommand(fixture.operator, input, {
-      project: PROJECT,
-      agentId: "operator",
-      operator: true,
+    await expect(sendCommand(fixture.operator, input)).rejects.toMatchObject({
+      code: "SENDER_RESERVED",
     });
-    expect(sent.message).toMatchObject({ from: "operator", to: "arch", text: input.text });
+    expect(fixture.messages.listInbox(PROJECT, "arch", undefined, 50).messages).toEqual([]);
+    const sent = await sendCommand(fixture.cto, input);
+    expect(sent.message).toMatchObject({ from: "cto", to: "arch", text: input.text });
     await expect(inboxCommand(fixture.arch, { limit: 10 })).resolves.toEqual({
       messages: [sent.message],
       nextCursor: undefined,
@@ -210,8 +206,8 @@ describe("relay command handlers", () => {
         fixture.root,
         "--relay-url",
         fixture.baseUrl,
-        "--token",
-        fixture.operatorToken,
+        // Base64url tokens can start with a dash. Keep the value in the same argv entry.
+        `--token=${fixture.operatorToken}`,
       ],
       {
         stdout: {
@@ -236,46 +232,54 @@ describe("relay command handlers", () => {
     });
   });
 
-  it("rejects an agent token for CLI send before changing storage", async () => {
+  it("requires a matching writer session for CLI send when the role is bound", async () => {
+    await fixture.cto.registerSession({
+      sessionId: "cto-cli-writer",
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities,
+    });
     let stdout = "";
     let stderr = "";
-    const exitCode = await runMain(
-      [
-        "send",
-        "--project-root",
-        fixture.root,
-        "--relay-url",
-        fixture.baseUrl,
-        "--token",
-        fixture.ctoToken,
-        "--to",
-        "arch",
-        "--text",
-        "must not be stored",
-        "--idempotency-key",
-        "cli-agent-send-1",
-      ],
-      {
-        stdout: {
-          write: (chunk) => {
-            stdout += String(chunk);
-            return true;
-          },
-        },
-        stderr: {
-          write: (chunk) => {
-            stderr += String(chunk);
-            return true;
-          },
+    const args = [
+      "send",
+      "--project-root",
+      fixture.root,
+      "--relay-url",
+      fixture.baseUrl,
+      `--token=${fixture.ctoToken}`,
+      "--to",
+      "arch",
+      "--text",
+      "CLI send from the writer",
+      "--idempotency-key",
+      "cli-agent-send-1",
+    ];
+    const io: CliIo = {
+      stdout: {
+        write: (chunk) => {
+          stdout += String(chunk);
+          return true;
         },
       },
-    );
+      stderr: {
+        write: (chunk) => {
+          stderr += String(chunk);
+          return true;
+        },
+      },
+    };
+    const exitCode = await runMain(args, io);
 
     expect(exitCode).toBe(1);
     expect(stdout).toBe("");
-    expect(stderr).toContain("operator");
+    expect(stderr).toContain("active writer session");
     expect(stderr).not.toContain(fixture.ctoToken);
     expect(fixture.messages.listInbox(PROJECT, "arch", undefined, 50).messages).toEqual([]);
+
+    stderr = "";
+    expect(await runMain([...args, "--session-id", "cto-cli-writer"], io)).toBe(0);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout).message).toMatchObject({ from: "cto", to: "arch" });
   });
 
   it("starts the stdio bridge with the selected configuration", async () => {

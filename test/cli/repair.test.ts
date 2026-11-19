@@ -59,7 +59,7 @@ beforeEach(async () => {
     conversations: { arch, cto },
   });
   fixture = { root, home, paths, credentials: new CredentialStore(root) };
-  await fixture.credentials.ensureCredential(PROJECT, "operator");
+  await fixture.credentials.ensureOperatorCredential(PROJECT);
   await fixture.credentials.ensureCredential(PROJECT, "arch");
   await fixture.credentials.ensureCredential(PROJECT, "cto");
 });

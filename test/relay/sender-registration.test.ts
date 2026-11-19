@@ -102,19 +102,76 @@ describe("v1.1 §2.5 sender registration (#10)", () => {
     ).rejects.toMatchObject({ code: "UNKNOWN_RECIPIENT" });
   });
 
-  it("lets the operator send (reserved-id exemption)", async () => {
+  it("returns SENDER_RESERVED for operator sends and registration, while preserving operator reads", async () => {
     const { handle, store } = await stand();
-    const operatorToken = await store.issue("verdicta", "operator");
+    const operatorToken = (await store.ensureOperatorCredential("verdicta")).token;
     const operator = new RelayHttpClient(handle.baseUrl, () => operatorToken, {
       project: "verdicta",
       agentId: "operator",
     });
-    const sent = await operator.send({
-      to: "cto",
-      text: "operator notice",
-      expectsReply: false,
-      idempotencyKey: "operator-1",
+    await expect(
+      operator.send({
+        to: "cto",
+        text: "operator notice",
+        expectsReply: false,
+        idempotencyKey: "operator-1",
+      }),
+    ).rejects.toMatchObject({ code: "SENDER_RESERVED" });
+    await expect(
+      operator.registerSession({
+        sessionId: "operator-writer",
+        protocolVersion: 1,
+        capabilities: { activeDelivery: false, stateReporting: false, clientIdempotency: false },
+      }),
+    ).rejects.toMatchObject({ code: "SENDER_RESERVED" });
+    await expect(operator.listParticipants()).resolves.toMatchObject({
+      participants: expect.arrayContaining([expect.objectContaining({ agentId: "cto" })]),
     });
-    expect(sent.message.from).toBe("operator");
+    for (const agentId of ["relay", "operator"]) {
+      await expect(
+        operator.replaceSession({
+          agentId,
+          sessionId: "reserved-writer",
+          protocolVersion: 1,
+          capabilities: { activeDelivery: false, stateReporting: false, clientIdempotency: false },
+        }),
+      ).rejects.toMatchObject({ code: "SENDER_RESERVED" });
+    }
+    expect(handle.messages.listInbox("verdicta", "cto", undefined, 50).messages).toEqual([]);
+    expect(handle.sessions.list("verdicta")).toEqual([]);
+  });
+
+  it.each(["relay", "operator"])("refuses channel issuance for reserved id %s", async (agentId) => {
+    const { store } = await stand();
+    await expect(store.issue("verdicta", agentId)).rejects.toMatchObject({
+      code: "SENDER_RESERVED",
+    });
+    await expect(store.ensureCredential("verdicta", agentId)).rejects.toMatchObject({
+      code: "SENDER_RESERVED",
+    });
+  });
+
+  it.each([
+    ["synloq.yaml", "relay"],
+    ["synloq.yaml", "operator"],
+    ["synloq.local.yaml", "relay"],
+    ["synloq.local.yaml", "operator"],
+  ])("refuses to start with reserved participant in %s (%s)", async (file, agentId) => {
+    const root = mkdtempSync(join(tmpdir(), "synloq-reserved-manifest-"));
+    dirs.push(root);
+    const home = join(root, ".synloq");
+    writeFileSync(join(root, "synloq.yaml"), manifest, "utf8");
+    const reserved = `  ${agentId}:\n    title: Reserved\n    role: Unassignable\n`;
+    writeFileSync(
+      join(root, file),
+      file === "synloq.yaml" ? manifest + reserved : "agents:\n" + reserved,
+      "utf8",
+    );
+    await expect(
+      serveCommand({ projectRoot: root, port: 0, synloqHome: home }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: `${file} contains reserved agent id '${agentId}'`,
+    });
   });
 });

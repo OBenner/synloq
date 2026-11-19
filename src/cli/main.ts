@@ -109,7 +109,7 @@ const helpText: Record<CommandName, string> = {
   list: "Usage: synloq list [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>)\n",
   inbox:
     "Usage: synloq inbox [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) [--cursor <cursor>] [--limit <1-100>] [--wait-ms <0-25000>]\n",
-  send: "Usage: synloq send --project-root <path> --relay-url <url> (--token <token> | --credential <path>) --to <agent-id> --text <text> --idempotency-key <key> [--expects-reply] [--synloq-home <path>]\n",
+  send: "Usage: synloq send --project-root <path> --relay-url <url> (--token <role-token> | --credential <path>) --to <agent-id> --text <text> --idempotency-key <key> [--session-id <id>] [--expects-reply] [--synloq-home <path>]\n",
   pause:
     "Usage: synloq pause [--project-root <path>] [--synloq-home <path>] --relay-url <url> (--token <token> | --credential <path>) --scope <project|participant|thread> [--scope-id <id>]\n",
   resume:
@@ -192,7 +192,7 @@ async function tokenFrom(values: Values): Promise<string> {
   return result;
 }
 
-async function clientFrom(values: Values): Promise<{ client: RelayHttpClient; token: string }> {
+async function clientFrom(values: Values): Promise<{ client: RelayHttpClient }> {
   const token = await tokenFrom(values);
   const projectRoot = resolve(optionalString(values, "project-root") ?? process.cwd());
   const project = (await loadManifest(projectRoot))[0]?.project;
@@ -203,7 +203,6 @@ async function clientFrom(values: Values): Promise<{ client: RelayHttpClient; to
   ).authenticate(project, token);
   return {
     client: new RelayHttpClient(requiredString(values, "relay-url"), () => token, context),
-    token,
   };
 }
 
@@ -571,34 +570,24 @@ async function execute(
       to: { type: "string" },
       text: { type: "string" },
       "idempotency-key": { type: "string" },
+      "session-id": { type: "string" },
       "expects-reply": { type: "boolean" },
     });
     if (value(values, "help")) {
       io.stdout.write(helpText[command]);
       return;
     }
-    const projectRoot = requiredString(values, "project-root");
-    const synloqHome = optionalString(values, "synloq-home");
-    const participants = await loadManifest(projectRoot);
-    const project = participants[0]?.project;
-    if (!project) invalid("manifest must declare at least one agent");
-    const { client, token } = await clientFrom(values);
-    const identity = await new CredentialStore(
-      projectRoot,
-      synloqHome ? resolve(synloqHome) : undefined,
-    ).authenticate(project, token);
+    requiredString(values, "project-root");
+    const { client } = await clientFrom(values);
     writeJson(
       io,
-      await sendCommand(
-        client,
-        {
-          to: requiredString(values, "to"),
-          text: requiredString(values, "text"),
-          expectsReply: value(values, "expects-reply") === true,
-          idempotencyKey: requiredString(values, "idempotency-key"),
-        },
-        identity,
-      ),
+      await sendCommand(client, {
+        to: requiredString(values, "to"),
+        text: requiredString(values, "text"),
+        expectsReply: value(values, "expects-reply") === true,
+        idempotencyKey: requiredString(values, "idempotency-key"),
+        sessionId: optionalString(values, "session-id"),
+      }),
     );
     return;
   }

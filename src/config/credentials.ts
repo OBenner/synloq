@@ -2,7 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { SynloqError } from "../domain/errors.js";
-import { agentId as agentIdSchema } from "../domain/message.js";
+import { agentId as agentIdSchema, requireParticipantAgentId } from "../domain/message.js";
 import type { SecurityAuditLog } from "../relay/audit-log.js";
 import type { TokenProvider } from "../transport/http-client.js";
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-file.js";
@@ -107,6 +107,8 @@ export class CredentialStore {
   }
 
   async issue(project: string, agentId: string): Promise<string> {
+    agentIdSchema.parse(agentId);
+    requireParticipantAgentId(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
     return withFileLock(paths.credentials, () =>
       this.issueLocked(paths.credentials, project, agentId),
@@ -136,6 +138,7 @@ export class CredentialStore {
     agentId: string,
   ): Promise<{ token: string; tokenPath: string; replacedHashes: number }> {
     agentIdSchema.parse(agentId);
+    if (agentId !== "operator") requireParticipantAgentId(agentId);
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
     return withFileLock(paths.credentials, async () => {
       const credentials = await this.read(paths.credentials, project);
@@ -235,6 +238,19 @@ export class CredentialStore {
 
   async ensureCredential(project: string, agentId: string): Promise<EnsuredCredential> {
     agentIdSchema.parse(agentId);
+    requireParticipantAgentId(agentId);
+    return this.ensureBoundCredential(project, agentId);
+  }
+
+  /** Operator credentials grant management and read access, without a role channel. */
+  async ensureOperatorCredential(project: string): Promise<EnsuredCredential> {
+    return this.ensureBoundCredential(project, "operator");
+  }
+
+  private async ensureBoundCredential(
+    project: string,
+    agentId: string,
+  ): Promise<EnsuredCredential> {
     const paths = await projectPaths(this.projectRoot, this.synloqHome);
     return withFileLock(paths.credentials, async () => {
       const tokenPath = join(paths.tokens, `${agentId}.token`);
@@ -262,6 +278,7 @@ export class CredentialStore {
     const candidate = tokenDigest(token);
     if (credentials.project === project) {
       for (const entry of credentials.entries) {
+        if (entry.agentId === "relay") continue;
         const stored = Buffer.from(entry.tokenHash, "hex");
         if (stored.length === candidate.length && timingSafeEqual(stored, candidate)) {
           return { project, agentId: entry.agentId, operator: entry.agentId === "operator" };
@@ -280,6 +297,7 @@ export class CredentialStore {
     const credentials = await this.read(paths.credentials, project);
     if (credentials.project === project && /^[a-f0-9]{64}$/.test(kid)) {
       for (const entry of credentials.entries) {
+        if (entry.agentId === "relay") continue;
         const context = { project, agentId: entry.agentId };
         if (
           /^[a-f0-9]{64}$/.test(entry.tokenHash) &&

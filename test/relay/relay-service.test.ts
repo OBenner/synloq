@@ -113,16 +113,17 @@ describe("RelayService", () => {
     expect(messages.listInbox("another-project", "arch", undefined, 50).messages).toEqual([]);
   });
 
-  it("derives the operator sender without requiring a manifest role", async () => {
-    const { relay, operator } = await makeRelay();
-
-    const message = await relay.send(operator, {
-      ...validInput,
-      idempotencyKey: "operator-0001",
-    });
-
-    expect(message).toMatchObject({ project: "verdicta", from: "operator", to: "arch" });
-  });
+  it.each(["operator", "relay"])(
+    "rejects the reserved sender %s before storing",
+    async (agentId) => {
+      const { relay, messages } = await makeRelay();
+      const identity = { project: "verdicta", agentId, operator: agentId === "operator" };
+      await expect(relay.send(identity, validInput)).rejects.toMatchObject({
+        code: "SENDER_RESERVED",
+      });
+      expect(messages.listInbox("verdicta", "arch", undefined, 50).messages).toEqual([]);
+    },
+  );
 
   it("rejects an unknown recipient before storing a message", async () => {
     const { relay, messages, cto } = await makeRelay();
