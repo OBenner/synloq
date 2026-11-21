@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runRelaySupervisor, type RelaySupervisorOptions } from "../../src/cli/relay-supervisor.js";
+import {
+  relayStartArgv,
+  runRelaySupervisor,
+  type RelayStartOptions,
+  type RelaySupervisorOptions,
+} from "../../src/cli/relay-supervisor.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -14,7 +19,7 @@ function fixture(overrides: Partial<RelaySupervisorOptions> = {}) {
   const root = mkdtempSync(join(tmpdir(), "synloq-supervisor-"));
   dirs.push(root);
   const home = join(root, ".synloq");
-  const started: Array<{ projectRoot: string; port: number }> = [];
+  const started: RelayStartOptions[] = [];
   const options: RelaySupervisorOptions = {
     projectRoot: root,
     synloqHome: home,
@@ -122,5 +127,24 @@ describe("relay supervisor (#166)", () => {
     const outcome = await runRelaySupervisor({ ...options, probePid: () => "unknown" });
     expect(outcome).toBe("already-starting");
     expect(started).toHaveLength(0);
+  });
+
+  it("passes a custom synloq-home through to the spawned serve (CTO merge blocker)", async () => {
+    const { started, options } = fixture({ probeHealth: async () => false });
+    await runRelaySupervisor(options);
+
+    // Plumbing: the supervisor's home reaches the start options.
+    expect(started[0]?.synloqHome).toBe(options.synloqHome);
+    // …and the default starter puts it on argv.
+    const home = options.synloqHome;
+    expect(home).toBeDefined();
+    const argv = relayStartArgv({
+      projectRoot: options.projectRoot,
+      port: 4100,
+      synloqHome: home!,
+    });
+    const flagAt = argv.indexOf("--synloq-home");
+    expect(flagAt).toBeGreaterThan(-1);
+    expect(argv[flagAt + 1]).toBe(options.synloqHome);
   });
 });

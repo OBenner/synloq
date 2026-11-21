@@ -19,7 +19,7 @@ export interface RelaySupervisorOptions {
   relayUrl?: string;
   /** Injectable probes for tests. */
   probeHealth?: (relayUrl: string) => Promise<boolean>;
-  startRelay?: (options: { projectRoot: string; port: number }) => void;
+  startRelay?: (options: RelayStartOptions) => void;
   probePid?: (pid: number) => "alive" | "dead" | "unknown";
   now?: () => number;
 }
@@ -44,13 +44,33 @@ async function defaultProbeHealth(relayUrl: string): Promise<boolean> {
   }
 }
 
-function defaultStartRelay(options: { projectRoot: string; port: number }): void {
+export interface RelayStartOptions {
+  projectRoot: string;
+  port: number;
+  synloqHome?: string;
+}
+
+/** argv for the spawned serve — exported for the plumbing regression test. */
+export function relayStartArgv(options: RelayStartOptions): string[] {
   const cli = fileURLToPath(new URL("./main.js", import.meta.url));
-  const child: ChildProcess = spawn(
-    process.execPath,
-    [cli, "serve", "--project-root", options.projectRoot, "--port", String(options.port)],
-    { cwd: options.projectRoot, detached: true, stdio: "ignore", windowsHide: true },
-  );
+  return [
+    cli,
+    "serve",
+    "--project-root",
+    options.projectRoot,
+    "--port",
+    String(options.port),
+    ...(options.synloqHome ? ["--synloq-home", options.synloqHome] : []),
+  ];
+}
+
+function defaultStartRelay(options: RelayStartOptions): void {
+  const child: ChildProcess = spawn(process.execPath, relayStartArgv(options), {
+    cwd: options.projectRoot,
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
   child.unref();
 }
 
@@ -126,7 +146,11 @@ export async function runRelaySupervisor(
     );
     // Record the attempt before starting: a crash mid-start still cools down.
     await writeFile(cooldownPath, `${JSON.stringify({ at: now() })}\n`, "utf8");
-    startRelay({ projectRoot: options.projectRoot, port });
+    startRelay({
+      projectRoot: options.projectRoot,
+      port,
+      ...(options.synloqHome ? { synloqHome: options.synloqHome } : {}),
+    });
     await log(`relay was unreachable; started detached serve on port ${port}`);
     return "started";
   } catch (error) {
