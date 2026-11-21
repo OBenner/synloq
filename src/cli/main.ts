@@ -41,6 +41,7 @@ import { upgradeCheck } from "./upgrade-check.js";
 import type { ClaudeHookIo } from "./claude-hook.js";
 import { projectPaths } from "../config/paths.js";
 import { formatStatusReport } from "./status.js";
+import { runRelaySupervisor } from "./relay-supervisor.js";
 import { runGenericInit, type GenericInitDependencies } from "./init-cli.js";
 import { reverifyClaudeNudgeCommand } from "./claude-reverify.js";
 
@@ -82,6 +83,7 @@ const commandNames = [
   "claim-issue",
   "doctor",
   "status",
+  "relay-supervisor",
 ] as const;
 
 type CommandName = (typeof commandNames)[number];
@@ -119,6 +121,8 @@ const helpText: Record<CommandName, string> = {
   doctor:
     "Usage: synloq doctor --project-root <path> [--synloq-home <path>] [--repair] [--check-host] [--upgrade-check]\n  --upgrade-check: read-only preview of pending migrations and the upgrade path (issue #116)\n",
   status: "Usage: synloq status --project-root <path> [--synloq-home <path>] [--json]\n",
+  "relay-supervisor":
+    "Usage: synloq relay-supervisor --project-root <path> [--synloq-home <path>] [--relay-url <url>]\n",
   "rotate-token":
     "Usage: synloq rotate-token --project-root <path> --agent-id <id> --credential <operator-token-file> [--synloq-home <path>]\n",
   "revoke-token":
@@ -297,6 +301,25 @@ async function execute(
     return;
   }
 
+  if (command === "relay-supervisor") {
+    const { values } = parse(command, args, {
+      "project-root": { type: "string" },
+      "synloq-home": { type: "string" },
+      "relay-url": { type: "string" },
+    });
+    if (value(values, "help")) {
+      io.stdout.write(helpText[command]);
+      return;
+    }
+    const relayUrl = optionalString(values, "relay-url");
+    const outcome = await runRelaySupervisor({
+      projectRoot: requiredString(values, "project-root"),
+      ...synloqHomeOption(values),
+      ...(relayUrl ? { relayUrl } : {}),
+    });
+    io.stdout.write(`relay-supervisor: ${outcome}\n`);
+    return;
+  }
   if (command === "status") {
     const { values } = parse(command, args, {
       "project-root": { type: "string" },
